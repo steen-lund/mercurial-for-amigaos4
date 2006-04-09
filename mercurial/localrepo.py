@@ -10,8 +10,8 @@ import filelog, manifest, changelog, dirstate, repo
 from node import *
 from i18n import gettext as _
 from demandload import *
-demandload(globals(), "re lock transaction tempfile stat mdiff errno ui")
 demandload(globals(), "appendfile changegroup")
+demandload(globals(), "re lock transaction tempfile stat mdiff errno ui revlog")
 
 class localrepository(object):
     def __del__(self):
@@ -35,8 +35,31 @@ class localrepository(object):
         self.ui = ui.ui(parentui=parentui)
         self.opener = util.opener(self.path)
         self.wopener = util.opener(self.root)
-        self.manifest = manifest.manifest(self.opener)
-        self.changelog = changelog.changelog(self.opener)
+
+        try:
+            self.ui.readconfig(self.join("hgrc"), self.root)
+        except IOError:
+            pass
+
+        v = self.ui.revlogopts
+        self.revlogversion = int(v.get('format', 0))
+        flags = 0
+        for x in v.get('flags', "").split():
+            flags |= revlog.flagstr(x)
+
+        v = self.revlogversion | flags
+        self.manifest = manifest.manifest(self.opener, v)
+        self.changelog = changelog.changelog(self.opener, v)
+
+        # the changelog might not have the inline index flag
+        # on.  If the format of the changelog is the same as found in
+        # .hgrc, apply any flags found in the .hgrc as well.
+        # Otherwise, just version from the changelog
+        v = self.changelog.version
+        if v == self.revlogversion:
+            v |= flags
+        self.revlogversion = v
+
         self.tagscache = None
         self.nodetagscache = None
         self.encodepats = None
@@ -48,11 +71,6 @@ class localrepository(object):
             os.mkdir(self.join("data"))
 
         self.dirstate = dirstate.dirstate(self.opener, self.ui, self.root)
-        try:
-            self.ui.readconfig(self.join("hgrc"), self.root)
-        except IOError:
-            pass
-
     def hook(self, name, throw=False, **args):
         def runhook(name, cmd):
             self.ui.note(_("running hook %s: %s\n") % (name, cmd))
@@ -150,6 +168,7 @@ class localrepository(object):
             try:
                 return self.changelog.lookup(key)
             except:
+                raise
                 raise repo.RepoError(_("unknown revision '%s'") % key)
 
     def dev(self):
@@ -167,7 +186,7 @@ class localrepository(object):
     def file(self, f):
         if f[0] == '/':
             f = f[1:]
-        return filelog.filelog(self.opener, f)
+        return filelog.filelog(self.opener, f, self.revlogversion)
 
     def getcwd(self):
         return self.dirstate.getcwd()
@@ -1394,7 +1413,7 @@ class localrepository(object):
 
         # write changelog and manifest data to temp files so
         # concurrent readers will not see inconsistent view
-        cl = appendfile.appendchangelog(self.opener)
+        cl = appendfile.appendchangelog(self.opener, self.changelog.version)
 
         oldheads = len(cl.heads())
 
@@ -1408,7 +1427,7 @@ class localrepository(object):
             cnr = cor
         changesets = cnr - cor
 
-        mf = appendfile.appendmanifest(self.opener)
+        mf = appendfile.appendmanifest(self.opener, self.manifest.version)
 
         # pull off the manifest group
         self.ui.status(_("adding manifests\n"))
@@ -1436,8 +1455,10 @@ class localrepository(object):
         cl.writedata()
 
         # make changelog and manifest see real files again
-        self.changelog = changelog.changelog(self.opener)
-        self.manifest = manifest.manifest(self.opener)
+        self.changelog = changelog.changelog(self.opener, self.changelog.version)
+        self.manifest = manifest.manifest(self.opener, self.manifest.version)
+        self.changelog.checkinlinesize(tr)
+        self.manifest.checkinlinesize(tr)
 
         newheads = len(self.changelog.heads())
         heads = ""
