@@ -789,16 +789,25 @@ def bundle(ui, repo, fname, dest=None, **opts):
         if dest:
             raise util.Abort(_("--base is incompatible with specifiying "
                                "a destination"))
+        base = [repo.lookup(rev) for rev in base]
+        # create the right base
+        # XXX: nodesbetween / changegroup* should be "fixed" instead
         o = []
+        has_set = sets.Set(base)
         for n in base:
-            o.extend(repo.changelog.children(repo.lookup(n)))
-        # add common ancestor
+            has_set.update(repo.changelog.reachable(n))
         if revs:
-            all = o + revs
+            visit = list(revs)
         else:
-            all = o + repo.changelog.heads()
-        ancestor = reduce(lambda a, b: repo.changelog.ancestor(a, b), all)
-        o.append(ancestor)
+            visit = repo.changelog.heads()
+        while visit:
+            n = visit.pop(0)
+            parents = [p for p in repo.changelog.parents(n)
+                       if p != nullid and p not in has_set]
+            if len(parents) == 0:
+                o.insert(0, n)
+            else:
+                visit.extend(parents)
     else:
         setremoteconfig(ui, opts)
         dest = ui.expandpath(dest or 'default-push', dest or 'default')
@@ -3137,7 +3146,7 @@ def findpossible(ui, cmd):
                     found = a
                     break
         if found is not None:
-            if aliases[0].startswith("debug"):
+            if aliases[0].startswith("debug") or found.startswith("debug"):
                 debugchoice[found] = (aliases, table[e])
             else:
                 choice[found] = (aliases, table[e])
