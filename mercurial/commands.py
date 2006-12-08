@@ -57,7 +57,8 @@ def add(ui, repo, *pats, **opts):
 
     Schedule files to be version controlled and added to the repository.
 
-    The files will be added to the repository at the next commit.
+    The files will be added to the repository at the next commit. To
+    undo an add before that, see hg revert.
 
     If no names are given, add all files in the repository.
     """
@@ -650,7 +651,8 @@ def copy(ui, repo, *pats, **opts):
     stand in the working directory.  If invoked with --after, the
     operation is recorded, but no copying is performed.
 
-    This command takes effect in the next commit.
+    This command takes effect in the next commit. To undo a copy
+    before that, see hg revert.
     """
     wlock = repo.wlock(0)
     errs, copied = docopy(ui, repo, pats, opts, wlock)
@@ -856,6 +858,10 @@ def diff(ui, repo, *pats, **opts):
 
     Differences between files are shown using the unified diff format.
 
+    NOTE: diff may generate unexpected results for merges, as it will
+    default to comparing against the working directory's first parent
+    changeset if no revisions are specified.
+
     When two revision arguments are given, then changes are shown
     between those revisions. If only one revision is specified then
     that revision is compared to the working directory, and, when no
@@ -879,7 +885,10 @@ def export(ui, repo, *changesets, **opts):
     Print the changeset header and diffs for one or more revisions.
 
     The information shown in the changeset header is: author,
-    changeset hash, parent and commit comment.
+    changeset hash, parent(s) and commit comment.
+
+    NOTE: export may generate unexpected diff output for merge changesets,
+    as it will compare the merge changeset against its first parent only.
 
     Output may be to a file, in which case the name of the file is
     given using a format string.  The formatting rules are as follows:
@@ -1477,6 +1486,12 @@ def log(ui, repo, *pats, **opts):
     non-trivial parents, user, date and time, and a summary for each
     commit. When the -v/--verbose switch is used, the list of changed
     files and full commit message is shown.
+
+    NOTE: log -p may generate unexpected diff output for merge
+    changesets, as it will compare the merge changeset against its
+    first parent only. Also, the files: list will only reflect files
+    that are different from BOTH parents.
+
     """
 
     get = util.cachefunc(lambda r: repo.changectx(r).changeset())
@@ -1848,11 +1863,13 @@ def remove(ui, repo, *pats, **opts):
 
     Schedule the indicated files for removal from the repository.
 
-    This command schedules the files to be removed at the next commit.
     This only removes files from the current branch, not from the
     entire project history.  If the files still exist in the working
     directory, they will be deleted from it.  If invoked with --after,
     files that have been manually deleted are marked as removed.
+
+    This command schedules the files to be removed at the next commit.
+    To undo a remove before that, see hg revert.
 
     Modified files and added files are not removed by default.  To
     remove them, use the -f/--force option.
@@ -1901,7 +1918,8 @@ def rename(ui, repo, *pats, **opts):
     stand in the working directory.  If invoked with --after, the
     operation is recorded, but no copying is performed.
 
-    This command takes effect in the next commit.
+    This command takes effect in the next commit. To undo a rename
+    before that, see hg revert.
     """
     wlock = repo.wlock(0)
     errs, copied = docopy(ui, repo, pats, opts, wlock)
@@ -1920,8 +1938,9 @@ def revert(ui, repo, *pats, **opts):
     With no revision specified, revert the named files or directories
     to the contents they had in the parent of the working directory.
     This restores the contents of the affected files to an unmodified
-    state.  If the working directory has two parents, you must
-    explicitly specify the revision to revert to.
+    state and unschedules adds, removes, copies, and renames. If the
+    working directory has two parents, you must explicitly specify the
+    revision to revert to.
 
     Modified files are saved with a .orig suffix before reverting.
     To disable these backups, use --no-backup.
@@ -2173,6 +2192,11 @@ def status(ui, repo, *pats, **opts):
     Show status of files in the repository.  If names are given, only
     files that match are shown.  Files that are clean or ignored, are
     not listed unless -c (clean), -i (ignored) or -A is given.
+
+    NOTE: status may appear to disagree with diff if permissions have
+    changed or a merge has occurred. The standard diff format does not
+    report permission changes and diff only reports changes relative
+    to one merge parent.
 
     If one revision is given, it is used as the base revision.
     If two revisions are given, the difference between them is shown.
