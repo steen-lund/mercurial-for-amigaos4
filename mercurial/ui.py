@@ -5,10 +5,9 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-from i18n import gettext as _
-from demandload import *
-demandload(globals(), "errno getpass os re socket sys tempfile")
-demandload(globals(), "ConfigParser traceback util")
+from i18n import _
+import errno, getpass, os, re, socket, sys, tempfile
+import ConfigParser, traceback, util
 
 def dupconfig(orig):
     new = util.configparser(orig.defaults())
@@ -350,7 +349,7 @@ class ui(object):
                 user = '%s@%s' % (util.getuser(), socket.getfqdn())
             except KeyError:
                 raise util.Abort(_("Please specify a username."))
-            self.warn(_("No username found, using '%s' instead\n" % user))
+            self.warn(_("No username found, using '%s' instead\n") % user)
         return user
 
     def shortuser(self, user):
