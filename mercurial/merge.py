@@ -6,9 +6,8 @@
 # of the GNU General Public License, incorporated herein by reference.
 
 from node import *
-from i18n import gettext as _
-from demandload import *
-demandload(globals(), "errno util os tempfile")
+from i18n import _
+import errno, util, os, tempfile
 
 def filemerge(repo, fw, fo, wctx, mctx):
     """perform a 3-way merge in the working directory
@@ -440,6 +439,9 @@ def update(repo, node, branchmerge, force, partial, wlock):
     partial = a function to filter file lists (dirstate not updated)
     wlock = working dir lock, if already held
     """
+
+    if node is None:
+        node = "tip"
 
     if not wlock:
         wlock = repo.wlock()

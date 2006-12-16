@@ -6,9 +6,8 @@
 # of the GNU General Public License, incorporated herein by reference.
 
 from node import *
-from i18n import gettext as _
-from demandload import demandload
-demandload(globals(), "ancestor bdiff repo revlog util os")
+from i18n import _
+import ancestor, bdiff, repo, revlog, util, os
 
 class changectx(object):
     """A changecontext object makes access to data related to a particular
