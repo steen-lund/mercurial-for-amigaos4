@@ -12,10 +12,9 @@ This contains helper routines that are independent of the SCM core and hide
 platform-specific details from the core.
 """
 
-from i18n import gettext as _
-from demandload import *
-demandload(globals(), "cStringIO errno getpass popen2 re shutil sys tempfile")
-demandload(globals(), "os threading time calendar ConfigParser locale")
+from i18n import _
+import cStringIO, errno, getpass, popen2, re, shutil, sys, tempfile
+import os, threading, time, calendar, ConfigParser, locale
 
 _encoding = os.environ.get("HGENCODING") or locale.getpreferredencoding() \
             or "ascii"
@@ -696,7 +695,7 @@ def checkfolding(path):
 
 # Platform specific variants
 if os.name == 'nt':
-    demandload(globals(), "msvcrt")
+    import msvcrt
     nulldev = 'NUL:'
 
     class winstdout:
