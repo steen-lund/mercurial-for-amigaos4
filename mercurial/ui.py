@@ -5,10 +5,9 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-from i18n import gettext as _
-from demandload import *
-demandload(globals(), "errno getpass os re socket sys tempfile")
-demandload(globals(), "ConfigParser traceback util")
+from i18n import _
+import errno, getpass, os, re, socket, sys, tempfile
+import ConfigParser, traceback, util
 
 def dupconfig(orig):
     new = util.configparser(orig.defaults())
