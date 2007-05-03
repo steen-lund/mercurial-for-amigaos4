@@ -13,10 +13,10 @@
 
 import win32api
 
-from demandload import *
-from i18n import gettext as _
-demandload(globals(), 'errno os pywintypes win32con win32file win32process')
-demandload(globals(), 'cStringIO win32com.shell:shell,shellcon winerror')
+from i18n import _
+import errno, os, pywintypes, win32con, win32file, win32process
+import cStringIO, winerror
+from win32com.shell import shell,shellcon
 
 class WinError:
     winerror_map = {
@@ -187,7 +187,7 @@ def system_rcpath_win32():
         filename = win32api.GetModuleFileName(0)
     return [os.path.join(os.path.dirname(filename), 'mercurial.ini')]
 
-def user_rcpath():
+def user_rcpath_win32():
     '''return os-specific hgrc search path to the user dir'''
     userdir = os.path.expanduser('~')
     if userdir == '~':
@@ -297,5 +297,30 @@ class posixfile_nt(object):
             win32file.SetEndOfFile(self.handle)
         except pywintypes.error, err:
             raise WinIOError(err)
+            
+def find_in_path(name, path, default=None):
+    '''find name in search path. path can be string (will be split
+    with os.pathsep), or iterable thing that returns strings.  if name
+    found, return path to name. else return default. name is looked up
+    using cmd.exe rules, using PATHEXT.'''
+    if isinstance(path, str):
+        path = path.split(os.pathsep)
+        
+    pathext = os.environ.get('PATHEXT', '.COM;.EXE;.BAT;.CMD')
+    pathext = pathext.lower().split(os.pathsep)
+    isexec = os.path.splitext(name)[1].lower() in pathext
+    
+    for p in path:
+        p_name = os.path.join(p, name)
+        
+        if isexec and os.path.exists(p_name):
+            return p_name
+        
+        for ext in pathext:
+            p_name_ext = p_name + ext
+            if os.path.exists(p_name_ext):
+                return p_name_ext
+            
+    return default
 
 getuser_fallback = win32api.GetUserName
