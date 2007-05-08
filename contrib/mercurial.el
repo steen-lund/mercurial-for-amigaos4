@@ -317,6 +317,18 @@ If the command does not exit with a zero status code, raise an error."
 	       (car res))
       (cdr res))))
 
+(defmacro hg-do-across-repo (path &rest body)
+  (let ((root-name (gensym "root-"))
+	(buf-name (gensym "buf-")))
+    `(let ((,root-name (hg-root ,path)))
+       (save-excursion
+	 (dolist (,buf-name (buffer-list))
+	   (set-buffer ,buf-name)
+	   (when (and hg-status (equal (hg-root buffer-file-name) ,root-name))
+	     ,@body))))))
+
+(put 'hg-do-across-repo 'lisp-indent-function 1)
+
 (defun hg-sync-buffers (path)
   "Sync buffers visiting PATH with their on-disk copies.
 If PATH is not being visited, but is under the repository root, sync
@@ -539,18 +551,6 @@ directory names from the file system.  We do not penalise URLs."
 	    (set-buffer buf)
 	    (hg-mode-line-internal status parents)))))))
   
-(defmacro hg-do-across-repo (path &rest body)
-  (let ((root-name (gensym "root-"))
-	(buf-name (gensym "buf-")))
-    `(let ((,root-name (hg-root ,path)))
-       (save-excursion
-	 (dolist (,buf-name (buffer-list))
-	   (set-buffer ,buf-name)
-	   (when (and hg-status (equal (hg-root buffer-file-name) ,root-name))
-	     ,@body))))))
-
-(put 'hg-do-across-repo 'lisp-indent-function 1)
-
 
 ;;; View mode bits.
 
@@ -717,8 +717,8 @@ you're already familiar with VC, the same keybindings and functions
 will generally work.
 
 Below is a list of many common SCM tasks.  In the list, `G/L\'
-indicates whether a key binding is global (G) to a repository or local
-(L) to a file.  Many commands take a prefix argument.
+indicates whether a key binding is global (G) to a repository or
+local (L) to a file.  Many commands take a prefix argument.
 
 SCM Task                              G/L  Key Binding  Command Name
 --------                              ---  -----------  ------------
@@ -750,8 +750,9 @@ Push changes                          G    C-c h >      hg-push"
   (run-hooks 'hg-mode-hook))
 
 (defun hg-find-file-hook ()
-  (when (hg-mode-line)
-    (hg-mode)))
+  (ignore-errors
+    (when (hg-mode-line)
+      (hg-mode))))
 
 (add-hook 'find-file-hooks 'hg-find-file-hook)
 
