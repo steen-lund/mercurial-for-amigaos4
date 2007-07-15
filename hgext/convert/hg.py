@@ -29,6 +29,9 @@ class convert_mercurial(converter_sink):
         if self.repo.dirstate.state(f) == '?':
             self.repo.dirstate.update([f], "a")
 
+    def copyfile(self, source, dest):
+        self.repo.copy(source, dest)
+
     def delfile(self, f):
         try:
             os.unlink(self.repo.wjoin(f))
@@ -51,11 +54,11 @@ class convert_mercurial(converter_sink):
 
         text = commit.desc
         extra = {}
-        try:
-            extra["branch"] = commit.branch
-        except AttributeError:
-            pass
-
+        if commit.branch:
+            extra['branch'] = commit.branch
+        if commit.rev:
+            extra['convert_revision'] = commit.rev
+            
         while parents:
             p1 = p2
             p2 = parents.pop(0)
