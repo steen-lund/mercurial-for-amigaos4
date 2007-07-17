@@ -109,7 +109,8 @@ class localrepository(repo.repository):
 
     tag_disallowed = ':\r\n'
 
-    def _tag(self, name, node, message, local, user, date, parent=None):
+    def _tag(self, name, node, message, local, user, date, parent=None,
+             extra={}):
         use_dirstate = parent is None
 
         for c in self.tag_disallowed:
@@ -118,23 +119,48 @@ class localrepository(repo.repository):
 
         self.hook('pretag', throw=True, node=hex(node), tag=name, local=local)
 
-        if local:
-            # local tags are stored in the current charset
-            self.opener('localtags', 'a').write('%s %s\n' % (hex(node), name))
+        def writetag(fp, name, munge, prevtags):
+            if prevtags and prevtags[-1] != '\n':
+                fp.write('\n')
+            fp.write('%s %s\n' % (hex(node), munge and munge(name) or name))
+            fp.close()
             self.hook('tag', node=hex(node), tag=name, local=local)
+            
+        prevtags = ''
+        if local:
+            try:
+                fp = self.opener('localtags', 'r+')
+            except IOError, err:
+                fp = self.opener('localtags', 'a')
+            else:
+                prevtags = fp.read()
+
+            # local tags are stored in the current charset
+            writetag(fp, name, None, prevtags)
             return
 
-        # committed tags are stored in UTF-8
-        line = '%s %s\n' % (hex(node), util.fromlocal(name))
         if use_dirstate:
-            self.wfile('.hgtags', 'ab').write(line)
+            try:
+                fp = self.wfile('.hgtags', 'rb+')
+            except IOError, err:
+                fp = self.wfile('.hgtags', 'ab')
+            else:
+                prevtags = fp.read()
         else:
-            ntags = self.filectx('.hgtags', parent).data()
-            self.wfile('.hgtags', 'ab').write(ntags + line)
+            try:
+                prevtags = self.filectx('.hgtags', parent).data()
+            except revlog.LookupError:
+                pass
+            fp = self.wfile('.hgtags', 'wb')
+
+        # committed tags are stored in UTF-8
+        writetag(fp, name, util.fromlocal, prevtags)
+
         if use_dirstate and self.dirstate.state('.hgtags') == '?':
             self.add(['.hgtags'])
 
-        tagnode = self.commit(['.hgtags'], message, user, date, p1=parent)
+        tagnode = self.commit(['.hgtags'], message, user, date, p1=parent,
+                              extra=extra)
 
         self.hook('tag', node=hex(node), tag=name, local=local)
 

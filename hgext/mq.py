@@ -909,7 +909,16 @@ class queue:
         patchparent = self.qparents(repo, top)
         message, comments, user, date, patchfound = self.readheaders(patchfn)
 
-        patchf = self.opener(patchfn, "w")
+        patchf = self.opener(patchfn, 'r+')
+
+        # if the patch was a git patch, refresh it as a git patch
+        for line in patchf:
+            if line.startswith('diff --git'):
+                self.diffopts().git = True
+                break
+        patchf.seek(0)
+        patchf.truncate()
+
         msg = opts.get('msg', '').rstrip()
         if msg:
             if comments:
@@ -1478,11 +1487,20 @@ def clone(ui, source, dest=None, **opts):
 
     Source patch repository is looked for in <src>/.hg/patches by
     default.  Use -p <url> to change.
+
+    The patch directory must be a nested mercurial repository, as
+    would be created by qinit -c.
     '''
     cmdutil.setremoteconfig(ui, opts)
     if dest is None:
         dest = hg.defaultdest(source)
     sr = hg.repository(ui, ui.expandpath(source))
+    patchdir = opts['patches'] or (sr.url() + '/.hg/patches')
+    try:
+        pr = hg.repository(ui, patchdir)
+    except hg.RepoError:
+        raise util.Abort(_('versioned patch repository not found'
+                           ' (see qinit -c)'))
     qbase, destrev = None, None
     if sr.local():
         if sr.mq.applied:

@@ -325,6 +325,8 @@ diff --git a/foo b/baz
 rename from foo
 rename to baz
 2 baz (foo)
+diff --git a/bar b/bar
+diff --git a/foo b/baz
 
 1 files updated, 0 files merged, 2 files removed, 0 files unresolved
 2 files updated, 0 files merged, 1 files removed, 0 files unresolved
@@ -407,6 +409,8 @@ date:        Thu Jan 01 00:00:00 1970 +0000
 summary:     add foo
 
 % qclone
+abort: versioned patch repository not found (see qinit -c)
+adding .hg/patches/patch1
 main repo:
     rev 1: change foo
     rev 0: add foo
