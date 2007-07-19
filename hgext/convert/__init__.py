@@ -5,27 +5,40 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-from common import NoRepo
+from common import NoRepo, converter_source, converter_sink
 from cvs import convert_cvs
 from git import convert_git
 from hg import convert_mercurial
+from subversion import convert_svn
 
-import os
+import os, shutil
 from mercurial import hg, ui, util, commands
 
 commands.norepo += " convert"
 
-converters = [convert_cvs, convert_git, convert_mercurial]
+converters = [convert_cvs, convert_git, convert_svn, convert_mercurial]
 
-def converter(ui, path):
+def convertsource(ui, path, **opts):
+    for c in converters:
+        if not hasattr(c, 'getcommit'):
+            continue
+        try:
+            return c(ui, path, **opts)
+        except NoRepo:
+            pass
+    raise util.Abort('%s: unknown repository type' % path)
+
+def convertsink(ui, path):
     if not os.path.isdir(path):
         raise util.Abort("%s: not a directory" % path)
     for c in converters:
+        if not hasattr(c, 'putcommit'):
+            continue
         try:
             return c(ui, path)
         except NoRepo:
             pass
-    raise util.Abort("%s: unknown repository type" % path)
+    raise util.Abort('%s: unknown repository type' % path)
 
 class convert(object):
     def __init__(self, ui, source, dest, mapfile, opts):
@@ -179,6 +192,8 @@ class convert(object):
     def copy(self, rev):
         c = self.commitcache[rev]
         files = self.source.getchanges(rev)
+        
+        do_copies = (hasattr(c, 'copies') and hasattr(self.dest, 'copyfile'))
 
         for f, v in files:
             try:
@@ -188,6 +203,11 @@ class convert(object):
             else:
                 e = self.source.getmode(f, v)
                 self.dest.putfile(f, e, data)
+                if do_copies:
+                    if f in c.copies:
+                        # Merely marks that a copy happened.
+                        self.dest.copyfile(c.copies[f], f)
+
 
         r = [self.map[v] for v in c.parents]
         f = [f for f, v in files]
@@ -196,6 +216,7 @@ class convert(object):
 
     def convert(self):
         try:
+            self.source.setrevmap(self.map)
             self.ui.status("scanning source...\n")
             heads = self.source.getheads()
             parents = self.walktree(heads)
@@ -244,21 +265,26 @@ def _convert(ui, src, dest=None, mapfile=None, **opts):
     Accepted source formats:
     - GIT
     - CVS
+    - SVN
 
     Accepted destination formats:
     - Mercurial
 
-    If no destination directory name is specified, it defaults to the
-    basename of the source with '-hg' appended.  If the destination
-    repository doesn't exist, it will be created.
+    If no revision is given, all revisions will be converted. Otherwise,
+    convert will only import up to the named revision (given in a format
+    understood by the source).
 
-    If <mapfile> isn't given, it will be put in a default location
+    If no destination directory name is specified, it defaults to the
+    basename of the source with \'-hg\' appended.  If the destination
+    repository doesn\'t exist, it will be created.
+
+    If <mapfile> isn\'t given, it will be put in a default location
     (<dest>/.hg/shamap by default).  The <mapfile> is a simple text
     file that maps each source commit ID to the destination ID for
     that revision, like so:
     <source ID> <destination ID>
 
-    If the file doesn't exist, it's automatically created.  It's updated
+    If the file doesn\'t exist, it\'s automatically created.  It\'s updated
     on each commit copied, so convert-repo can be interrupted and can
     be run repeatedly to copy new commits.
 
@@ -271,15 +297,12 @@ def _convert(ui, src, dest=None, mapfile=None, **opts):
 
     util._encoding = 'UTF-8'
 
-    srcc = converter(ui, src)
-    if not hasattr(srcc, "getcommit"):
-        raise util.Abort("%s: can't read from this repo type" % src)
-
     if not dest:
         dest = hg.defaultdest(src) + "-hg"
         ui.status("assuming destination %s\n" % dest)
 
     # Try to be smart and initalize things when required
+    created = False
     if os.path.isdir(dest):
         if len(os.listdir(dest)) > 0:
             try:
@@ -294,15 +317,22 @@ def _convert(ui, src, dest=None, mapfile=None, **opts):
         else:
             ui.status("initializing destination %s repository\n" % dest)
             hg.repository(ui, dest, create=True)
+            created = True
     elif os.path.exists(dest):
         raise util.Abort("destination %s exists and is not a directory" % dest)
     else:
         ui.status("initializing destination %s repository\n" % dest)
         hg.repository(ui, dest, create=True)
+        created = True
 
-    destc = converter(ui, dest)
-    if not hasattr(destc, "putcommit"):
-        raise util.Abort("%s: can't write to this repo type" % src)
+    destc = convertsink(ui, dest)
+
+    try:
+        srcc = convertsource(ui, src, rev=opts.get('rev'))
+    except Exception:
+        if created:
+            shutil.rmtree(dest, True)
+        raise
 
     if not mapfile:
         try:
@@ -317,6 +347,7 @@ cmdtable = {
     "convert":
         (_convert,
          [('A', 'authors', '', 'username mapping filename'),
+          ('r', 'rev', '', 'import up to target revision REV'),
           ('', 'datesort', None, 'try to sort changesets by date')],
          'hg convert [OPTION]... SOURCE [DEST [MAPFILE]]'),
 }
