@@ -20,8 +20,8 @@ class dirstate(object):
     def __init__(self, opener, ui, root):
         self._opener = opener
         self._root = root
-        self._dirty = 0
-        self._dirtypl = 0
+        self._dirty = False
+        self._dirtypl = False
         self._ui = ui
 
     def __getattr__(self, name):
@@ -53,7 +53,7 @@ class dirstate(object):
                 self._incpath(f)
             return self._dirs
         elif name == '_ignore':
-            files = [self.wjoin('.hgignore')]
+            files = [self._join('.hgignore')]
             for name, path in self._ui.configitems("ui"):
                 if name == 'ignore' or name.startswith('ignore.'):
                     files.append(os.path.expanduser(path))
@@ -65,7 +65,7 @@ class dirstate(object):
         else:
             raise AttributeError, name
 
-    def wjoin(self, f):
+    def _join(self, f):
         return os.path.join(self._root, f)
 
     def getcwd(self):
@@ -89,11 +89,14 @@ class dirstate(object):
             return path.replace(os.sep, '/')
         return path
 
-    def __del__(self):
-        self.write()
-
     def __getitem__(self, key):
-        return self._map[key]
+        ''' current states:
+        n  normal
+        m  needs merging
+        r  marked for removal
+        a  marked for addition
+        ?  not tracked'''
+        return self._map.get(key, ("?",))[0]
 
     def __contains__(self, key):
         return key in self._map
@@ -110,20 +113,13 @@ class dirstate(object):
     def branch(self):
         return self._branch
 
-    def markdirty(self):
-        self._dirty = 1
-
     def setparents(self, p1, p2=nullid):
-        self.markdirty()
-        self._dirtypl = 1
+        self._dirty = self._dirtypl = True
         self._pl = p1, p2
 
     def setbranch(self, branch):
         self._branch = branch
         self._opener("branch", "w").write(branch + '\n')
-
-    def state(self, key):
-        return self._map.get(key, ("?",))[0]
 
     def _read(self):
         self._map = {}
@@ -166,10 +162,10 @@ class dirstate(object):
         for a in "_map _copymap _branch _pl _dirs _ignore".split():
             if a in self.__dict__:
                 delattr(self, a)
-        self._dirty = 0
+        self._dirty = False
 
     def copy(self, source, dest):
-        self.markdirty()
+        self._dirty = True
         self._copymap[dest] = source
 
     def copied(self, file):
@@ -204,41 +200,54 @@ class dirstate(object):
                 raise util.Abort(_('file named %r already in dirstate') % d)
         self._incpath(f)
 
-    def update(self, files, state, **kw):
-        ''' current states:
-        n  normal
-        m  needs merging
-        r  marked for removal
-        a  marked for addition'''
+    def normal(self, f):
+        'mark a file normal'
+        self._dirty = True
+        s = os.lstat(self._join(f))
+        self._map[f] = ('n', s.st_mode, s.st_size, s.st_mtime)
+        if self._copymap.has_key(f):
+            del self._copymap[f]
 
-        if not files: return
-        self.markdirty()
-        for f in files:
-            if self._copymap.has_key(f):
-                del self._copymap[f]
+    def normaldirty(self, f):
+        'mark a file normal, but possibly dirty'
+        self._dirty = True
+        s = os.lstat(self._join(f))
+        self._map[f] = ('n', s.st_mode, -1, -1)
+        if f in self._copymap:
+            del self._copymap[f]
 
-            if state == "r":
-                self._map[f] = ('r', 0, 0, 0)
-                self._decpath(f)
-                continue
-            else:
-                if state == "a":
-                    self._incpathcheck(f)
-                s = os.lstat(self.wjoin(f))
-                st_size = kw.get('st_size', s.st_size)
-                st_mtime = kw.get('st_mtime', s.st_mtime)
-                self._map[f] = (state, s.st_mode, st_size, st_mtime)
+    def add(self, f):
+        'mark a file added'
+        self._dirty = True
+        self._incpathcheck(f)
+        self._map[f] = ('a', 0, -1, -1)
+        if f in self._copymap:
+            del self._copymap[f]
 
-    def forget(self, files):
-        if not files: return
-        self.markdirty()
-        for f in files:
-            try:
-                del self._map[f]
-                self._decpath(f)
-            except KeyError:
-                self._ui.warn(_("not in dirstate: %s!\n") % f)
-                pass
+    def remove(self, f):
+        'mark a file removed'
+        self._dirty = True
+        self._map[f] = ('r', 0, 0, 0)
+        self._decpath(f)
+        if f in self._copymap:
+            del self._copymap[f]
+
+    def merge(self, f):
+        'mark a file merged'
+        self._dirty = True
+        s = os.lstat(self._join(f))
+        self._map[f] = ('m', s.st_mode, s.st_size, s.st_mtime)
+        if f in self._copymap:
+            del self._copymap[f]
+
+    def forget(self, f):
+        'forget a file'
+        self._dirty = True
+        try:
+            del self._map[f]
+            self._decpath(f)
+        except KeyError:
+            self._ui.warn(_("not in dirstate: %s!\n") % f)
 
     def rebuild(self, parent, files):
         self.invalidate()
@@ -248,7 +257,7 @@ class dirstate(object):
             else:
                 self._map[f] = ('n', 0666, -1, 0)
         self._pl = (parent, nullid)
-        self.markdirty()
+        self._dirty = True
 
     def write(self):
         if not self._dirty:
@@ -265,10 +274,9 @@ class dirstate(object):
         st = self._opener("dirstate", "w", atomictemp=True)
         st.write(cs.getvalue())
         st.rename()
-        self._dirty = 0
-        self._dirtypl = 0
+        self._dirty = self._dirtypl = False
 
-    def filterfiles(self, files):
+    def _filter(self, files):
         ret = {}
         unknown = []
 
@@ -339,7 +347,7 @@ class dirstate(object):
             dc = self._map.copy()
         else:
             files = util.unique(files)
-            dc = self.filterfiles(files)
+            dc = self._filter(files)
 
         def imatch(file_):
             if file_ not in dc and self._ignore(file_):
@@ -405,7 +413,7 @@ class dirstate(object):
         files.sort()
         for ff in files:
             nf = util.normpath(ff)
-            f = self.wjoin(ff)
+            f = self._join(ff)
             try:
                 st = os.lstat(f)
             except OSError, inst:
@@ -442,14 +450,13 @@ class dirstate(object):
             if not seen(k) and imatch(k):
                 yield 'm', k, None
 
-    def status(self, files=None, match=util.always, list_ignored=False,
-               list_clean=False):
+    def status(self, files, match, list_ignored, list_clean):
         lookup, modified, added, unknown, ignored = [], [], [], [], []
         removed, deleted, clean = [], [], []
 
         for src, fn, st in self.statwalk(files, match, ignored=list_ignored):
             try:
-                type_, mode, size, time = self[fn]
+                type_, mode, size, time = self._map[fn]
             except KeyError:
                 if list_ignored and self._ignore(fn):
                     ignored.append(fn)
@@ -460,7 +467,7 @@ class dirstate(object):
                 nonexistent = True
                 if not st:
                     try:
-                        st = os.lstat(self.wjoin(fn))
+                        st = os.lstat(self._join(fn))
                     except OSError, inst:
                         if inst.errno != errno.ENOENT:
                             raise
@@ -476,7 +483,7 @@ class dirstate(object):
             # check the common case first
             if type_ == 'n':
                 if not st:
-                    st = os.lstat(self.wjoin(fn))
+                    st = os.lstat(self._join(fn))
                 if (size >= 0 and (size != st.st_size
                                    or (mode ^ st.st_mode) & 0100)
                     or fn in self._copymap):

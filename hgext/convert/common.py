@@ -4,18 +4,31 @@ class NoRepo(Exception): pass
 
 class commit(object):
     def __init__(self, **parts):
+        self.rev = None
+        self.branch = None
+
         for x in "author date desc parents".split():
             if not x in parts:
                 raise util.Abort("commit missing field %s" % x)
         self.__dict__.update(parts)
+        if not self.desc or self.desc.isspace():
+            self.desc = '*** empty log message ***'
 
 class converter_source(object):
     """Conversion source interface"""
 
-    def __init__(self, ui, path):
+    def __init__(self, ui, path, rev=None):
         """Initialize conversion source (or raise NoRepo("message")
         exception if path is not a valid repository)"""
-        raise NotImplementedError()
+        self.ui = ui
+        self.path = path
+        self.rev = rev
+
+        self.encoding = 'utf-8'
+
+    def setrevmap(self, revmap):
+        """set the map of already-converted revisions"""
+        pass
 
     def getheads(self):
         """Return a list of this repository's heads"""
@@ -43,6 +56,18 @@ class converter_source(object):
     def gettags(self):
         """Return the tags as a dictionary of name: revision"""
         raise NotImplementedError()
+
+    def recode(self, s, encoding=None):
+        if not encoding:
+            encoding = self.encoding or 'utf-8'
+
+        try:
+            return s.decode(encoding).encode("utf-8")
+        except:
+            try:
+                return s.decode("latin-1").encode("utf-8")
+            except:
+                return s.decode(encoding, "replace").encode("utf-8")
 
 class converter_sink(object):
     """Conversion sink (target) interface"""
