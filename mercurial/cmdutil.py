@@ -628,8 +628,7 @@ def findrenames(repo, added=None, removed=None, threshold=0.5):
         if bestname:
             yield bestname, a, bestscore
 
-def addremove(repo, pats=[], opts={}, wlock=None, dry_run=None,
-              similarity=None):
+def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
     if dry_run is None:
         dry_run = opts.get('dry_run')
     if similarity is None:
@@ -638,19 +637,19 @@ def addremove(repo, pats=[], opts={}, wlock=None, dry_run=None,
     mapping = {}
     for src, abs, rel, exact in walk(repo, pats, opts):
         target = repo.wjoin(abs)
-        if src == 'f' and repo.dirstate.state(abs) == '?':
+        if src == 'f' and abs not in repo.dirstate:
             add.append(abs)
             mapping[abs] = rel, exact
             if repo.ui.verbose or not exact:
                 repo.ui.status(_('adding %s\n') % ((pats and rel) or abs))
-        if repo.dirstate.state(abs) != 'r' and not util.lexists(target):
+        if repo.dirstate[abs] != 'r' and not util.lexists(target):
             remove.append(abs)
             mapping[abs] = rel, exact
             if repo.ui.verbose or not exact:
                 repo.ui.status(_('removing %s\n') % ((pats and rel) or abs))
     if not dry_run:
-        repo.add(add, wlock=wlock)
-        repo.remove(remove, wlock=wlock)
+        repo.add(add)
+        repo.remove(remove)
     if similarity > 0:
         for old, new, score in findrenames(repo, add, remove, similarity):
             oldrel, oldexact = mapping[old]
@@ -660,7 +659,7 @@ def addremove(repo, pats=[], opts={}, wlock=None, dry_run=None,
                                  '(%d%% similar)\n') %
                                (oldrel, newrel, score * 100))
             if not dry_run:
-                repo.copy(old, new, wlock=wlock)
+                repo.copy(old, new)
 
 def service(opts, parentfn=None, initfn=None, runfn=None):
     '''Run a command as a service.'''
