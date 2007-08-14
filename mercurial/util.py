@@ -13,8 +13,8 @@ platform-specific details from the core.
 """
 
 from i18n import _
-import cStringIO, errno, getpass, popen2, re, shutil, sys, tempfile
-import os, threading, time, calendar, ConfigParser, locale, glob
+import cStringIO, errno, getpass, popen2, re, shutil, sys, tempfile, strutil
+import os, stat, threading, time, calendar, ConfigParser, locale, glob
 
 try:
     set = set
@@ -63,7 +63,7 @@ def fromlocal(s):
     Convert a string from the local character encoding to UTF-8
 
     We attempt to decode strings using the encoding mode set by
-    HG_ENCODINGMODE, which defaults to 'strict'. In this mode, unknown
+    HGENCODINGMODE, which defaults to 'strict'. In this mode, unknown
     characters will cause an error message. Other modes include
     'replace', which replaces unknown characters with a special
     Unicode character, and 'ignore', which drops the character.
@@ -366,6 +366,7 @@ def canonpath(root, cwd, myname):
     if not os.path.isabs(name):
         name = os.path.join(root, cwd, name)
     name = os.path.normpath(name)
+    audit_path = path_auditor(root)
     if name != rootsep and name.startswith(rootsep):
         name = name[len(rootsep):]
         audit_path(name)
@@ -619,7 +620,7 @@ def rename(src, dst):
     """forcibly rename a file"""
     try:
         os.rename(src, dst)
-    except OSError, err:
+    except OSError, err: # FIXME: check err (EEXIST ?)
         # on windows, rename to existing file is not allowed, so we
         # must delete destination first. but if file is open, unlink
         # schedules it for delete but does not delete it. rename
@@ -680,12 +681,49 @@ def copyfiles(src, dst, hardlink=None):
         else:
             shutil.copy(src, dst)
 
-def audit_path(path):
-    """Abort if path contains dangerous components"""
-    parts = os.path.normcase(path).split(os.sep)
-    if (os.path.splitdrive(path)[0] or parts[0] in ('.hg', '')
-        or os.pardir in parts):
-        raise Abort(_("path contains illegal component: %s") % path)
+class path_auditor(object):
+    '''ensure that a filesystem path contains no banned components.
+    the following properties of a path are checked:
+
+    - under top-level .hg
+    - starts at the root of a windows drive
+    - contains ".."
+    - traverses a symlink (e.g. a/symlink_here/b)
+    - inside a nested repository'''
+
+    def __init__(self, root):
+        self.audited = {}
+        self.root = root
+
+    def __call__(self, path):
+        if path in self.audited:
+            return
+        normpath = os.path.normcase(path)
+        parts = normpath.split(os.sep)
+        if (os.path.splitdrive(path)[0] or parts[0] in ('.hg', '')
+            or os.pardir in parts):
+            raise Abort(_("path contains illegal component: %s") % path)
+        def check(prefix):
+            curpath = os.path.join(self.root, prefix)
+            try:
+                st = os.lstat(curpath)
+            except OSError, err:
+                # EINVAL can be raised as invalid path syntax under win32.
+                # They must be ignored for patterns can be checked too.
+                if err.errno not in (errno.ENOENT, errno.EINVAL):
+                    raise
+            else:
+                if stat.S_ISLNK(st.st_mode):
+                    raise Abort(_('path %r traverses symbolic link %r') %
+                                (path, prefix))
+                elif (stat.S_ISDIR(st.st_mode) and
+                      os.path.isdir(os.path.join(curpath, '.hg'))):
+                    raise Abort(_('path %r is inside repo %r') %
+                                (path, prefix))
+            self.audited[prefix] = True
+        for c in strutil.rfindall(normpath, os.sep):
+            check(normpath[:c])
+        self.audited[path] = True
 
 def _makelock_file(info, pathname):
     ld = os.open(pathname, os.O_CREAT | os.O_WRONLY | os.O_EXCL)
@@ -1262,7 +1300,10 @@ class opener(object):
     """
     def __init__(self, base, audit=True):
         self.base = base
-        self.audit = audit
+        if audit:
+            self.audit_path = path_auditor(base)
+        else:
+            self.audit_path = always
 
     def __getattr__(self, name):
         if name == '_can_symlink':
@@ -1271,8 +1312,7 @@ class opener(object):
         raise AttributeError(name)
 
     def __call__(self, path, mode="r", text=False, atomictemp=False):
-        if self.audit:
-            audit_path(path)
+        self.audit_path(path)
         f = os.path.join(self.base, path)
 
         if not text and "b" not in mode:
@@ -1293,8 +1333,7 @@ class opener(object):
         return posixfile(f, mode)
 
     def symlink(self, src, dst):
-        if self.audit:
-            audit_path(dst)
+        self.audit_path(dst)
         linkname = os.path.join(self.base, dst)
         try:
             os.unlink(linkname)
@@ -1306,7 +1345,11 @@ class opener(object):
             os.makedirs(dirname)
 
         if self._can_symlink:
-            os.symlink(src, linkname)
+            try:
+                os.symlink(src, linkname)
+            except OSError, err:
+                raise OSError(err.errno, _('could not symlink to %r: %s') %
+                              (src, err.strerror), linkname)
         else:
             f = self(dst, "w")
             f.write(src)
