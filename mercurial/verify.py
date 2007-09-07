@@ -7,17 +7,22 @@
 
 from node import *
 from i18n import _
-import revlog, mdiff
+import revlog
 
 def verify(repo):
+    lock = repo.lock()
+    try:
+        return _verify(repo)
+    finally:
+        del lock
+
+def _verify(repo):
     filelinkrevs = {}
     filenodes = {}
     changesets = revisions = files = 0
     errors = [0]
     warnings = [0]
     neededmanifests = {}
-
-    lock = repo.lock()
 
     def err(msg):
         repo.ui.warn(msg + "\n")
@@ -159,6 +164,7 @@ def verify(repo):
             if flr not in filelinkrevs.get(f, []):
                 err(_("%s:%s points to unexpected changeset %d")
                         % (f, short(n), flr))
+                err(_("expecting one of %s" % filelinkrevs.get(f, [])))
             else:
                 filelinkrevs[f].remove(flr)
 
