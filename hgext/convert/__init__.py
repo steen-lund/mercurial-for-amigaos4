@@ -5,12 +5,12 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-from common import NoRepo, SKIPREV, converter_source, converter_sink
+from common import NoRepo, SKIPREV, converter_source, converter_sink, mapfile
 from cvs import convert_cvs
 from darcs import darcs_source
 from git import convert_git
 from hg import mercurial_source, mercurial_sink
-from subversion import svn_source, debugsvnlog
+from subversion import debugsvnlog, svn_source, svn_sink
 import filemap
 
 import os, shutil
@@ -29,6 +29,7 @@ source_converters = [
 
 sink_converters = [
     ('hg', mercurial_sink),
+    ('svn', svn_sink),
     ]
 
 def convertsource(ui, path, type, rev):
@@ -61,23 +62,10 @@ class converter(object):
         self.ui = ui
         self.opts = opts
         self.commitcache = {}
-        self.revmapfile = revmapfile
-        self.revmapfilefd = None
         self.authors = {}
         self.authorfile = None
 
-        self.maporder = []
-        self.map = {}
-        try:
-            origrevmapfile = open(self.revmapfile, 'r')
-            for l in origrevmapfile:
-                sv, dv = l[:-1].split()
-                if sv not in self.map:
-                    self.maporder.append(sv)
-                self.map[sv] = dv
-            origrevmapfile.close()
-        except IOError:
-            pass
+        self.map = mapfile(ui, revmapfile)
 
         # Read first the dst author map if any
         authorfile = self.dest.authorfile()
@@ -165,16 +153,6 @@ class converter(object):
 
         return s
 
-    def mapentry(self, src, dst):
-        if self.revmapfilefd is None:
-            try:
-                self.revmapfilefd = open(self.revmapfile, "a")
-            except IOError, (errno, strerror):
-                raise util.Abort("Could not open map file %s: %s, %s\n" % (self.revmapfile, errno, strerror))
-        self.map[src] = dst
-        self.revmapfilefd.write("%s %s\n" % (src, dst))
-        self.revmapfilefd.flush()
-
     def writeauthormap(self):
         authorfile = self.authorfile
         if authorfile:
@@ -221,7 +199,7 @@ class converter(object):
                 dest = SKIPREV
             else:
                 dest = self.map[changes]
-            self.mapentry(rev, dest)
+            self.map[rev] = dest
             return
         files, copies = changes
         parents = [self.map[r] for r in commit.parents]
@@ -249,13 +227,14 @@ class converter(object):
                         self.dest.copyfile(copyf, f)
 
         newnode = self.dest.putcommit(filenames, parents, commit)
-        self.mapentry(rev, newnode)
+        self.source.converted(rev, newnode)
+        self.map[rev] = newnode
 
     def convert(self):
         try:
             self.source.before()
             self.dest.before()
-            self.source.setrevmap(self.map, self.maporder)
+            self.source.setrevmap(self.map)
             self.ui.status("scanning source...\n")
             heads = self.source.getheads()
             parents = self.walktree(heads)
@@ -285,7 +264,7 @@ class converter(object):
                 # write another hash correspondence to override the previous
                 # one so we don't end up with extra tag heads
                 if nrev:
-                    self.mapentry(c, nrev)
+                    self.map[c] = nrev
 
             self.writeauthormap()
         finally:
@@ -296,8 +275,7 @@ class converter(object):
             self.dest.after()
         finally:
             self.source.after()
-        if self.revmapfilefd:
-            self.revmapfilefd.close()
+        self.map.close()
 
 def convert(ui, src, dest=None, revmapfile=None, **opts):
     """Convert a foreign SCM repository to a Mercurial one.
@@ -311,6 +289,7 @@ def convert(ui, src, dest=None, revmapfile=None, **opts):
 
     Accepted destination formats:
     - Mercurial
+    - Subversion (history on branches is not preserved)
 
     If no revision is given, all revisions will be converted. Otherwise,
     convert will only import up to the named revision (given in a format
@@ -353,6 +332,24 @@ def convert(ui, src, dest=None, revmapfile=None, **opts):
     The 'rename' directive renames a file or directory.  To rename from a
     subdirectory into the root of the repository, use '.' as the path to
     rename to.
+
+    Back end options:
+
+    --config convert.hg.clonebranches=False   (boolean)
+        hg target: XXX not documented
+    --config convert.hg.saverev=True          (boolean)
+        hg source: allow target to preserve source revision ID
+    --config convert.hg.tagsbranch=default    (branch name)
+        hg target: XXX not documented
+    --config convert.hg.usebranchnames=True   (boolean)
+        hg target: preserve branch names
+
+    --config convert.svn.branches=branches    (directory name)
+        svn source: specify the directory containing branches
+    --config convert.svn.tags=tags            (directory name)
+        svn source: specify the directory containing tags
+    --config convert.svn.trunk=trunk          (directory name)
+        svn source: specify the name of the trunk branch
     """
 
     util._encoding = 'UTF-8'
