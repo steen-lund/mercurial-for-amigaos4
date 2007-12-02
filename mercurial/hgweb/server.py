@@ -10,7 +10,6 @@ import os, sys, errno, urllib, BaseHTTPServer, socket, SocketServer, traceback
 from mercurial import ui, hg, util, templater
 from hgweb_mod import hgweb
 from hgwebdir_mod import hgwebdir
-from request import wsgiapplication
 from mercurial.i18n import gettext as _
 
 def _splitURI(uri):
@@ -85,6 +84,7 @@ class _hgwebhandler(object, BaseHTTPServer.BaseHTTPRequestHandler):
         env['SERVER_NAME'] = self.server.server_name
         env['SERVER_PORT'] = str(self.server.server_port)
         env['REQUEST_URI'] = self.path
+        env['SCRIPT_NAME'] = ''
         env['PATH_INFO'] = path_info
         env['REMOTE_HOST'] = self.client_address[0]
         env['REMOTE_ADDR'] = self.client_address[0]
@@ -121,10 +121,7 @@ class _hgwebhandler(object, BaseHTTPServer.BaseHTTPRequestHandler):
         self.saved_headers = []
         self.sent_headers = False
         self.length = None
-        req = self.server.reqmaker(env, self._start_response)
-        for data in req:
-            if data:
-                self._write(data)
+        self.server.application(env, self._start_response)
 
     def send_headers(self):
         if not self.saved_status:
@@ -250,7 +247,7 @@ def create_server(ui, repo):
                     raise hg.RepoError(_("There is no Mercurial repository here"
                                          " (.hg not found)"))
                 return hgwebobj
-            self.reqmaker = wsgiapplication(make_handler)
+            self.application = make_handler()
 
             addr = address
             if addr in ('', '::'):
