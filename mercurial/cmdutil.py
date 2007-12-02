@@ -571,26 +571,26 @@ class changeset_templater(changeset_printer):
         def showcopies(**args):
             c = [{'name': x[0], 'source': x[1]} for x in copies]
             return showlist('file_copy', c, plural='file_copies', **args)
-
-        if self.ui.debugflag:
-            files = self.repo.status(log.parents(changenode)[0], changenode)[:3]
-            def showfiles(**args):
-                return showlist('file', files[0], **args)
-            def showadds(**args):
-                return showlist('file_add', files[1], **args)
-            def showdels(**args):
-                return showlist('file_del', files[2], **args)
-            def showmanifest(**args):
-                args = args.copy()
-                args.update(dict(rev=self.repo.manifest.rev(changes[0]),
-                                 node=hex(changes[0])))
-                return self.t('manifest', **args)
-        else:
-            def showfiles(**args):
-                return showlist('file', changes[3], **args)
-            showadds = ''
-            showdels = ''
-            showmanifest = ''
+        
+        files = []
+        def getfiles():
+            if not files: 
+                files[:] = self.repo.status(
+                    log.parents(changenode)[0], changenode)[:3]
+            return files
+        def showfiles(**args):
+            return showlist('file', changes[3], **args)
+        def showmods(**args):
+            return showlist('file_mod', getfiles()[0], **args)
+        def showadds(**args):
+            return showlist('file_add', getfiles()[1], **args)
+        def showdels(**args):
+            return showlist('file_del', getfiles()[2], **args)
+        def showmanifest(**args):
+            args = args.copy()
+            args.update(dict(rev=self.repo.manifest.rev(changes[0]),
+                             node=hex(changes[0])))
+            return self.t('manifest', **args)
 
         defprops = {
             'author': changes[1],
@@ -599,6 +599,7 @@ class changeset_templater(changeset_printer):
             'desc': changes[4].strip(),
             'file_adds': showadds,
             'file_dels': showdels,
+            'file_mods': showmods,
             'files': showfiles,
             'file_copies': showcopies,
             'manifest': showmanifest,

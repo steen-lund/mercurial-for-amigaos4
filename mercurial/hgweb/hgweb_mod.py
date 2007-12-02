@@ -6,13 +6,14 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-import os, mimetypes, re, zlib, mimetools, cStringIO, sys
+import errno, os, mimetypes, re, zlib, mimetools, cStringIO, sys
 import tempfile, urllib, bz2
 from mercurial.node import *
 from mercurial.i18n import gettext as _
 from mercurial import mdiff, ui, hg, util, archival, streamclone, patch
 from mercurial import revlog, templater
-from common import get_mtime, staticfile, style_map, paritygen
+from common import ErrorResponse, get_mtime, staticfile, style_map, paritygen
+from request import wsgirequest
 
 def _up(p):
     if p[0] != "/":
@@ -478,6 +479,9 @@ class hgweb(object):
                 short = os.path.basename(remain)
                 files[short] = (f, n)
 
+        if not files:
+            raise ErrorResponse(404, 'Path not found: ' + path)
+
         def filelist(**map):
             fl = files.keys()
             fl.sort()
@@ -668,10 +672,12 @@ class hgweb(object):
         if not os.environ.get('GATEWAY_INTERFACE', '').startswith("CGI/1."):
             raise RuntimeError("This function is only intended to be called while running as a CGI script.")
         import mercurial.hgweb.wsgicgi as wsgicgi
-        from request import wsgiapplication
-        def make_web_app():
-            return self
-        wsgicgi.launch(wsgiapplication(make_web_app))
+        wsgicgi.launch(self)
+
+    def __call__(self, env, respond):
+        req = wsgirequest(env, respond)
+        self.run_wsgi(req)
+        return req
 
     def run_wsgi(self, req):
         def header(**map):
@@ -720,37 +726,21 @@ class hgweb(object):
         def rewrite_request(req):
             '''translate new web interface to traditional format'''
 
-            def spliturl(req):
-                def firstitem(query):
-                    return query.split('&', 1)[0].split(';', 1)[0]
-
-                def normurl(url):
-                    inner = '/'.join([x for x in url.split('/') if x])
-                    tl = len(url) > 1 and url.endswith('/') and '/' or ''
-
-                    return '%s%s%s' % (url.startswith('/') and '/' or '',
-                                       inner, tl)
-
-                root = normurl(urllib.unquote(req.env.get('REQUEST_URI', '').split('?', 1)[0]))
-                pi = normurl(req.env.get('PATH_INFO', ''))
-                if pi:
-                    # strip leading /
-                    pi = pi[1:]
-                    if pi:
-                        root = root[:root.rfind(pi)]
-                    if req.env.has_key('REPO_NAME'):
-                        rn = req.env['REPO_NAME'] + '/'
-                        root += rn
-                        query = pi[len(rn):]
-                    else:
-                        query = pi
-                else:
-                    root += '?'
-                    query = firstitem(req.env['QUERY_STRING'])
-
-                return (root, query)
-
-            req.url, query = spliturl(req)
+            req.url = req.env['SCRIPT_NAME']
+            if not req.url.endswith('/'):
+                req.url += '/'
+            if req.env.has_key('REPO_NAME'):
+                req.url += req.env['REPO_NAME'] + '/'
+            
+            if req.env.get('PATH_INFO'):
+                parts = req.env.get('PATH_INFO').strip('/').split('/')
+                repo_parts = req.env.get('REPO_NAME', '').split('/')
+                if parts[:len(repo_parts)] == repo_parts:
+                    parts = parts[len(repo_parts):]
+                query = '/'.join(parts)
+            else:
+                query = req.env['QUERY_STRING'].split('&', 1)[0]
+                query = query.split(';', 1)[0]
 
             if req.form.has_key('cmd'):
                 # old style
@@ -845,14 +835,20 @@ class hgweb(object):
 
             cmd = req.form['cmd'][0]
 
-            method = getattr(self, 'do_' + cmd, None)
-            if method:
-                try:
-                    method(req)
-                except (hg.RepoError, revlog.RevlogError), inst:
-                    req.write(self.t("error", error=str(inst)))
-            else:
-                req.write(self.t("error", error='No such method: ' + cmd))
+            try:
+                method = getattr(self, 'do_' + cmd)
+                method(req)
+            except revlog.LookupError, err:
+                req.respond(404, self.t(
+                    'error', error='revision not found: %s' % err.name))
+            except (hg.RepoError, revlog.RevlogError), inst:
+                req.respond('500 Internal Server Error',
+                            self.t('error', error=str(inst)))
+            except ErrorResponse, inst:
+                req.respond(inst.code, self.t('error', error=inst.message))
+            except AttributeError:
+                req.respond(400,
+                            self.t('error', error='No such method: ' + cmd))
         finally:
             self.t = None
 
@@ -1038,7 +1034,8 @@ class hgweb(object):
             self.archive(req, req.form['node'][0], type_)
             return
 
-        req.write(self.t("error"))
+        req.respond(400, self.t('error',
+                                error='Unsupported archive type: %s' % type_))
 
     def do_static(self, req):
         fname = req.form['file'][0]
@@ -1047,8 +1044,7 @@ class hgweb(object):
         static = self.config("web", "static",
                              os.path.join(self.templatepath, "static"),
                              untrusted=False)
-        req.write(staticfile(static, fname, req)
-                  or self.t("error", error="%r not found" % fname))
+        req.write(staticfile(static, fname, req))
 
     def do_capabilities(self, req):
         caps = ['lookup', 'changegroupsubset']
@@ -1198,7 +1194,11 @@ class hgweb(object):
                 else:
                     filename = ''
                 error = getattr(inst, 'strerror', 'Unknown error')
-                req.write('%s: %s\n' % (error, filename))
+                if inst.errno == errno.ENOENT:
+                    code = 404
+                else:
+                    code = 500
+                req.respond(code, '%s: %s\n' % (error, filename))
         finally:
             fp.close()
             os.unlink(tempname)

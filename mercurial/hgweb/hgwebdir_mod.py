@@ -9,8 +9,9 @@
 import os, mimetools, cStringIO
 from mercurial.i18n import gettext as _
 from mercurial import ui, hg, util, templater
-from common import get_mtime, staticfile, style_map, paritygen
+from common import ErrorResponse, get_mtime, staticfile, style_map, paritygen
 from hgweb_mod import hgweb
+from request import wsgirequest
 
 # This is a stopgap
 class hgwebdir(object):
@@ -60,10 +61,12 @@ class hgwebdir(object):
         if not os.environ.get('GATEWAY_INTERFACE', '').startswith("CGI/1."):
             raise RuntimeError("This function is only intended to be called while running as a CGI script.")
         import mercurial.hgweb.wsgicgi as wsgicgi
-        from request import wsgiapplication
-        def make_web_app():
-            return self
-        wsgicgi.launch(wsgiapplication(make_web_app))
+        wsgicgi.launch(self)
+
+    def __call__(self, env, respond):
+        req = wsgirequest(env, respond)
+        self.run_wsgi(req)
+        return req
 
     def run_wsgi(self, req):
         def header(**map):
@@ -88,15 +91,11 @@ class hgwebdir(object):
         def config(section, name, default=None, untrusted=True):
             return parentui.config(section, name, default, untrusted)
 
-        url = req.env['REQUEST_URI'].split('?')[0]
+        url = req.env.get('SCRIPT_NAME', '')
         if not url.endswith('/'):
             url += '/'
-        pathinfo = req.env.get('PATH_INFO', '').strip('/') + '/'
-        base = url[:len(url) - len(pathinfo)]
-        if not base.endswith('/'):
-            base += '/'
 
-        staticurl = config('web', 'staticurl') or base + 'static/'
+        staticurl = config('web', 'staticurl') or url + 'static/'
         if not staticurl.endswith('/'):
             staticurl += '/'
 
@@ -155,8 +154,10 @@ class hgwebdir(object):
                 if u.configbool("web", "hidden", untrusted=True):
                     continue
 
-                url = ('/'.join([req.env["REQUEST_URI"].split('?')[0], name])
-                       .replace("//", "/")) + '/'
+                parts = [req.env['PATH_INFO'], name]
+                if req.env['SCRIPT_NAME']:
+                	parts.insert(0, req.env['SCRIPT_NAME'])
+                url = ('/'.join(parts).replace("//", "/")) + '/'
 
                 # update time with local timezone
                 try:
@@ -215,46 +216,47 @@ class hgwebdir(object):
                            **dict(sort)))
 
         try:
-            virtual = req.env.get("PATH_INFO", "").strip('/')
-            if virtual.startswith('static/'):
-                static = os.path.join(templater.templatepath(), 'static')
-                fname = virtual[7:]
-                req.write(staticfile(static, fname, req) or
-                          tmpl('error', error='%r not found' % fname))
-            elif virtual:
-                repos = dict(self.repos)
-                while virtual:
-                    real = repos.get(virtual)
-                    if real:
-                        req.env['REPO_NAME'] = virtual
-                        try:
-                            repo = hg.repository(parentui, real)
-                            hgweb(repo).run_wsgi(req)
-                        except IOError, inst:
-                            req.write(tmpl("error", error=inst.strerror))
-                        except hg.RepoError, inst:
-                            req.write(tmpl("error", error=str(inst)))
-                        return
+            try:
+                virtual = req.env.get("PATH_INFO", "").strip('/')
+                if virtual.startswith('static/'):
+                    static = os.path.join(templater.templatepath(), 'static')
+                    fname = virtual[7:]
+                    req.write(staticfile(static, fname, req))
+                elif virtual:
+                    repos = dict(self.repos)
+                    while virtual:
+                        real = repos.get(virtual)
+                        if real:
+                            req.env['REPO_NAME'] = virtual
+                            try:
+                                repo = hg.repository(parentui, real)
+                                hgweb(repo).run_wsgi(req)
+                                return
+                            except IOError, inst:
+                                raise ErrorResponse(500, inst.strerror)
+                            except hg.RepoError, inst:
+                                raise ErrorResponse(500, str(inst))
 
-                    # browse subdirectories
-                    subdir = virtual + '/'
-                    if [r for r in repos if r.startswith(subdir)]:
-                        makeindex(req, subdir)
-                        return
+                        # browse subdirectories
+                        subdir = virtual + '/'
+                        if [r for r in repos if r.startswith(subdir)]:
+                            makeindex(req, subdir)
+                            return
 
-                    up = virtual.rfind('/')
-                    if up < 0:
-                        break
-                    virtual = virtual[:up]
+                        up = virtual.rfind('/')
+                        if up < 0:
+                            break
+                        virtual = virtual[:up]
 
-                req.write(tmpl("notfound", repo=virtual))
-            else:
-                if req.form.has_key('static'):
-                    static = os.path.join(templater.templatepath(), "static")
-                    fname = req.form['static'][0]
-                    req.write(staticfile(static, fname, req)
-                              or tmpl("error", error="%r not found" % fname))
+                    req.respond(404, tmpl("notfound", repo=virtual))
                 else:
-                    makeindex(req)
+                    if req.form.has_key('static'):
+                        static = os.path.join(templater.templatepath(), "static")
+                        fname = req.form['static'][0]
+                        req.write(staticfile(static, fname, req))
+                    else:
+                        makeindex(req)
+            except ErrorResponse, err:
+                req.respond(err.code, tmpl('error', error=err.message or ''))
         finally:
             tmpl = None
