@@ -125,7 +125,7 @@ def _runcatch(ui, args):
             ui.warn("\n%r\n" % util.ellipsis(inst[1]))
     except ImportError, inst:
         m = str(inst).split()[-1]
-        ui.warn(_("abort: could not import module %s!\n" % m))
+        ui.warn(_("abort: could not import module %s!\n") % m)
         if m in "mpatch bdiff".split():
             ui.warn(_("(did you forget to compile extensions?)\n"))
         elif m in "zlib".split():
@@ -133,6 +133,8 @@ def _runcatch(ui, args):
 
     except util.Abort, inst:
         ui.warn(_("abort: %s\n") % inst)
+    except MemoryError:
+        ui.warn(_("abort: out of memory\n"))
     except SystemExit, inst:
         # Commands shouldn't sys.exit directly, but give a return code.
         # Just in case catch this and and pass exit code to caller.
@@ -329,6 +331,7 @@ def _dispatch(ui, args):
         try:
             repo = hg.repository(ui, path=path)
             ui = repo.ui
+            ui.setconfig("bundle", "mainreporoot", repo.root)
             if not repo.local():
                 raise util.Abort(_("repository '%s' is not local") % path)
         except hg.RepoError:
