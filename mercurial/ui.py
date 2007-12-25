@@ -403,7 +403,12 @@ class ui(object):
                 readline.read_history_file
             except ImportError:
                 pass
-        return raw_input(prompt)
+        line = raw_input(prompt)
+        # When stdin is in binary mode on Windows, it can cause
+        # raw_input() to emit an extra trailing carriage return
+        if os.linesep == '\r\n' and line and line[-1] == '\r':
+            line = line[:-1]
+        return line
 
     def prompt(self, msg, pat=None, default="y", matchflags=0):
         if not self.interactive: return default
@@ -435,9 +440,7 @@ class ui(object):
             f.write(text)
             f.close()
 
-            editor = (os.environ.get("HGEDITOR") or
-                    self.config("ui", "editor") or
-                    os.environ.get("EDITOR", "vi"))
+            editor = self.geteditor()
 
             util.system("%s \"%s\"" % (editor, name),
                         environ={'HGUSER': user},
@@ -459,3 +462,11 @@ class ui(object):
         if self.traceback:
             traceback.print_exc()
         return self.traceback
+
+    def geteditor(self):
+        '''return editor to use'''
+        return (os.environ.get("HGEDITOR") or
+                self.config("ui", "editor") or
+                os.environ.get("VISUAL") or
+                os.environ.get("EDITOR", "vi"))
+
