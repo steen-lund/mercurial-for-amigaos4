@@ -17,7 +17,9 @@ FILES
 
 Mercurial reads configuration data from several files, if they exist.
 The names of these files depend on the system on which Mercurial is
-installed.
+installed. Windows registry keys contain PATH-like strings, every
+part must reference a Mercurial.ini file or be a directory where *.rc
+files will be read.
 
 (Unix)    <install-root>/etc/mercurial/hgrc.d/*.rc::
 (Unix)    <install-root>/etc/mercurial/hgrc::
@@ -29,6 +31,8 @@ installed.
 
 (Unix)    /etc/mercurial/hgrc.d/*.rc::
 (Unix)    /etc/mercurial/hgrc::
+(Windows) HKEY_LOCAL_MACHINE\SOFTWARE\Mercurial::
+  or::
 (Windows) C:\Mercurial\Mercurial.ini::
     Per-system configuration files, for the system on which Mercurial
     is running.  Options in these files apply to all Mercurial
@@ -120,21 +124,26 @@ decode/encode::
 
   NOTE: the tempfile mechanism is recommended for Windows systems,
   where the standard shell I/O redirection operators often have
-  strange effects.  In particular, if you are doing line ending
-  conversion on Windows using the popular dos2unix and unix2dos
-  programs, you *must* use the tempfile mechanism, as using pipes will
-  corrupt the contents of your files.
+  strange effects and may corrupt the contents of your files.
 
-  Tempfile example:
+  The most common usage is for LF <-> CRLF translation on Windows.
+  For this, use the "smart" convertors which check for binary files:
 
+    [extensions]
+    hgext.win32text =
     [encode]
-    # convert files to unix line ending conventions on checkin
-    **.txt = tempfile: dos2unix -n INFILE OUTFILE
-
+    ** = cleverencode:
     [decode]
-    # convert files to windows line ending conventions when writing
-    # them to the working dir
-    **.txt = tempfile: unix2dos -n INFILE OUTFILE
+    ** = cleverdecode:
+
+  or if you only want to translate certain files:
+
+    [extensions]
+    hgext.win32text =
+    [encode]
+    **.txt = dumbencode:
+    [decode]
+    **.txt = dumbdecode:
 
 defaults::
   Use the [defaults] section to define command defaults, i.e. the
@@ -277,7 +286,7 @@ hooks::
     commit to proceed.  Non-zero status will cause the commit to fail.
     Parent changeset IDs are in $HG_PARENT1 and $HG_PARENT2.
   preoutgoing;;
-    Run before computing changes to send from the local repository to
+    Run before collecting changes to send from the local repository to
     another.  Non-zero status will cause failure.  This lets you
     prevent pull over http or ssh.  Also prevents against local pull,
     push (outbound) or bundle commands, but not effective, since you
