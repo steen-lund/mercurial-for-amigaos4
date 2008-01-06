@@ -11,8 +11,8 @@ Adding         b
 Transmitting file data ..
 Committed revision 2.
 % convert to hg once
-assuming destination trunk-hg
-initializing destination trunk-hg repository
+assuming destination test-hg
+initializing destination test-hg repository
 scanning source...
 sorting...
 converting...
@@ -24,8 +24,7 @@ Sending        b
 Transmitting file data ..
 Committed revision 3.
 % test incremental conversion
-assuming destination trunk-hg
-destination trunk-hg is a Mercurial repository
+assuming destination test-hg
 scanning source...
 sorting...
 converting...
@@ -42,6 +41,14 @@ o  1 changeb files: b
 |
 o  0 changea files: b
 
+% test stop revision
+initializing destination stoprev repository
+scanning source...
+sorting...
+converting...
+0 init
+extra:       branch=
+extra:       convert_revision=
 # now tests that it works with trunk/branches/tags layout
 
 % initial svn import
@@ -86,7 +93,6 @@ Sending        letter2.txt
 Transmitting file data .
 Committed revision 11.
 % test incremental conversion
-destination A-hg is a Mercurial repository
 scanning source...
 sorting...
 converting...

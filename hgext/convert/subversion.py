@@ -17,9 +17,13 @@
 
 import locale
 import os
+import re
 import sys
 import cPickle as pickle
-from mercurial import util
+import tempfile
+
+from mercurial import strutil, util
+from mercurial.i18n import _
 
 # Subversion stuff. Works best with very recent Python SVN bindings
 # e.g. SVN 1.5 or backports. Thanks to the bzr folks for enhancing
@@ -28,6 +32,7 @@ from mercurial import util
 from cStringIO import StringIO
 
 from common import NoRepo, commit, converter_source, encodeargs, decodeargs
+from common import commandline, converter_sink, mapfile
 
 try:
     from svn.core import SubversionException, Pool
@@ -46,7 +51,10 @@ def geturl(path):
     except SubversionException:
         pass
     if os.path.isdir(path):
-        return 'file://%s' % os.path.normpath(os.path.abspath(path))
+        path = os.path.normpath(os.path.abspath(path))
+        if os.name == 'nt':
+            path = '/' + path.replace('\\', '/')
+        return 'file://%s' % path
     return path
 
 def optrev(number):
@@ -149,9 +157,15 @@ class svn_source(converter_source):
         self.head = self.revid(self.last_changed)
         self._changescache = None
 
-    def setrevmap(self, revmap, order):
+        if os.path.exists(os.path.join(url, '.svn/entries')):
+            self.wc = url
+        else:
+            self.wc = None
+        self.convertfp = None
+
+    def setrevmap(self, revmap):
         lastrevs = {}
-        for revid in revmap.keys():
+        for revid in revmap.iterkeys():
             uuid, module, revnum = self.revsplit(revid)
             lastrevnum = lastrevs.setdefault(module, revnum)
             if revnum > lastrevnum:
@@ -197,7 +211,7 @@ class svn_source(converter_source):
                 self.heads.append(brev)
 
             if oldmodule:
-                self.tags = '%s/%s' % (oldmodule, tags) 
+                self.tags = '%s/%s' % (oldmodule, tags)
             else:
                 self.tags = '/%s' % tags
 
@@ -292,6 +306,15 @@ class svn_source(converter_source):
         except SubversionException, (inst, num):
             self.ui.note('no tags found at revision %d\n' % start)
         return tags
+
+    def converted(self, rev, destrev):
+        if not self.wc:
+            return
+        if self.convertfp is None:
+            self.convertfp = open(os.path.join(self.wc, '.svn', 'hg-shamap'),
+                                  'a')
+        self.convertfp.write('%s %d\n' % (destrev, self.revnum(rev)))
+        self.convertfp.flush()
 
     # -- helper functions --
 
@@ -664,3 +687,266 @@ class svn_source(converter_source):
         pool = Pool()
         rpath = '/'.join([self.base, path]).strip('/')
         return ['%s/%s' % (path, x) for x in svn.client.ls(rpath, optrev(revnum), True, self.ctx, pool).keys()]
+
+pre_revprop_change = '''#!/bin/sh
+
+REPOS="$1"
+REV="$2"
+USER="$3"
+PROPNAME="$4"
+ACTION="$5"
+
+if [ "$ACTION" = "M" -a "$PROPNAME" = "svn:log" ]; then exit 0; fi
+if [ "$ACTION" = "A" -a "$PROPNAME" = "hg:convert-branch" ]; then exit 0; fi
+if [ "$ACTION" = "A" -a "$PROPNAME" = "hg:convert-rev" ]; then exit 0; fi
+
+echo "Changing prohibited revision property" >&2
+exit 1
+'''
+
+class svn_sink(converter_sink, commandline):
+    commit_re = re.compile(r'Committed revision (\d+).', re.M)
+
+    # iterates sublist of given list for concatenated length is within limit
+    def limit_arglist(self, files):
+        if os.name != 'nt':
+            yield files
+            return
+        # When I tested on WinXP, limit = 2500 is NG, 2400 is OK
+        limit = 2000
+        bytes = 0
+        fl = []
+        for fn in files:
+            b = len(fn) + 1
+            if bytes + b < limit:
+                fl.append(fn)
+                bytes += b
+            else:
+                yield fl
+                fl = [fn]
+                bytes = b
+        if fl:
+            yield fl
+
+    def prerun(self):
+        if self.wc:
+            os.chdir(self.wc)
+
+    def postrun(self):
+        if self.wc:
+            os.chdir(self.cwd)
+
+    def join(self, name):
+        return os.path.join(self.wc, '.svn', name)
+
+    def revmapfile(self):
+        return self.join('hg-shamap')
+
+    def authorfile(self):
+        return self.join('hg-authormap')
+
+    def __init__(self, ui, path):
+        converter_sink.__init__(self, ui, path)
+        commandline.__init__(self, ui, 'svn')
+        self.delete = []
+        self.setexec = []
+        self.delexec = []
+        self.copies = []
+        self.wc = None
+        self.cwd = os.getcwd()
+
+        path = os.path.realpath(path)
+
+        created = False
+        if os.path.isfile(os.path.join(path, '.svn', 'entries')):
+            self.wc = path
+            self.run0('update')
+        else:
+            wcpath = os.path.join(os.getcwd(), os.path.basename(path) + '-wc')
+
+            if os.path.isdir(os.path.dirname(path)):
+                if not os.path.exists(os.path.join(path, 'db', 'fs-type')):
+                    ui.status(_('initializing svn repo %r\n') %
+                              os.path.basename(path))
+                    commandline(ui, 'svnadmin').run0('create', path)
+                    created = path
+                path = path.replace('\\', '/')
+                if not path.startswith('/'):
+                    path = '/' + path
+                path = 'file://' + path
+
+            ui.status(_('initializing svn wc %r\n') % os.path.basename(wcpath))
+            self.run0('checkout', path, wcpath)
+
+            self.wc = wcpath
+        self.opener = util.opener(self.wc)
+        self.wopener = util.opener(self.wc)
+        self.childmap = mapfile(ui, self.join('hg-childmap'))
+        self.is_exec = util.checkexec(self.wc) and util.is_exec or None
+
+        if created:
+            hook = os.path.join(created, 'hooks', 'pre-revprop-change')
+            fp = open(hook, 'w')
+            fp.write(pre_revprop_change)
+            fp.close()
+            util.set_flags(hook, "x")
+
+        xport = transport.SvnRaTransport(url=geturl(path))
+        self.uuid = svn.ra.get_uuid(xport.ra)
+
+    def wjoin(self, *names):
+        return os.path.join(self.wc, *names)
+
+    def putfile(self, filename, flags, data):
+        if 'l' in flags:
+            self.wopener.symlink(data, filename)
+        else:
+            try:
+                if os.path.islink(self.wjoin(filename)):
+                    os.unlink(filename)
+            except OSError:
+                pass
+            self.wopener(filename, 'w').write(data)
+
+            if self.is_exec:
+                was_exec = self.is_exec(self.wjoin(filename))
+            else:
+                # On filesystems not supporting execute-bit, there is no way
+                # to know if it is set but asking subversion. Setting it
+                # systematically is just as expensive and much simpler.
+                was_exec = 'x' not in flags
+
+            util.set_flags(self.wjoin(filename), flags)
+            if was_exec:
+                if 'x' not in flags:
+                    self.delexec.append(filename)
+            else:
+                if 'x' in flags:
+                    self.setexec.append(filename)
+
+    def delfile(self, name):
+        self.delete.append(name)
+
+    def copyfile(self, source, dest):
+        self.copies.append([source, dest])
+
+    def _copyfile(self, source, dest):
+        # SVN's copy command pukes if the destination file exists, but
+        # our copyfile method expects to record a copy that has
+        # already occurred.  Cross the semantic gap.
+        wdest = self.wjoin(dest)
+        exists = os.path.exists(wdest)
+        if exists:
+            fd, tempname = tempfile.mkstemp(
+                prefix='hg-copy-', dir=os.path.dirname(wdest))
+            os.close(fd)
+            os.unlink(tempname)
+            os.rename(wdest, tempname)
+        try:
+            self.run0('copy', source, dest)
+        finally:
+            if exists:
+                try:
+                    os.unlink(wdest)
+                except OSError:
+                    pass
+                os.rename(tempname, wdest)
+
+    def dirs_of(self, files):
+        dirs = set()
+        for f in files:
+            if os.path.isdir(self.wjoin(f)):
+                dirs.add(f)
+            for i in strutil.rfindall(f, '/'):
+                dirs.add(f[:i])
+        return dirs
+
+    def add_dirs(self, files):
+        add_dirs = [d for d in self.dirs_of(files)
+                    if not os.path.exists(self.wjoin(d, '.svn', 'entries'))]
+        if add_dirs:
+            add_dirs.sort()
+            for fl in self.limit_arglist(add_dirs):
+                self.run('add', non_recursive=True, quiet=True, *fl)
+        return add_dirs
+
+    def add_files(self, files):
+        if files:
+            for fl in self.limit_arglist(files):
+                self.run('add', quiet=True, *fl)
+        return files
+
+    def tidy_dirs(self, names):
+        dirs = list(self.dirs_of(names))
+        dirs.sort(reverse=True)
+        deleted = []
+        for d in dirs:
+            wd = self.wjoin(d)
+            if os.listdir(wd) == '.svn':
+                self.run0('delete', d)
+                deleted.append(d)
+        return deleted
+
+    def addchild(self, parent, child):
+        self.childmap[parent] = child
+
+    def revid(self, rev):
+        return u"svn:%s@%s" % (self.uuid, rev)
+
+    def putcommit(self, files, parents, commit):
+        for parent in parents:
+            try:
+                return self.revid(self.childmap[parent])
+            except KeyError:
+                pass
+        entries = set(self.delete)
+        files = util.frozenset(files)
+        entries.update(self.add_dirs(files.difference(entries)))
+        if self.copies:
+            for s, d in self.copies:
+                self._copyfile(s, d)
+            self.copies = []
+        if self.delete:
+            for fl in self.limit_arglist(self.delete):
+                self.run0('delete', *fl)
+            self.delete = []
+        entries.update(self.add_files(files.difference(entries)))
+        entries.update(self.tidy_dirs(entries))
+        if self.delexec:
+            for fl in self.limit_arglist(self.delexec):
+                self.run0('propdel', 'svn:executable', *fl)
+            self.delexec = []
+        if self.setexec:
+            for fl in self.limit_arglist(self.setexec):
+                self.run0('propset', 'svn:executable', '*', *fl)
+            self.setexec = []
+
+        fd, messagefile = tempfile.mkstemp(prefix='hg-convert-')
+        fp = os.fdopen(fd, 'w')
+        fp.write(commit.desc)
+        fp.close()
+        try:
+            output = self.run0('commit',
+                               username=util.shortuser(commit.author),
+                               file=messagefile,
+                               encoding='utf-8')
+            try:
+                rev = self.commit_re.search(output).group(1)
+            except AttributeError:
+                self.ui.warn(_('unexpected svn output:\n'))
+                self.ui.warn(output)
+                raise util.Abort(_('unable to cope with svn output'))
+            if commit.rev:
+                self.run('propset', 'hg:convert-rev', commit.rev,
+                         revprop=True, revision=rev)
+            if commit.branch and commit.branch != 'default':
+                self.run('propset', 'hg:convert-branch', commit.branch,
+                         revprop=True, revision=rev)
+            for parent in parents:
+                self.addchild(parent, rev)
+            return self.revid(rev)
+        finally:
+            os.unlink(messagefile)
+
+    def puttags(self, tags):
+        self.ui.warn(_('XXX TAGS NOT IMPLEMENTED YET\n'))

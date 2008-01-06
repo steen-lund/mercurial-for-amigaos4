@@ -115,19 +115,19 @@ def patchbomb(ui, repo, *revs, **opts):
     '''
 
     def prompt(prompt, default = None, rest = ': ', empty_ok = False):
-        try:
-            # readline gives raw_input editing capabilities, but is not
-            # present on windows
-            import readline
-        except ImportError: pass
-
-        if default: prompt += ' [%s]' % default
+        if not ui.interactive:
+            return default
+        if default:
+            prompt += ' [%s]' % default
         prompt += rest
         while True:
-            r = raw_input(prompt)
-            if r: return r
-            if default is not None: return default
-            if empty_ok: return r
+            r = ui.prompt(prompt, default=default)
+            if r:
+                return r
+            if default is not None:
+                return default
+            if empty_ok:
+                return r
             ui.warn(_('Please enter a valid value.\n'))
 
     def confirm(s, denial):
@@ -153,27 +153,32 @@ def patchbomb(ui, repo, *revs, **opts):
         body = ''
         for line in patch:
             if line.startswith('#'):
-                if line.startswith('# Node ID'): node = line.split()[-1]
+                if line.startswith('# Node ID'):
+                    node = line.split()[-1]
                 continue
-            if (line.startswith('diff -r')
-                or line.startswith('diff --git')):
+            if line.startswith('diff -r') or line.startswith('diff --git'):
                 break
             desc.append(line)
-        if not node: raise ValueError
+        if not node:
+            raise ValueError
 
         #body = ('\n'.join(desc[1:]).strip() or
         #        'Patch subject is complete summary.')
         #body += '\n\n\n'
 
         if opts['plain']:
-            while patch and patch[0].startswith('# '): patch.pop(0)
-            if patch: patch.pop(0)
-            while patch and not patch[0].strip(): patch.pop(0)
+            while patch and patch[0].startswith('# '):
+                patch.pop(0)
+            if patch:
+                patch.pop(0)
+            while patch and not patch[0].strip():
+                patch.pop(0)
         if opts['diffstat']:
             body += cdiffstat('\n'.join(desc), patch) + '\n\n'
         if opts['attach']:
             msg = email.MIMEMultipart.MIMEMultipart()
-            if body: msg.attach(email.MIMEText.MIMEText(body, 'plain'))
+            if body:
+                msg.attach(email.MIMEText.MIMEText(body, 'plain'))
             p = email.MIMEText.MIMEText('\n'.join(patch), 'x-patch')
             binnode = bin(node)
             # if node is mq patch, it will have patch file name as tag
@@ -183,7 +188,7 @@ def patchbomb(ui, repo, *revs, **opts):
                 patchname = patchname[0]
             elif total > 1:
                 patchname = cmdutil.make_filename(repo, '%b-%n.patch',
-                                                   binnode, idx, total)
+                                                  binnode, idx, total)
             else:
                 patchname = cmdutil.make_filename(repo, '%b.patch', binnode)
             p['Content-Disposition'] = 'inline; filename=' + patchname
@@ -238,7 +243,8 @@ def patchbomb(ui, repo, *revs, **opts):
 
     cmdutil.setremoteconfig(ui, opts)
     if opts.get('outgoing') and opts.get('bundle'):
-        raise util.Abort(_("--outgoing mode always on with --bundle; do not re-specify --outgoing"))
+        raise util.Abort(_("--outgoing mode always on with --bundle;"
+                           " do not re-specify --outgoing"))
 
     if opts.get('outgoing') or opts.get('bundle'):
         if len(revs) > 1:
@@ -298,7 +304,8 @@ def patchbomb(ui, repo, *revs, **opts):
         jumbo = []
         msgs = []
 
-        ui.write(_('This patch series consists of %d patches.\n\n') % len(patches))
+        ui.write(_('This patch series consists of %d patches.\n\n')
+                 % len(patches))
 
         for p, i in zip(patches, xrange(len(patches))):
             jumbo.extend(p)
@@ -308,16 +315,16 @@ def patchbomb(ui, repo, *revs, **opts):
             tlen = len(str(len(patches)))
 
             subj = '[PATCH %0*d of %d] %s' % (
-                tlen, 0,
-                len(patches),
+                tlen, 0, len(patches),
                 opts['subject'] or
-                prompt('Subject:', rest = ' [PATCH %0*d of %d] ' % (tlen, 0,
-                    len(patches))))
+                prompt('Subject:',
+                       rest=' [PATCH %0*d of %d] ' % (tlen, 0, len(patches))))
 
             body = ''
             if opts['diffstat']:
                 d = cdiffstat(_('Final summary:\n'), jumbo)
-                if d: body = '\n' + d
+                if d:
+                    body = '\n' + d
 
             body = getdescription(body, sender)
             msg = email.MIMEText.MIMEText(body)
@@ -385,8 +392,10 @@ def patchbomb(ui, repo, *revs, **opts):
         start_time = (start_time[0] + 1, start_time[1])
         m['From'] = sender
         m['To'] = ', '.join(to)
-        if cc: m['Cc']  = ', '.join(cc)
-        if bcc: m['Bcc'] = ', '.join(bcc)
+        if cc:
+            m['Cc']  = ', '.join(cc)
+        if bcc:
+            m['Bcc'] = ', '.join(bcc)
         if opts['test']:
             ui.status('Displaying ', m['Subject'], ' ...\n')
             ui.flush()

@@ -81,18 +81,6 @@ def locallen(s):
     """Find the length in characters of a local string"""
     return len(s.decode(_encoding, "replace"))
 
-def localsub(s, a, b=None):
-    try:
-        u = s.decode(_encoding, _encodingmode)
-        if b is not None:
-            u = u[a:b]
-        else:
-            u = u[:a]
-        return u.encode(_encoding, _encodingmode)
-    except UnicodeDecodeError, inst:
-        sub = s[max(0, inst.start-10), inst.start+10]
-        raise Abort(_("decoding near '%s': %s!") % (sub, inst))
-
 # used by parsedate
 defaultdateformats = (
     '%Y-%m-%d %H:%M:%S',
@@ -236,13 +224,7 @@ def binary(s):
 
 def unique(g):
     """return the uniq elements of iterable g"""
-    seen = {}
-    l = []
-    for f in g:
-        if f not in seen:
-            seen[f] = 1
-            l.append(f)
-    return l
+    return dict.fromkeys(g).keys()
 
 class Abort(Exception):
     """Raised if a command needs to print an error and exit."""
@@ -772,12 +754,9 @@ def fstat(fp):
 
 posixfile = file
 
-def is_win_9x():
-    '''return true if run on windows 95, 98 or me.'''
-    try:
-        return sys.getwindowsversion()[3] == 1
-    except AttributeError:
-        return os.name == 'nt' and 'command' in os.environ.get('comspec', '')
+def openhardlinks():
+    '''return true if it is safe to hold open file handles to hardlinks'''
+    return True
 
 getuser_fallback = None
 
@@ -851,18 +830,23 @@ def checkexec(path):
 
     Requires a directory (like /foo/.hg)
     """
+
+    # VFAT on some Linux versions can flip mode but it doesn't persist
+    # a FS remount. Frequently we can detect it if files are created
+    # with exec bit on.
+
     try:
         EXECFLAGS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         fh, fn = tempfile.mkstemp("", "", path)
-        os.close(fh)
-        m = os.stat(fn).st_mode
-        # VFAT on Linux can flip mode but it doesn't persist a FS remount.
-        # frequently we can detect it if files are created with exec bit on.
-        new_file_has_exec = m & EXECFLAGS
-        os.chmod(fn, m ^ EXECFLAGS)
-        exec_flags_cannot_flip = (os.stat(fn).st_mode == m)
-        os.unlink(fn)
-    except (IOError,OSError):
+        try:
+            os.close(fh)
+            m = os.stat(fn).st_mode & 0777
+            new_file_has_exec = m & EXECFLAGS
+            os.chmod(fn, m ^ EXECFLAGS)
+            exec_flags_cannot_flip = ((os.stat(fn).st_mode & 0777) == m)
+        finally:
+            os.unlink(fn)
+    except (IOError, OSError):
         # we don't care, the user probably won't be able to commit anyway
         return False
     return not (new_file_has_exec or exec_flags_cannot_flip)
@@ -919,7 +903,15 @@ if os.name == 'nt':
 
         def write(self, s):
             try:
-                return self.fp.write(s)
+                # This is workaround for "Not enough space" error on
+                # writing large size of data to console.
+                limit = 16000
+                l = len(s)
+                start = 0
+                while start < l:
+                    end = start + limit
+                    self.fp.write(s[start:end])
+                    start = end
             except IOError, inst:
                 if inst.errno != 0: raise
                 self.close()
@@ -934,6 +926,16 @@ if os.name == 'nt':
                 raise IOError(errno.EPIPE, 'Broken pipe')
 
     sys.stdout = winstdout(sys.stdout)
+
+    def _is_win_9x():
+        '''return true if run on windows 95, 98 or me.'''
+        try:
+            return sys.getwindowsversion()[3] == 1
+        except AttributeError:
+            return 'command' in os.environ.get('comspec', '')
+
+    def openhardlinks():
+        return not _is_win_9x and "win32api" in locals()
 
     def system_rcpath():
         try:
@@ -960,14 +962,17 @@ if os.name == 'nt':
             pf = pf[1:-1] # Remove the quotes
         return pf
 
+    def sshargs(sshcmd, host, user, port):
+        '''Build argument list for ssh or Plink'''
+        pflag = 'plink' in sshcmd.lower() and '-P' or '-p'
+        args = user and ("%s@%s" % (user, host)) or host
+        return port and ("%s %s %s" % (args, pflag, port)) or args
+
     def testpid(pid):
         '''return False if pid dead, True if running or not known'''
         return True
 
-    def set_exec(f, mode):
-        pass
-
-    def set_link(f, mode):
+    def set_flags(f, flags):
         pass
 
     def set_binary(fd):
@@ -1060,7 +1065,7 @@ if os.name == 'nt':
     try:
         # override functions with win32 versions if possible
         from util_win32 import *
-        if not is_win_9x():
+        if not _is_win_9x():
             posixfile = posixfile_nt
     except ImportError:
         pass
@@ -1102,51 +1107,42 @@ else:
                 pf = pf[1:-1] # Remove the quotes
         return pf
 
+    def sshargs(sshcmd, host, user, port):
+        '''Build argument list for ssh'''
+        args = user and ("%s@%s" % (user, host)) or host
+        return port and ("%s -p %s" % (args, port)) or args
+
     def is_exec(f):
         """check whether a file is executable"""
         return (os.lstat(f).st_mode & 0100 != 0)
 
-    def force_chmod(f, s):
-        try:
-            os.chmod(f, s)
-        except OSError, inst:
-            if inst.errno != errno.EPERM:
-                raise
-            # maybe we don't own the file, try copying it
-            new_f = mktempcopy(f)
-            os.chmod(new_f, s)
-            os.rename(new_f, f)
-
-    def set_exec(f, mode):
+    def set_flags(f, flags):
         s = os.lstat(f).st_mode
-        if stat.S_ISLNK(s) or (s & 0100 != 0) == mode:
+        x = "x" in flags
+        l = "l" in flags
+        if l:
+            if not stat.S_ISLNK(s):
+                # switch file to link
+                data = file(f).read()
+                os.unlink(f)
+                os.symlink(data, f)
+            # no chmod needed at this point
             return
-        if mode:
-            # Turn on +x for every +r bit when making a file executable
-            # and obey umask.
-            force_chmod(f, s | (s & 0444) >> 2 & ~_umask)
-        else:
-            force_chmod(f, s & 0666)
-
-    def set_link(f, mode):
-        """make a file a symbolic link/regular file
-
-        if a file is changed to a link, its contents become the link data
-        if a link is changed to a file, its link data become its contents
-        """
-
-        m = os.path.islink(f)
-        if m == bool(mode):
-            return
-
-        if mode: # switch file to link
-            data = file(f).read()
-            os.unlink(f)
-            os.symlink(data, f)
-        else:
+        if stat.S_ISLNK(s):
+            # switch link to file
             data = os.readlink(f)
             os.unlink(f)
             file(f, "w").write(data)
+            s = 0666 & ~_umask # avoid restatting for chmod
+
+        sx = s & 0100
+        if x and not sx:
+            # Turn on +x for every +r bit when making a file executable
+            # and obey umask.
+            os.chmod(f, s | (s & 0444) >> 2 & ~_umask)
+        elif not x and sx:
+            # Turn off all +x bits
+            os.chmod(f, s & 0666)
 
     def set_binary(fd):
         pass
@@ -1299,7 +1295,7 @@ def mktempcopy(name, emptyok=False):
     # what we want.  If the original file already exists, just copy
     # its mode.  Otherwise, manually obey umask.
     try:
-        st_mode = os.lstat(name).st_mode
+        st_mode = os.lstat(name).st_mode & 0777
     except OSError, inst:
         if inst.errno != errno.ENOENT:
             raise
@@ -1712,31 +1708,13 @@ def uirepr(s):
     return repr(s).replace('\\\\', '\\')
 
 def hidepassword(url):
-    '''replaces the password in the url string by three asterisks (***)
-    
-    >>> hidepassword('http://www.example.com/some/path#fragment')
-    'http://www.example.com/some/path#fragment'
-    >>> hidepassword('http://me@www.example.com/some/path#fragment')
-    'http://me@www.example.com/some/path#fragment'
-    >>> hidepassword('http://me:simplepw@www.example.com/path#frag')
-    'http://me:***@www.example.com/path#frag'
-    >>> hidepassword('http://me:complex:pw@www.example.com/path#frag')
-    'http://me:***@www.example.com/path#frag'
-    >>> hidepassword('/path/to/repo')
-    '/path/to/repo'
-    >>> hidepassword('relative/path/to/repo')
-    'relative/path/to/repo'
-    >>> hidepassword('c:\\\\path\\\\to\\\\repo')
-    'c:\\\\path\\\\to\\\\repo'
-    >>> hidepassword('c:/path/to/repo')
-    'c:/path/to/repo'
-    >>> hidepassword('bundle://path/to/bundle')
-    'bundle://path/to/bundle'
-    '''
-    url_parts = list(urlparse.urlparse(url))
-    host_with_pw_pattern = re.compile('^([^:]*):([^@]*)@(.*)$')
-    if host_with_pw_pattern.match(url_parts[1]):
-        url_parts[1] = re.sub(host_with_pw_pattern, r'\1:***@\3',
-            url_parts[1])
-    return urlparse.urlunparse(url_parts)
+    '''hide user credential in a url string'''
+    scheme, netloc, path, params, query, fragment = urlparse.urlparse(url)
+    netloc = re.sub('([^:]*):([^@]*)@(.*)', r'\1:***@\3', netloc)
+    return urlparse.urlunparse((scheme, netloc, path, params, query, fragment))
 
+def removeauth(url):
+    '''remove all authentication information from a url string'''
+    scheme, netloc, path, params, query, fragment = urlparse.urlparse(url)
+    netloc = netloc[netloc.find('@')+1:]
+    return urlparse.urlunparse((scheme, netloc, path, params, query, fragment))
