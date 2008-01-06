@@ -6,7 +6,24 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-import os, mimetypes
+import errno, mimetypes, os
+
+class ErrorResponse(Exception):
+    def __init__(self, code, message=None):
+        Exception.__init__(self)
+        self.code = code
+        if message:
+            self.message = message
+        else:
+            self.message = _statusmessage(code)
+
+def _statusmessage(code):
+    from BaseHTTPServer import BaseHTTPRequestHandler
+    responses = BaseHTTPRequestHandler.responses
+    return responses.get(code, ('Error', 'Unknown error'))[0]
+
+def statusmessage(code):
+    return '%d %s' % (code, _statusmessage(code))
 
 def get_mtime(repo_path):
     store_path = os.path.join(repo_path, ".hg")
@@ -40,9 +57,13 @@ def staticfile(directory, fname, req):
         req.header([('Content-type', ct),
                     ('Content-length', str(os.path.getsize(path)))])
         return file(path, 'rb').read()
-    except (TypeError, OSError):
-        # illegal fname or unreadable file
-        return ""
+    except TypeError:
+        raise ErrorResponse(500, 'illegal file name')
+    except OSError, err:
+        if err.errno == errno.ENOENT:
+            raise ErrorResponse(404)
+        else:
+            raise ErrorResponse(500, err.strerror)
 
 def style_map(templatepath, style):
     """Return path to mapfile for a given style.
@@ -76,3 +97,12 @@ def paritygen(stripecount, offset=0):
             parity = 1 - parity
             count = 0
 
+def get_contact(config):
+    """Return repo contact information or empty string.
+
+    web.contact is the primary source, but if that is not set, try
+    ui.username or $EMAIL as a fallback to display something useful.
+    """
+    return (config("web", "contact") or
+            config("ui", "username") or
+            os.environ.get("EMAIL") or "")

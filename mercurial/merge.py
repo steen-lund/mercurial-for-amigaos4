@@ -356,13 +356,23 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
         if not f2:
             f2 = f
             fa = f
-        a, b, c = ma.execf(fa), m1.execf(f), m2.execf(f2)
-        if ((a^b) | (a^c)) ^ a:
-            return 'x'
-        a, b, c = ma.linkf(fa), m1.linkf(f), m2.linkf(f2)
-        if ((a^b) | (a^c)) ^ a:
-            return 'l'
-        return ''
+        a, m, n = ma.flags(fa), m1.flags(f), m2.flags(f2)
+        if m == n: # flags agree
+            return m # unchanged
+        if m and n: # flags are set but don't agree
+            if not a: # both differ from parent
+                r = repo.ui.prompt(
+                    _(" conflicting flags for %s\n"
+                      "(n)one, e(x)ec or sym(l)ink?") % f, "[nxl]", "n")
+                return r != "n" and r or ''
+            if m == a:
+                return n # changed from m to n
+            return m # changed from n to m
+        if m and m != a: # changed from a to m
+            return m
+        if n and n != a: # changed from a to n
+            return n
+        return '' # flag was cleared
 
     def act(msg, m, f, *args):
         repo.ui.debug(" %s: %s -> %s\n" % (f, msg, m))
@@ -386,27 +396,31 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
         if partial and not partial(f):
             continue
         if f in m2:
+            if overwrite or backwards:
+                rflags = m2.flags(f)
+            else:
+                rflags = fmerge(f)
             # are files different?
             if n != m2[f]:
                 a = ma.get(f, nullid)
-                # are both different from the ancestor?
-                if not overwrite and n != a and m2[f] != a:
-                    act("versions differ", "m", f, f, f, fmerge(f), False)
                 # are we clobbering?
-                # is remote's version newer?
+                if overwrite:
+                    act("clobbering", "g", f, rflags)
                 # or are we going back in time and clean?
-                elif overwrite or m2[f] != a or (backwards and not n[20:]):
-                    act("remote is newer", "g", f, m2.flags(f))
-                # local is newer, not overwrite, check mode bits
-                elif fmerge(f) != m1.flags(f):
-                    act("update permissions", "e", f, m2.flags(f))
-            # contents same, check mode bits
-            elif m1.flags(f) != m2.flags(f):
-                # are we clobbering?
+                elif backwards and not n[20:]:
+                    act("reverting", "g", f, rflags)
+                # are both different from the ancestor?
+                elif n != a and m2[f] != a:
+                    act("versions differ", "m", f, f, f, rflags, False)
                 # is remote's version newer?
-                # or are we going back?
-                if overwrite or fmerge(f) != m1.flags(f) or backwards:
-                    act("update permissions", "e", f, m2.flags(f))
+                elif m2[f] != a:
+                    act("remote is newer", "g", f, rflags)
+                # local is newer, not overwrite, check mode bits
+                elif m1.flags(f) != rflags:
+                    act("update permissions", "e", f, rflags)
+            # contents same, check mode bits
+            elif m1.flags(f) != rflags:
+                act("update permissions", "e", f, rflags)
         elif f in copied:
             continue
         elif f in copy:
@@ -506,7 +520,7 @@ def applyupdates(repo, action, wctx, mctx):
                     updated += 1
                 else:
                     merged += 1
-            util.set_exec(repo.wjoin(fd), "x" in flags)
+            util.set_flags(repo.wjoin(fd), flags)
             if f != fd and move and util.lexists(repo.wjoin(f)):
                 repo.ui.debug(_("removing %s\n") % f)
                 os.unlink(repo.wjoin(f))
@@ -535,7 +549,7 @@ def applyupdates(repo, action, wctx, mctx):
                 repo.ui.warn(" %s\n" % nf)
         elif m == "e": # exec
             flags = a[2]
-            util.set_exec(repo.wjoin(f), flags)
+            util.set_flags(repo.wjoin(f), flags)
 
     return updated, merged, removed, unresolved
 
@@ -612,7 +626,10 @@ def update(repo, node, branchmerge, force, partial):
             try:
                 node = repo.branchtags()[wc.branch()]
             except KeyError:
-                raise util.Abort(_("branch %s not found") % wc.branch())
+                if wc.branch() == "default": # no default branch!
+                    node = repo.lookup("tip") # update to tip
+                else:
+                    raise util.Abort(_("branch %s not found") % wc.branch())
         overwrite = force and not branchmerge
         forcemerge = force and branchmerge
         pl = wc.parents()

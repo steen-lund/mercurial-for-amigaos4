@@ -16,6 +16,7 @@ import win32api
 from i18n import _
 import errno, os, pywintypes, win32con, win32file, win32process
 import cStringIO, winerror
+import osutil
 from win32com.shell import shell,shellcon
 
 class WinError:
@@ -185,7 +186,25 @@ def system_rcpath_win32():
         filename = win32process.GetModuleFileNameEx(proc, 0)
     except:
         filename = win32api.GetModuleFileName(0)
-    return [os.path.join(os.path.dirname(filename), 'mercurial.ini')]
+    # Use mercurial.ini found in directory with hg.exe
+    progrc = os.path.join(os.path.dirname(filename), 'mercurial.ini')
+    if os.path.isfile(progrc):
+        return [progrc]
+    # else look for a system rcpath in the registry
+    try:
+        value = win32api.RegQueryValue(
+                win32con.HKEY_LOCAL_MACHINE, 'SOFTWARE\\Mercurial')
+        rcpath = []
+        for p in value.split(os.pathsep):
+            if p.lower().endswith('mercurial.ini'):
+                rcpath.append(p)
+            elif os.path.isdir(p):
+                for f, kind in osutil.listdir(p):
+                    if f.endswith('.rc'):
+                        rcpath.append(os.path.join(p, f))
+        return rcpath
+    except pywintypes.error:
+        return []
 
 def user_rcpath_win32():
     '''return os-specific hgrc search path to the user dir'''

@@ -8,16 +8,10 @@
 
 import socket, cgi, errno
 from mercurial.i18n import gettext as _
+from common import ErrorResponse, statusmessage
 
-class wsgiapplication(object):
-    def __init__(self, destmaker):
-        self.destmaker = destmaker
-
-    def __call__(self, wsgienv, start_response):
-        return _wsgirequest(self.destmaker(), wsgienv, start_response)
-
-class _wsgirequest(object):
-    def __init__(self, destination, wsgienv, start_response):
+class wsgirequest(object):
+    def __init__(self, wsgienv, start_response):
         version = wsgienv['wsgi.version']
         if (version < (1, 0)) or (version >= (2, 0)):
             raise RuntimeError("Unknown and unsupported WSGI version %d.%d"
@@ -32,7 +26,6 @@ class _wsgirequest(object):
         self.form = cgi.parse(self.inp, self.env, keep_blank_values=1)
         self.start_response = start_response
         self.headers = []
-        destination.run_wsgi(self)
 
     out = property(lambda self: self)
 
@@ -42,25 +35,32 @@ class _wsgirequest(object):
     def read(self, count=-1):
         return self.inp.read(count)
 
-    def write(self, *things):
+    def respond(self, status, *things):
         for thing in things:
             if hasattr(thing, "__iter__"):
                 for part in thing:
-                    self.write(part)
+                    self.respond(status, part)
             else:
                 thing = str(thing)
                 if self.server_write is None:
                     if not self.headers:
                         raise RuntimeError("request.write called before headers sent (%s)." % thing)
-                    self.server_write = self.start_response('200 Script output follows',
+                    if isinstance(status, ErrorResponse):
+                        status = statusmessage(status.code)
+                    elif isinstance(status, int):
+                        status = statusmessage(status)
+                    self.server_write = self.start_response(status,
                                                             self.headers)
                     self.start_response = None
-                    self.headers = None
+                    self.headers = []
                 try:
                     self.server_write(thing)
                 except socket.error, inst:
                     if inst[0] != errno.ECONNRESET:
                         raise
+
+    def write(self, *things):
+        self.respond('200 Script output follows', *things)
 
     def writelines(self, lines):
         for line in lines:
@@ -84,3 +84,9 @@ class _wsgirequest(object):
         if length:
             headers.append(('Content-length', str(length)))
         self.header(headers)
+
+def wsgiapplication(app_maker):
+    application = app_maker()
+    def run_wsgi(env, respond):
+        application(env, respond)
+    return run_wsgi
