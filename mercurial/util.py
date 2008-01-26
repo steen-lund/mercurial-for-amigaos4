@@ -81,18 +81,6 @@ def locallen(s):
     """Find the length in characters of a local string"""
     return len(s.decode(_encoding, "replace"))
 
-def localsub(s, a, b=None):
-    try:
-        u = s.decode(_encoding, _encodingmode)
-        if b is not None:
-            u = u[a:b]
-        else:
-            u = u[:a]
-        return u.encode(_encoding, _encodingmode)
-    except UnicodeDecodeError, inst:
-        sub = s[max(0, inst.start-10), inst.start+10]
-        raise Abort(_("decoding near '%s': %s!") % (sub, inst))
-
 # used by parsedate
 defaultdateformats = (
     '%Y-%m-%d %H:%M:%S',
@@ -274,7 +262,7 @@ def globre(pat, head='^', tail='$'):
     "convert a glob pattern into a regexp"
     i, n = 0, len(pat)
     res = ''
-    group = False
+    group = 0
     def peek(): return i < n and pat[i]
     while i < n:
         c = pat[i]
@@ -304,11 +292,11 @@ def globre(pat, head='^', tail='$'):
                     stuff = '\\' + stuff
                 res = '%s[%s]' % (res, stuff)
         elif c == '{':
-            group = True
+            group += 1
             res += '(?:'
         elif c == '}' and group:
             res += ')'
-            group = False
+            group -= 1
         elif c == ',' and group:
             res += '|'
         elif c == '\\':
@@ -340,7 +328,7 @@ def pathto(root, n1, n2):
         if os.path.splitdrive(root)[0] != os.path.splitdrive(n1)[0]:
             return os.path.join(root, localpath(n2))
         n2 = '/'.join((pconvert(root), n2))
-    a, b = n1.split(os.sep), n2.split('/')
+    a, b = splitpath(n1), n2.split('/')
     a.reverse()
     b.reverse()
     while a and b and a[-1] == b[-1]:
@@ -353,7 +341,7 @@ def canonpath(root, cwd, myname):
     """return the canonical path of myname, given cwd and root"""
     if root == os.sep:
         rootsep = os.sep
-    elif root.endswith(os.sep):
+    elif endswithsep(root):
         rootsep = root
     else:
         rootsep = root + os.sep
@@ -704,7 +692,7 @@ class path_auditor(object):
         if path in self.audited:
             return
         normpath = os.path.normcase(path)
-        parts = normpath.split(os.sep)
+        parts = splitpath(normpath)
         if (os.path.splitdrive(path)[0] or parts[0] in ('.hg', '')
             or os.pardir in parts):
             raise Abort(_("path contains illegal component: %s") % path)
@@ -725,14 +713,15 @@ class path_auditor(object):
                       os.path.isdir(os.path.join(curpath, '.hg'))):
                     raise Abort(_('path %r is inside repo %r') %
                                 (path, prefix))
-
+        parts.pop()
         prefixes = []
-        for c in strutil.rfindall(normpath, os.sep):
-            prefix = normpath[:c]
+        for n in range(len(parts)):
+            prefix = os.sep.join(parts)
             if prefix in self.auditeddir:
                 break
             check(prefix)
             prefixes.append(prefix)
+            parts.pop()
 
         self.audited.add(path)
         # only add prefixes to the cache after checking everything: we don't
@@ -766,12 +755,9 @@ def fstat(fp):
 
 posixfile = file
 
-def is_win_9x():
-    '''return true if run on windows 95, 98 or me.'''
-    try:
-        return sys.getwindowsversion()[3] == 1
-    except AttributeError:
-        return os.name == 'nt' and 'command' in os.environ.get('comspec', '')
+def openhardlinks():
+    '''return true if it is safe to hold open file handles to hardlinks'''
+    return True
 
 getuser_fallback = None
 
@@ -845,18 +831,23 @@ def checkexec(path):
 
     Requires a directory (like /foo/.hg)
     """
+
+    # VFAT on some Linux versions can flip mode but it doesn't persist
+    # a FS remount. Frequently we can detect it if files are created
+    # with exec bit on.
+
     try:
         EXECFLAGS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         fh, fn = tempfile.mkstemp("", "", path)
-        os.close(fh)
-        m = os.stat(fn).st_mode
-        # VFAT on Linux can flip mode but it doesn't persist a FS remount.
-        # frequently we can detect it if files are created with exec bit on.
-        new_file_has_exec = m & EXECFLAGS
-        os.chmod(fn, m ^ EXECFLAGS)
-        exec_flags_cannot_flip = (os.stat(fn).st_mode == m)
-        os.unlink(fn)
-    except (IOError,OSError):
+        try:
+            os.close(fh)
+            m = os.stat(fn).st_mode & 0777
+            new_file_has_exec = m & EXECFLAGS
+            os.chmod(fn, m ^ EXECFLAGS)
+            exec_flags_cannot_flip = ((os.stat(fn).st_mode & 0777) == m)
+        finally:
+            os.unlink(fn)
+    except (IOError, OSError):
         # we don't care, the user probably won't be able to commit anyway
         return False
     return not (new_file_has_exec or exec_flags_cannot_flip)
@@ -892,6 +883,18 @@ def needbinarypatch():
     """return True if patches should be applied in binary mode by default."""
     return os.name == 'nt'
 
+def endswithsep(path):
+    '''Check path ends with os.sep or os.altsep.'''
+    return path.endswith(os.sep) or os.altsep and path.endswith(os.altsep)
+
+def splitpath(path):
+    '''Split path by os.sep.
+    Note that this function does not use os.altsep because this is
+    an alternative of simple "xxx.split(os.sep)".
+    It is recommended to use os.path.normpath() before using this
+    function if need.'''
+    return path.split(os.sep)
+
 # Platform specific variants
 if os.name == 'nt':
     import msvcrt
@@ -913,7 +916,15 @@ if os.name == 'nt':
 
         def write(self, s):
             try:
-                return self.fp.write(s)
+                # This is workaround for "Not enough space" error on
+                # writing large size of data to console.
+                limit = 16000
+                l = len(s)
+                start = 0
+                while start < l:
+                    end = start + limit
+                    self.fp.write(s[start:end])
+                    start = end
             except IOError, inst:
                 if inst.errno != 0: raise
                 self.close()
@@ -928,6 +939,16 @@ if os.name == 'nt':
                 raise IOError(errno.EPIPE, 'Broken pipe')
 
     sys.stdout = winstdout(sys.stdout)
+
+    def _is_win_9x():
+        '''return true if run on windows 95, 98 or me.'''
+        try:
+            return sys.getwindowsversion()[3] == 1
+        except AttributeError:
+            return 'command' in os.environ.get('comspec', '')
+
+    def openhardlinks():
+        return not _is_win_9x and "win32api" in locals()
 
     def system_rcpath():
         try:
@@ -954,21 +975,24 @@ if os.name == 'nt':
             pf = pf[1:-1] # Remove the quotes
         return pf
 
+    def sshargs(sshcmd, host, user, port):
+        '''Build argument list for ssh or Plink'''
+        pflag = 'plink' in sshcmd.lower() and '-P' or '-p'
+        args = user and ("%s@%s" % (user, host)) or host
+        return port and ("%s %s %s" % (args, pflag, port)) or args
+
     def testpid(pid):
         '''return False if pid dead, True if running or not known'''
         return True
 
-    def set_exec(f, mode):
-        pass
-
-    def set_link(f, mode):
+    def set_flags(f, flags):
         pass
 
     def set_binary(fd):
         msvcrt.setmode(fd.fileno(), os.O_BINARY)
 
     def pconvert(path):
-        return path.replace("\\", "/")
+        return '/'.join(splitpath(path))
 
     def localpath(path):
         return path.replace('/', '\\')
@@ -1054,7 +1078,7 @@ if os.name == 'nt':
     try:
         # override functions with win32 versions if possible
         from util_win32 import *
-        if not is_win_9x():
+        if not _is_win_9x():
             posixfile = posixfile_nt
     except ImportError:
         pass
@@ -1096,51 +1120,42 @@ else:
                 pf = pf[1:-1] # Remove the quotes
         return pf
 
+    def sshargs(sshcmd, host, user, port):
+        '''Build argument list for ssh'''
+        args = user and ("%s@%s" % (user, host)) or host
+        return port and ("%s -p %s" % (args, port)) or args
+
     def is_exec(f):
         """check whether a file is executable"""
         return (os.lstat(f).st_mode & 0100 != 0)
 
-    def force_chmod(f, s):
-        try:
-            os.chmod(f, s)
-        except OSError, inst:
-            if inst.errno != errno.EPERM:
-                raise
-            # maybe we don't own the file, try copying it
-            new_f = mktempcopy(f)
-            os.chmod(new_f, s)
-            os.rename(new_f, f)
-
-    def set_exec(f, mode):
+    def set_flags(f, flags):
         s = os.lstat(f).st_mode
-        if stat.S_ISLNK(s) or (s & 0100 != 0) == mode:
+        x = "x" in flags
+        l = "l" in flags
+        if l:
+            if not stat.S_ISLNK(s):
+                # switch file to link
+                data = file(f).read()
+                os.unlink(f)
+                os.symlink(data, f)
+            # no chmod needed at this point
             return
-        if mode:
-            # Turn on +x for every +r bit when making a file executable
-            # and obey umask.
-            force_chmod(f, s | (s & 0444) >> 2 & ~_umask)
-        else:
-            force_chmod(f, s & 0666)
-
-    def set_link(f, mode):
-        """make a file a symbolic link/regular file
-
-        if a file is changed to a link, its contents become the link data
-        if a link is changed to a file, its link data become its contents
-        """
-
-        m = os.path.islink(f)
-        if m == bool(mode):
-            return
-
-        if mode: # switch file to link
-            data = file(f).read()
-            os.unlink(f)
-            os.symlink(data, f)
-        else:
+        if stat.S_ISLNK(s):
+            # switch link to file
             data = os.readlink(f)
             os.unlink(f)
             file(f, "w").write(data)
+            s = 0666 & ~_umask # avoid restatting for chmod
+
+        sx = s & 0100
+        if x and not sx:
+            # Turn on +x for every +r bit when making a file executable
+            # and obey umask.
+            os.chmod(f, s | (s & 0444) >> 2 & ~_umask)
+        elif not x and sx:
+            # Turn off all +x bits
+            os.chmod(f, s & 0666)
 
     def set_binary(fd):
         pass
@@ -1293,7 +1308,7 @@ def mktempcopy(name, emptyok=False):
     # what we want.  If the original file already exists, just copy
     # its mode.  Otherwise, manually obey umask.
     try:
-        st_mode = os.lstat(name).st_mode
+        st_mode = os.lstat(name).st_mode & 0777
     except OSError, inst:
         if inst.errno != errno.ENOENT:
             raise
@@ -1706,31 +1721,13 @@ def uirepr(s):
     return repr(s).replace('\\\\', '\\')
 
 def hidepassword(url):
-    '''replaces the password in the url string by three asterisks (***)
-    
-    >>> hidepassword('http://www.example.com/some/path#fragment')
-    'http://www.example.com/some/path#fragment'
-    >>> hidepassword('http://me@www.example.com/some/path#fragment')
-    'http://me@www.example.com/some/path#fragment'
-    >>> hidepassword('http://me:simplepw@www.example.com/path#frag')
-    'http://me:***@www.example.com/path#frag'
-    >>> hidepassword('http://me:complex:pw@www.example.com/path#frag')
-    'http://me:***@www.example.com/path#frag'
-    >>> hidepassword('/path/to/repo')
-    '/path/to/repo'
-    >>> hidepassword('relative/path/to/repo')
-    'relative/path/to/repo'
-    >>> hidepassword('c:\\\\path\\\\to\\\\repo')
-    'c:\\\\path\\\\to\\\\repo'
-    >>> hidepassword('c:/path/to/repo')
-    'c:/path/to/repo'
-    >>> hidepassword('bundle://path/to/bundle')
-    'bundle://path/to/bundle'
-    '''
-    url_parts = list(urlparse.urlparse(url))
-    host_with_pw_pattern = re.compile('^([^:]*):([^@]*)@(.*)$')
-    if host_with_pw_pattern.match(url_parts[1]):
-        url_parts[1] = re.sub(host_with_pw_pattern, r'\1:***@\3',
-            url_parts[1])
-    return urlparse.urlunparse(url_parts)
+    '''hide user credential in a url string'''
+    scheme, netloc, path, params, query, fragment = urlparse.urlparse(url)
+    netloc = re.sub('([^:]*):([^@]*)@(.*)', r'\1:***@\3', netloc)
+    return urlparse.urlunparse((scheme, netloc, path, params, query, fragment))
 
+def removeauth(url):
+    '''remove all authentication information from a url string'''
+    scheme, netloc, path, params, query, fragment = urlparse.urlparse(url)
+    netloc = netloc[netloc.find('@')+1:]
+    return urlparse.urlunparse((scheme, netloc, path, params, query, fragment))

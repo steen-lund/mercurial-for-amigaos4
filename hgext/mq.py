@@ -34,7 +34,7 @@ from mercurial import commands, cmdutil, hg, patch, revlog, util
 from mercurial import repair
 import os, sys, re, errno
 
-commands.norepo += " qclone qversion"
+commands.norepo += " qclone"
 
 # Patch names looks like unix-file names.
 # They must be joinable with queue directory and result in the patch path.
@@ -224,7 +224,7 @@ class queue:
         def write_list(items, path):
             fp = self.opener(path, 'w')
             for i in items:
-                print >> fp, i
+                fp.write("%s\n" % i)
             fp.close()
         if self.applied_dirty: write_list(map(str, self.applied), self.status_path)
         if self.series_dirty: write_list(self.full_series, self.series_path)
@@ -603,6 +603,8 @@ class queue:
     def new(self, repo, patch, *pats, **opts):
         msg = opts.get('msg')
         force = opts.get('force')
+        user = opts.get('user')
+        date = opts.get('date')
         if os.path.exists(self.join(patch)):
             raise util.Abort(_('patch "%s" already exists') % patch)
         if opts.get('include') or opts.get('exclude') or pats:
@@ -617,7 +619,7 @@ class queue:
         try:
             insert = self.full_series_end()
             commitmsg = msg and msg or ("[mq]: %s" % patch)
-            n = repo.commit(commitfiles, commitmsg, match=match, force=True)
+            n = repo.commit(commitfiles, commitmsg, user, date, match=match, force=True)
             if n == None:
                 raise util.Abort(_("repo commit failed"))
             self.full_series[insert:insert] = [patch]
@@ -626,6 +628,15 @@ class queue:
             self.series_dirty = 1
             self.applied_dirty = 1
             p = self.opener(patch, "w")
+            if date:
+                p.write("# HG changeset patch\n")
+                if user:
+                    p.write("# User " + user + "\n")
+                p.write("# Date " + date + "\n")
+                p.write("\n")
+            elif user:
+                p.write("From: " + user + "\n")
+                p.write("\n")
             if msg:
                 msg = msg + "\n"
                 p.write(msg)
@@ -945,6 +956,34 @@ class queue:
                     while message[mi] != comments[ci]:
                         ci += 1
                     del comments[ci]
+
+            def setheaderfield(comments, prefixes, new):
+                # Update all references to a field in the patch header.
+                # If none found, add it email style.
+                res = False
+                for prefix in prefixes:
+                    for i in xrange(len(comments)):
+                        if comments[i].startswith(prefix):
+                            comments[i] = prefix + new
+                            res = True
+                            break
+                return res
+
+            newuser = opts.get('user')
+            if newuser:
+                if not setheaderfield(comments, ['From: ', '# User '], newuser):
+                    try:
+                        patchheaderat = comments.index('# HG changeset patch')
+                        comments.insert(patchheaderat + 1,'# User ' + newuser)
+                    except ValueError:
+                        comments = ['From: ' + newuser, ''] + comments
+                user = newuser
+
+            newdate = opts.get('date')
+            if newdate:
+                if setheaderfield(comments, ['# Date '], newdate):
+                    date = newdate
+
             if msg:
                 comments.append(msg)
 
@@ -1070,9 +1109,12 @@ class queue:
                 else:
                     message = msg
 
+                if not user:
+                    user = changes[1]
+
                 self.strip(repo, top, update=False,
                            backup='strip')
-                n = repo.commit(filelist, message, changes[1], match=matchfn,
+                n = repo.commit(filelist, message, user, date, match=matchfn,
                                 force=1)
                 self.applied[-1] = statusentry(revlog.hex(n), patchfn)
                 self.applied_dirty = 1
@@ -1225,7 +1267,7 @@ class queue:
             self.ui.warn("saved queue repository parents: %s %s\n" %
                          (hg.short(qpp[0]), hg.short(qpp[1])))
             if qupdate:
-                print "queue directory updating"
+                self.ui.status(_("queue directory updating\n"))
                 r = self.qrepo()
                 if not r:
                     self.ui.warn("Unable to load queue repository\n")
@@ -1605,6 +1647,13 @@ def prev(ui, repo, **opts):
     return q.qseries(repo, start=l-2, length=1, status='A',
                      summary=opts.get('summary'))
 
+def setupheaderopts(ui, opts):
+    def do(opt,val):
+        if not opts[opt] and opts['current' + opt]:
+            opts[opt] = val
+    do('user', ui.username())
+    do('date', "%d %d" % util.makedate())
+
 def new(ui, repo, patch, *args, **opts):
     """create a new patch
 
@@ -1623,6 +1672,7 @@ def new(ui, repo, patch, *args, **opts):
     if opts['edit']:
         message = ui.edit(message, ui.username())
     opts['msg'] = message
+    setupheaderopts(ui, opts)
     q.new(repo, patch, *args, **opts)
     q.save_dirty()
     return 0
@@ -1648,6 +1698,7 @@ def refresh(ui, repo, *pats, **opts):
         patch = q.applied[-1].name
         (message, comment, user, date, hasdiff) = q.readheaders(patch)
         message = ui.edit('\n'.join(message), user or ui.username())
+    setupheaderopts(ui, opts)
     ret = q.refresh(repo, pats, msg=message, **opts)
     q.save_dirty()
     return ret
@@ -2138,6 +2189,12 @@ def reposetup(ui, repo):
 
 seriesopts = [('s', 'summary', None, _('print first line of patch header'))]
 
+headeropts = [
+    ('U', 'currentuser', None, _('add "From: <current user>" to patch')),
+    ('u', 'user', '', _('add "From: <given user>" to patch')),
+    ('D', 'currentdate', None, _('add "Date: <current date>" to patch')),
+    ('d', 'date', '', _('add "Date: <given date>" to patch'))]
+
 cmdtable = {
     "qapplied": (applied, [] + seriesopts, _('hg qapplied [-s] [PATCH]')),
     "qclone":
@@ -2196,7 +2253,7 @@ cmdtable = {
          [('e', 'edit', None, _('edit commit message')),
           ('f', 'force', None, _('import uncommitted changes into patch')),
           ('g', 'git', None, _('use git extended diff format')),
-          ] + commands.walkopts + commands.commitopts,
+          ] + commands.walkopts + commands.commitopts + headeropts,
          _('hg qnew [-e] [-m TEXT] [-l FILE] [-f] PATCH [FILE]...')),
     "qnext": (next, [] + seriesopts, _('hg qnext [-s]')),
     "qprev": (prev, [] + seriesopts, _('hg qprev [-s]')),
@@ -2219,7 +2276,7 @@ cmdtable = {
          [('e', 'edit', None, _('edit commit message')),
           ('g', 'git', None, _('use git extended diff format')),
           ('s', 'short', None, _('refresh only files already in the patch')),
-          ] + commands.walkopts + commands.commitopts,
+          ] + commands.walkopts + commands.commitopts + headeropts,
          _('hg qrefresh [-I] [-X] [-e] [-m TEXT] [-l FILE] [-s] [FILE]...')),
     'qrename|qmv':
         (rename, [], _('hg qrename PATCH1 [PATCH2]')),
