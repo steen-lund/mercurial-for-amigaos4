@@ -5,12 +5,12 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-from common import NoRepo, SKIPREV, converter_source, converter_sink
+from common import NoRepo, SKIPREV, converter_source, converter_sink, mapfile
 from cvs import convert_cvs
 from darcs import darcs_source
 from git import convert_git
 from hg import mercurial_source, mercurial_sink
-from subversion import svn_source, debugsvnlog
+from subversion import debugsvnlog, svn_source, svn_sink
 import filemap
 
 import os, shutil
@@ -27,6 +27,7 @@ source_converters = [
 
 sink_converters = [
     ('hg', mercurial_sink),
+    ('svn', svn_sink),
     ]
 
 def convertsource(ui, path, type, rev):
@@ -59,23 +60,10 @@ class converter(object):
         self.ui = ui
         self.opts = opts
         self.commitcache = {}
-        self.revmapfile = revmapfile
-        self.revmapfilefd = None
         self.authors = {}
         self.authorfile = None
 
-        self.maporder = []
-        self.map = {}
-        try:
-            origrevmapfile = open(self.revmapfile, 'r')
-            for l in origrevmapfile:
-                sv, dv = l[:-1].split()
-                if sv not in self.map:
-                    self.maporder.append(sv)
-                self.map[sv] = dv
-            origrevmapfile.close()
-        except IOError:
-            pass
+        self.map = mapfile(ui, revmapfile)
 
         # Read first the dst author map if any
         authorfile = self.dest.authorfile()
@@ -85,6 +73,8 @@ class converter(object):
         if opts.get('authors'):
             self.readauthormap(opts.get('authors'))
             self.authorfile = self.dest.authorfile()
+
+        self.splicemap = mapfile(ui, ui.config('convert', 'splicemap'))
 
     def walktree(self, heads):
         '''Return a mapping that identifies the uncommitted parents of every
@@ -157,21 +147,12 @@ class converter(object):
                 if pl:
                     depth[n] = max([depth[p] for p in pl]) + 1
 
-            s = [(depth[n], self.commitcache[n].date, n) for n in s]
+            s = [(depth[n], util.parsedate(self.commitcache[n].date), n)
+                 for n in s]
             s.sort()
             s = [e[2] for e in s]
 
         return s
-
-    def mapentry(self, src, dst):
-        if self.revmapfilefd is None:
-            try:
-                self.revmapfilefd = open(self.revmapfile, "a")
-            except IOError, (errno, strerror):
-                raise util.Abort("Could not open map file %s: %s, %s\n" % (self.revmapfile, errno, strerror))
-        self.map[src] = dst
-        self.revmapfilefd.write("%s %s\n" % (src, dst))
-        self.revmapfilefd.flush()
 
     def writeauthormap(self):
         authorfile = self.authorfile
@@ -219,7 +200,7 @@ class converter(object):
                 dest = SKIPREV
             else:
                 dest = self.map[changes]
-            self.mapentry(rev, dest)
+            self.map[rev] = dest
             return
         files, copies = changes
         pbranches = []
@@ -245,15 +226,25 @@ class converter(object):
                         # Merely marks that a copy happened.
                         self.dest.copyfile(copyf, f)
 
-        parents = [b[0] for b in pbranches]
+        try:
+            parents = [self.splicemap[rev]]
+            self.ui.debug('spliced in %s as parents of %s\n' %
+                          (parents, rev))
+        except KeyError:
+            parents = [b[0] for b in pbranches]
         newnode = self.dest.putcommit(filenames, parents, commit)
-        self.mapentry(rev, newnode)
+        self.source.converted(rev, newnode)
+        self.map[rev] = newnode
 
     def convert(self):
+
+        def recode(s):
+            return s.decode('utf-8').encode(orig_encoding, 'replace')
+
         try:
             self.source.before()
             self.dest.before()
-            self.source.setrevmap(self.map, self.maporder)
+            self.source.setrevmap(self.map)
             self.ui.status("scanning source...\n")
             heads = self.source.getheads()
             parents = self.walktree(heads)
@@ -268,7 +259,11 @@ class converter(object):
                 desc = self.commitcache[c].desc
                 if "\n" in desc:
                     desc = desc.splitlines()[0]
-                self.ui.status("%d %s\n" % (num, desc))
+                # convert log message to local encoding without using
+                # tolocal() because util._encoding conver() use it as
+                # 'utf-8'
+                self.ui.status("%d %s\n" % (num, recode(desc)))
+                self.ui.note(_("source: %s\n" % recode(c)))
                 self.copy(c)
 
             tags = self.source.gettags()
@@ -283,7 +278,7 @@ class converter(object):
                 # write another hash correspondence to override the previous
                 # one so we don't end up with extra tag heads
                 if nrev:
-                    self.mapentry(c, nrev)
+                    self.map[c] = nrev
 
             self.writeauthormap()
         finally:
@@ -294,10 +289,13 @@ class converter(object):
             self.dest.after()
         finally:
             self.source.after()
-        if self.revmapfilefd:
-            self.revmapfilefd.close()
+        self.map.close()
+
+orig_encoding = 'ascii'
 
 def convert(ui, src, dest=None, revmapfile=None, **opts):
+    global orig_encoding
+    orig_encoding = util._encoding
     util._encoding = 'UTF-8'
 
     if not dest:
