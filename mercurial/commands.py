@@ -6,7 +6,7 @@
 # of the GNU General Public License, incorporated herein by reference.
 
 from node import hex, nullid, nullrev, short
-from repo import RepoError
+from repo import RepoError, NoCapability
 from i18n import _
 import os, re, sys, urllib
 import hg, util, revlog, bundlerepo, extensions, copies
@@ -2048,7 +2048,7 @@ def pull(ui, repo, source="default", **opts):
     if revs:
         try:
             revs = [other.lookup(rev) for rev in revs]
-        except repo.NoCapability:
+        except NoCapability:
             error = _("Other repository doesn't support revision lookup, "
                       "so a rev cannot be specified.")
             raise util.Abort(error)
@@ -2530,8 +2530,17 @@ def serve(ui, repo, **opts):
             if port == ':80':
                 port = ''
 
-            ui.status(_('listening at http://%s%s/%s (%s:%d)\n') %
-                      (self.httpd.fqaddr, port, prefix, self.httpd.addr, self.httpd.port))
+            bindaddr = self.httpd.addr
+            if bindaddr == '0.0.0.0':
+                bindaddr = '*'
+            elif ':' in bindaddr: # IPv6
+                bindaddr = '[%s]' % bindaddr
+
+            fqaddr = self.httpd.fqaddr
+            if ':' in fqaddr:
+                fqaddr = '[%s]' % fqaddr
+            ui.status(_('listening at http://%s%s/%s (bound to %s:%d)\n') %
+                      (fqaddr, port, prefix, bindaddr, self.httpd.port))
 
         def run(self):
             self.httpd.serve_forever()
