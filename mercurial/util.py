@@ -15,13 +15,39 @@ platform-specific details from the core.
 from i18n import _
 import cStringIO, errno, getpass, re, shutil, sys, tempfile
 import os, stat, threading, time, calendar, ConfigParser, locale, glob, osutil
-import urlparse
+import imp, urlparse
+
+# Python compatibility
 
 try:
     set = set
     frozenset = frozenset
 except NameError:
     from sets import Set as set, ImmutableSet as frozenset
+
+_md5 = None
+def md5(s):
+    global _md5
+    if _md5 is None:
+        try:
+            import hashlib
+            _md5 = hashlib.md5
+        except ImportError:
+            import md5
+            _md5 = md5.md5
+    return _md5(s)
+
+_sha1 = None
+def sha1(s):
+    global _sha1
+    if _sha1 is None:
+        try:
+            import hashlib
+            _sha1 = hashlib.sha1
+        except ImportError:
+            import sha
+            _sha1 = sha.sha
+    return _sha1(s)
 
 try:
     _encoding = os.environ.get("HGENCODING")
@@ -217,8 +243,8 @@ def filter(s, cmd):
     return pipefilter(s, cmd)
 
 def binary(s):
-    """return true if a string is binary data using diff's heuristic"""
-    if s and '\0' in s[:4096]:
+    """return true if a string is binary data"""
+    if s and '\0' in s:
         return True
     return False
 
@@ -537,13 +563,29 @@ def _matcher(canonroot, cwd, names, inc, exc, dflt_pat, src):
 
 _hgexecutable = None
 
+def main_is_frozen():
+    """return True if we are a frozen executable.
+
+    The code supports py2exe (most common, Windows only) and tools/freeze
+    (portable, not much used).
+    """
+    return (hasattr(sys, "frozen") or # new py2exe
+            hasattr(sys, "importers") or # old py2exe
+            imp.is_frozen("__main__")) # tools/freeze
+
 def hgexecutable():
     """return location of the 'hg' executable.
 
     Defaults to $HG or 'hg' in the search path.
     """
     if _hgexecutable is None:
-        set_hgexecutable(os.environ.get('HG') or find_exe('hg', 'hg'))
+        hg = os.environ.get('HG')
+        if hg:
+            set_hgexecutable(hg)
+        elif main_is_frozen():
+            set_hgexecutable(sys.executable)
+        else:
+            set_hgexecutable(find_exe('hg', 'hg'))
     return _hgexecutable
 
 def set_hgexecutable(path):
