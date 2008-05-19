@@ -322,10 +322,8 @@ class queue:
 
     def printdiff(self, repo, node1, node2=None, files=None,
                   fp=None, changes=None, opts={}):
-        fns, matchfn, anypats = cmdutil.matchpats(repo, files, opts)
-
-        patch.diff(repo, node1, node2, fns, match=matchfn,
-                   fp=fp, changes=changes, opts=self.diffopts())
+        m = cmdutil.match(repo, files, opts)
+        patch.diff(repo, node1, node2, m, fp, changes, self.diffopts())
 
     def mergeone(self, repo, mergeq, head, patch, rev):
         # first try just applying the patch
@@ -510,8 +508,10 @@ class queue:
                     repo.dirstate.merge(f)
                 p1, p2 = repo.dirstate.parents()
                 repo.dirstate.setparents(p1, merge)
+
             files = patch.updatedir(self.ui, repo, files)
-            n = repo.commit(files, message, user, date, match=util.never,
+            match = cmdutil.matchfiles(repo, files or [])
+            n = repo.commit(files, message, user, date, match=match,
                             force=True)
 
             if n == None:
@@ -623,11 +623,11 @@ class queue:
         if os.path.exists(self.join(patch)):
             raise util.Abort(_('patch "%s" already exists') % patch)
         if opts.get('include') or opts.get('exclude') or pats:
-            fns, match, anypats = cmdutil.matchpats(repo, pats, opts)
-            m, a, r, d = repo.status(files=fns, match=match)[:4]
+            match = cmdutil.match(repo, pats, opts)
+            m, a, r, d = repo.status(match=match)[:4]
         else:
             m, a, r, d = self.check_localchanges(repo, force)
-            fns, match, anypats = cmdutil.matchpats(repo, m + a + r)
+            match = cmdutil.match(repo, m + a + r)
         commitfiles = m + a + r
         self.check_toppatch(repo)
         wlock = repo.wlock()
@@ -665,14 +665,14 @@ class queue:
         finally:
             del wlock
 
-    def strip(self, repo, rev, update=True, backup="all"):
+    def strip(self, repo, rev, update=True, backup="all", force=None):
         wlock = lock = None
         try:
             wlock = repo.wlock()
             lock = repo.lock()
 
             if update:
-                self.check_localchanges(repo, refresh=False)
+                self.check_localchanges(repo, force=force, refresh=False)
                 urev = self.qparents(repo, rev)
                 hg.clean(repo, urev)
                 repo.dirstate.write()
@@ -1026,7 +1026,7 @@ class queue:
 
             if opts.get('git'):
                 self.diffopts().git = True
-            fns, matchfn, anypats = cmdutil.matchpats(repo, pats, opts)
+            matchfn = cmdutil.match(repo, pats, opts)
             tip = repo.changelog.tip()
             if top == tip:
                 # if the top of our patch queue is also the tip, there is an
@@ -1048,12 +1048,10 @@ class queue:
                 man = repo.manifest.read(changes[0])
                 aaa = aa[:]
                 if opts.get('short'):
-                    filelist = mm + aa + dd
-                    match = dict.fromkeys(filelist).__contains__
+                    match = cmdutil.matchfiles(repo, mm + aa + dd)
                 else:
-                    filelist = None
-                    match = util.always
-                m, a, r, d, u = repo.status(files=filelist, match=match)[:5]
+                    match = cmdutil.matchall(repo)
+                m, a, r, d, u = repo.status(match=match)[:5]
 
                 # we might end up with files that were added between
                 # tip and the dirstate parent, but then changed in the
@@ -1087,8 +1085,8 @@ class queue:
                 r = util.unique(dd)
                 a = util.unique(aa)
                 c = [filter(matchfn, l) for l in (m, a, r, [], u)]
-                filelist = util.unique(c[0] + c[1] + c[2])
-                patch.diff(repo, patchparent, files=filelist, match=matchfn,
+                match = cmdutil.matchfiles(repo, util.unique(c[0] + c[1] + c[2]))
+                patch.diff(repo, patchparent, match=match,
                            fp=patchf, changes=c, opts=self.diffopts())
                 patchf.close()
 
@@ -1146,7 +1144,7 @@ class queue:
                 self.applied_dirty = 1
                 self.strip(repo, top, update=False,
                            backup='strip')
-                n = repo.commit(filelist, message, user, date, match=matchfn,
+                n = repo.commit(match.files(), message, user, date, match=match,
                                 force=1)
                 self.applied.append(statusentry(revlog.hex(n), patchfn))
                 self.removeundo(repo)
@@ -2060,7 +2058,7 @@ def strip(ui, repo, rev, **opts):
     elif opts['nobackup']:
         backup = 'none'
     update = repo.dirstate.parents()[0] != revlog.nullid
-    repo.mq.strip(repo, rev, backup=backup, update=update)
+    repo.mq.strip(repo, rev, backup=backup, update=update, force=opts['force'])
     return 0
 
 def select(ui, repo, *args, **opts):
@@ -2369,7 +2367,8 @@ cmdtable = {
          _('hg qseries [-ms]')),
     "^strip":
         (strip,
-         [('b', 'backup', None, _('bundle unrelated changesets')),
+         [('f', 'force', None, _('force removal with local changes')),
+          ('b', 'backup', None, _('bundle unrelated changesets')),
           ('n', 'nobackup', None, _('no backups'))],
          _('hg strip [-f] [-b] [-n] REV')),
     "qtop": (top, [] + seriesopts, _('hg qtop [-s]')),
