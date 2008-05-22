@@ -13,6 +13,7 @@ import hg, util, revlog, bundlerepo, extensions, copies
 import difflib, patch, time, help, mdiff, tempfile
 import version, socket
 import archival, changegroup, cmdutil, hgweb.server, sshserver, hbisect
+import merge as merge_
 
 # Commands start here, listed alphabetically
 
@@ -30,15 +31,16 @@ def add(ui, repo, *pats, **opts):
     rejected = None
     exacts = {}
     names = []
-    for src, abs, rel, exact in cmdutil.walk(repo, pats, opts,
-                                             badmatch=util.always):
-        if exact:
+    m = cmdutil.match(repo, pats, opts)
+    m.bad = lambda x,y: True
+    for abs in repo.walk(m):
+        if m.exact(abs):
             if ui.verbose:
-                ui.status(_('adding %s\n') % rel)
+                ui.status(_('adding %s\n') % m.rel(abs))
             names.append(abs)
             exacts[abs] = 1
         elif abs not in repo.dirstate:
-            ui.status(_('adding %s\n') % rel)
+            ui.status(_('adding %s\n') % m.rel(abs))
             names.append(abs)
     if not opts.get('dry_run'):
         rejected = repo.add(names)
@@ -53,11 +55,11 @@ def addremove(ui, repo, *pats, **opts):
     New files are ignored if they match any of the patterns in .hgignore. As
     with add, these changes take effect at the next commit.
 
-    Use the -s option to detect renamed files.  With a parameter > 0,
+    Use the -s option to detect renamed files. With a parameter > 0,
     this compares every removed file with every added file and records
-    those similar enough as renames.  This option takes a percentage
+    those similar enough as renames. This option takes a percentage
     between 0 (disabled) and 100 (files must be identical) as its
-    parameter.  Detecting renamed files this way can be expensive.
+    parameter. Detecting renamed files this way can be expensive.
     """
     try:
         sim = float(opts.get('similarity') or 0)
@@ -107,11 +109,11 @@ def annotate(ui, repo, *pats, **opts):
 
     ctx = repo.changectx(opts['rev'])
 
-    for src, abs, rel, exact in cmdutil.walk(repo, pats, opts,
-                                             node=ctx.node()):
+    m = cmdutil.match(repo, pats, opts)
+    for abs in repo.walk(m, ctx.node()):
         fctx = ctx.filectx(abs)
         if not opts['text'] and util.binary(fctx.data()):
-            ui.write(_("%s: binary file\n") % ((pats and rel) or abs))
+            ui.write(_("%s: binary file\n") % ((pats and m.rel(abs)) or abs))
             continue
 
         lines = fctx.annotate(follow=opts.get('follow'),
@@ -134,7 +136,7 @@ def archive(ui, repo, dest, **opts):
     By default, the revision used is the parent of the working
     directory; use "-r" to specify a different revision.
 
-    To specify the type of archive to create, use "-t".  Valid
+    To specify the type of archive to create, use "-t". Valid
     types are:
 
     "files" (default): a directory full of files
@@ -148,7 +150,7 @@ def archive(ui, repo, dest, **opts):
     using a format string; see "hg help export" for details.
 
     Each member added to an archive file has a directory prefix
-    prepended.  Use "-p" to specify a format string for the prefix.
+    prepended. Use "-p" to specify a format string for the prefix.
     The default is the basename of the archive, with suffixes removed.
     '''
 
@@ -159,7 +161,7 @@ def archive(ui, repo, dest, **opts):
     dest = cmdutil.make_filename(repo, dest, node)
     if os.path.realpath(dest) == repo.root:
         raise util.Abort(_('repository root cannot be destination'))
-    dummy, matchfn, dummy = cmdutil.matchpats(repo, [], opts)
+    matchfn = cmdutil.match(repo, [], opts)
     kind = opts.get('type') or 'files'
     prefix = opts['prefix']
     if dest == '-':
@@ -174,17 +176,17 @@ def archive(ui, repo, dest, **opts):
 def backout(ui, repo, node=None, rev=None, **opts):
     '''reverse effect of earlier changeset
 
-    Commit the backed out changes as a new changeset.  The new
+    Commit the backed out changes as a new changeset. The new
     changeset is a child of the backed out changeset.
 
     If you back out a changeset other than the tip, a new head is
-    created.  This head will be the new tip and you should merge this
+    created. This head will be the new tip and you should merge this
     backout changeset with another head (current one by default).
 
     The --merge option remembers the parent of the working directory
     before starting the backout, then merges the new head with that
-    changeset afterwards.  This saves you from doing the merge by
-    hand.  The result of this merge is not committed, as for a normal
+    changeset afterwards. This saves you from doing the merge by
+    hand. The result of this merge is not committed, as for a normal
     merge.
 
     See 'hg help dates' for a list of formats valid for -d/--date.
@@ -369,7 +371,7 @@ def branches(ui, repo, active=False):
     """list repository named branches
 
     List the repository's named branches, indicating which ones are
-    inactive.  If active is specified, only show active branches.
+    inactive. If active is specified, only show active branches.
 
     A branch is considered active if it contains unmerged heads.
 
@@ -404,8 +406,9 @@ def bundle(ui, repo, fname, dest=None, **opts):
 
     If no destination repository is specified the destination is
     assumed to have all the nodes specified by one or more --base
-    parameters.  To create a bundle containing all changesets, use
-    --all (or --base null).
+    parameters. To create a bundle containing all changesets, use
+    --all (or --base null). To change the compression method applied,
+    use the -t option (by default, bundles are compressed using bz2).
 
     The bundle file can then be transferred using conventional means and
     applied to another repository with the unbundle or pull command.
@@ -459,7 +462,14 @@ def bundle(ui, repo, fname, dest=None, **opts):
         cg = repo.changegroupsubset(o, revs, 'bundle')
     else:
         cg = repo.changegroup(o, 'bundle')
-    changegroup.writebundle(cg, fname, "HG10BZ")
+
+    bundletype = opts.get('type', 'bzip2').lower()
+    btypes = {'none': 'HG10UN', 'bzip2': 'HG10BZ', 'gzip': 'HG10GZ'}
+    bundletype = btypes.get(bundletype)
+    if bundletype not in changegroup.bundletypes:
+        raise util.Abort(_('unknown bundle type specified with --type'))
+
+    changegroup.writebundle(cg, fname, bundletype)
 
 def cat(ui, repo, file1, *pats, **opts):
     """output the current or given revision of files
@@ -469,7 +479,7 @@ def cat(ui, repo, file1, *pats, **opts):
     or tip if no revision is checked out.
 
     Output may be to a file, in which case the name of the file is
-    given using a format string.  The formatting rules are the same as
+    given using a format string. The formatting rules are the same as
     for the export command, with the following additions:
 
     %s   basename of file being printed
@@ -478,8 +488,8 @@ def cat(ui, repo, file1, *pats, **opts):
     """
     ctx = repo.changectx(opts['rev'])
     err = 1
-    for src, abs, rel, exact in cmdutil.walk(repo, (file1,) + pats, opts,
-                                             ctx.node()):
+    m = cmdutil.match(repo, (file1,) + pats, opts)
+    for abs in repo.walk(m, ctx.node()):
         fp = cmdutil.make_file(repo, opts['output'], ctx.node(), pathname=abs)
         data = ctx.filectx(abs).data()
         if opts.get('decode'):
@@ -501,20 +511,22 @@ def clone(ui, source, dest=None, **opts):
 
     For efficiency, hardlinks are used for cloning whenever the source
     and destination are on the same filesystem (note this applies only
-    to the repository data, not to the checked out files).  Some
+    to the repository data, not to the checked out files). Some
     filesystems, such as AFS, implement hardlinking incorrectly, but
-    do not report errors.  In these cases, use the --pull option to
+    do not report errors. In these cases, use the --pull option to
     avoid hardlinking.
 
-    You can safely clone repositories and checked out files using full
-    hardlinks with
+    In some cases, you can clone repositories and checked out files
+    using full hardlinks with
 
       $ cp -al REPO REPOCLONE
 
-    which is the fastest way to clone. However, the operation is not
-    atomic (making sure REPO is not modified during the operation is
-    up to you) and you have to make sure your editor breaks hardlinks
-    (Emacs and most Linux Kernel tools do so).
+    This is the fastest way to clone, but it is not always safe.  The
+    operation is not atomic (making sure REPO is not modified during
+    the operation is up to you) and you have to make sure your editor
+    breaks hardlinks (Emacs and most Linux Kernel tools do so).  Also,
+    this is not compatible with certain extensions that place their
+    metadata under the .hg directory, such as mq.
 
     If you use the -r option to clone up to a specific revision, no
     subsequent revisions will be present in the cloned repository.
@@ -550,9 +562,9 @@ def commit(ui, repo, *pats, **opts):
 
     See 'hg help dates' for a list of formats valid for -d/--date.
     """
-    def commitfunc(ui, repo, files, message, match, opts):
-        return repo.commit(files, message, opts['user'], opts['date'], match,
-                           force_editor=opts.get('force_editor'))
+    def commitfunc(ui, repo, message, match, opts):
+        return repo.commit(match.files(), message, opts['user'], opts['date'],
+                           match, force_editor=opts.get('force_editor'))
 
     node = cmdutil.commit(ui, repo, commitfunc, pats, opts)
     if not node:
@@ -571,12 +583,12 @@ def commit(ui, repo, *pats, **opts):
 def copy(ui, repo, *pats, **opts):
     """mark files as copied for the next commit
 
-    Mark dest as having copies of source files.  If dest is a
-    directory, copies are put in that directory.  If dest is a file,
+    Mark dest as having copies of source files. If dest is a
+    directory, copies are put in that directory. If dest is a file,
     there can only be one source.
 
     By default, this command copies the contents of files as they
-    stand in the working directory.  If invoked with --after, the
+    stand in the working directory. If invoked with --after, the
     operation is recorded, but no copying is performed.
 
     This command takes effect in the next commit. To undo a copy
@@ -902,25 +914,27 @@ def debugrename(ui, repo, file1, *pats, **opts):
     """dump rename information"""
 
     ctx = repo.changectx(opts.get('rev', 'tip'))
-    for src, abs, rel, exact in cmdutil.walk(repo, (file1,) + pats, opts,
-                                             ctx.node()):
+    m = cmdutil.match(repo, (file1,) + pats, opts)
+    for abs in repo.walk(m, ctx.node()):
         fctx = ctx.filectx(abs)
-        m = fctx.filelog().renamed(fctx.filenode())
-        if m:
-            ui.write(_("%s renamed from %s:%s\n") % (rel, m[0], hex(m[1])))
+        o = fctx.filelog().renamed(fctx.filenode())
+        rel = m.rel(abs)
+        if o:
+            ui.write(_("%s renamed from %s:%s\n") % (rel, o[0], hex(o[1])))
         else:
             ui.write(_("%s not renamed\n") % rel)
 
 def debugwalk(ui, repo, *pats, **opts):
     """show how files match on given patterns"""
-    items = list(cmdutil.walk(repo, pats, opts))
+    m = cmdutil.match(repo, pats, opts)
+    items = list(repo.walk(m))
     if not items:
         return
-    fmt = '%%s  %%-%ds  %%-%ds  %%s' % (
-        max([len(abs) for (src, abs, rel, exact) in items]),
-        max([len(rel) for (src, abs, rel, exact) in items]))
-    for src, abs, rel, exact in items:
-        line = fmt % (src, abs, rel, exact and 'exact' or '')
+    fmt = 'f  %%-%ds  %%-%ds  %%s' % (
+        max([len(abs) for abs in items]),
+        max([len(m.rel(abs)) for abs in items]))
+    for abs in items:
+        line = fmt % (abs, m.rel(abs), m.exact(abs) and 'exact' or '')
         ui.write("%s\n" % line.rstrip())
 
 def diff(ui, repo, *pats, **opts):
@@ -946,10 +960,8 @@ def diff(ui, repo, *pats, **opts):
     """
     node1, node2 = cmdutil.revpair(repo, opts['rev'])
 
-    fns, matchfn, anypats = cmdutil.matchpats(repo, pats, opts)
-
-    patch.diff(repo, node1, node2, fns, match=matchfn,
-               opts=patch.diffopts(ui, opts))
+    m = cmdutil.match(repo, pats, opts)
+    patch.diff(repo, node1, node2, match=m, opts=patch.diffopts(ui, opts))
 
 def export(ui, repo, *changesets, **opts):
     """dump the header and diffs for one or more changesets
@@ -963,7 +975,7 @@ def export(ui, repo, *changesets, **opts):
     as it will compare the merge changeset against its first parent only.
 
     Output may be to a file, in which case the name of the file is
-    given using a format string.  The formatting rules are as follows:
+    given using a format string. The formatting rules are as follows:
 
     %%   literal "%" character
     %H   changeset hash (40 bytes of hexadecimal)
@@ -997,13 +1009,13 @@ def grep(ui, repo, pattern, *pats, **opts):
 
     Search revisions of files for a regular expression.
 
-    This command behaves differently than Unix grep.  It only accepts
-    Python/Perl regexps.  It searches repository history, not the
-    working directory.  It always prints the revision number in which
+    This command behaves differently than Unix grep. It only accepts
+    Python/Perl regexps. It searches repository history, not the
+    working directory. It always prints the revision number in which
     a match appears.
 
     By default, grep only prints output for the first revision of a
-    file in which it finds a match.  To get it to print every revision
+    file in which it finds a match. To get it to print every revision
     that contains a change in match status ("-" for a match that
     becomes a non-match, or "+" for a non-match that becomes a match),
     use the --all flag.
@@ -1046,6 +1058,9 @@ def grep(ui, repo, pattern, *pats, **opts):
             self.linenum = linenum
             self.colstart = colstart
             self.colend = colend
+
+        def __hash__(self):
+            return hash((self.linenum, self.line))
 
         def __eq__(self, other):
             return self.line == other.line
@@ -1173,7 +1188,7 @@ def heads(ui, repo, *branchrevs, **opts):
     are the usual targets for update and merge operations.
 
     Branch heads are changesets that have a given branch tag, but have
-    no child changesets with that tag.  They are usually where
+    no child changesets with that tag. They are usually where
     development on the given branch takes place.
     """
     if opts['rev']:
@@ -1466,15 +1481,15 @@ def import_(ui, repo, patch1, *patches, **opts):
     If there are outstanding changes in the working directory, import
     will abort unless given the -f flag.
 
-    You can import a patch straight from a mail message.  Even patches
+    You can import a patch straight from a mail message. Even patches
     as attachments work (body part must be type text/plain or
-    text/x-patch to be used).  From and Subject headers of email
-    message are used as default committer and commit message.  All
+    text/x-patch to be used). From and Subject headers of email
+    message are used as default committer and commit message. All
     text/plain body parts before first diff are added to commit
     message.
 
     If the imported patch was generated by hg export, user and description
-    from patch override values from message headers and body.  Values
+    from patch override values from message headers and body. Values
     given on command line with -m and -u override these.
 
     If --exact is specified, import will set the working directory
@@ -1643,7 +1658,7 @@ def incoming(ui, repo, source="default", **opts):
 def init(ui, dest=".", **opts):
     """create a new repository in the given directory
 
-    Initialize a new repository in the given directory.  If the given
+    Initialize a new repository in the given directory. If the given
     directory does not exist, it is created.
 
     If no directory is given, the current directory is used.
@@ -1661,7 +1676,7 @@ def locate(ui, repo, *pats, **opts):
     Print all files under Mercurial control whose names match the
     given patterns.
 
-    This command searches the entire repository by default.  To search
+    This command searches the entire repository by default. To search
     just the current directory and its subdirectories, use
     "--include .".
 
@@ -1681,17 +1696,15 @@ def locate(ui, repo, *pats, **opts):
         node = None
 
     ret = 1
-    for src, abs, rel, exact in cmdutil.walk(repo, pats, opts, node=node,
-                                             badmatch=util.always,
-                                             default='relglob'):
-        if src == 'b':
-            continue
+    m = cmdutil.match(repo, pats, opts, default='relglob')
+    m.bad = lambda x,y: False
+    for abs in repo.walk(m, node):
         if not node and abs not in repo.dirstate:
             continue
         if opts['fullpath']:
             ui.write(os.path.join(repo.root, abs), end)
         else:
-            ui.write(((pats and rel) or abs), end)
+            ui.write(((pats and m.rel(abs)) or abs), end)
         ret = 0
 
     return ret
@@ -1703,7 +1716,7 @@ def log(ui, repo, *pats, **opts):
     project.
 
     File history is shown without following rename or copy history of
-    files.  Use -f/--follow with a file name to follow history across
+    files. Use -f/--follow with a file name to follow history across
     renames and copies. --follow without a file name will only show
     ancestors or descendants of the starting revision. --follow-first
     only follows the first parent of merge revisions.
@@ -1862,7 +1875,7 @@ def merge(ui, repo, node=None, force=None, rev=None):
 
     If no revision is specified, the working directory's parent is a
     head revision, and the repository contains exactly one other head,
-    the other head is merged with by default.  Otherwise, an explicit
+    the other head is merged with by default. Otherwise, an explicit
     revision to merge with must be provided.
     """
 
@@ -1942,10 +1955,10 @@ def parents(ui, repo, file_=None, **opts):
         ctx = repo.workingctx()
 
     if file_:
-        files, match, anypats = cmdutil.matchpats(repo, (file_,), opts)
-        if anypats or len(files) != 1:
+        m = cmdutil.match(repo, (file_,), opts)
+        if m.anypats() or len(m.files()) != 1:
             raise util.Abort(_('can only specify an explicit file name'))
-        file_ = files[0]
+        file_ = m.files()[0]
         filenodes = []
         for cp in ctx.parents():
             if not cp:
@@ -1973,7 +1986,7 @@ def paths(ui, repo, search=None):
     definition of available names.
 
     Path names are defined in the [paths] section of /etc/mercurial/hgrc
-    and $HOME/.hgrc.  If run inside a repository, .hg/hgrc is used, too.
+    and $HOME/.hgrc. If run inside a repository, .hg/hgrc is used, too.
     """
     if search:
         for name, path in ui.configitems("paths"):
@@ -2115,7 +2128,7 @@ def rawcommit(ui, repo, *pats, **opts):
 
     message = cmdutil.logmessage(opts)
 
-    files, match, anypats = cmdutil.matchpats(repo, pats, opts)
+    files = cmdutil.match(repo, pats, opts).files()
     if opts['files']:
         files += open(opts['files']).read().splitlines()
 
@@ -2167,12 +2180,12 @@ def remove(ui, repo, *pats, **opts):
     if not pats and not after:
         raise util.Abort(_('no files specified'))
 
-    files, matchfn, anypats = cmdutil.matchpats(repo, pats, opts)
-    mardu = map(dict.fromkeys, repo.status(files=files, match=matchfn))[:5]
+    m = cmdutil.match(repo, pats, opts)
+    mardu = map(dict.fromkeys, repo.status(match=m))[:5]
     modified, added, removed, deleted, unknown = mardu
 
     remove, forget = [], []
-    for src, abs, rel, exact in cmdutil.walk(repo, pats, opts):
+    for abs in repo.walk(m):
 
         reason = None
         if abs in removed or abs in unknown:
@@ -2205,9 +2218,9 @@ def remove(ui, repo, *pats, **opts):
             remove.append(abs)
 
         if reason:
-            ui.warn(_('not removing %s: file %s\n') % (rel, reason))
-        elif ui.verbose or not exact:
-            ui.status(_('removing %s\n') % rel)
+            ui.warn(_('not removing %s: file %s\n') % (m.rel(abs), reason))
+        elif ui.verbose or not m.exact(abs):
+            ui.status(_('removing %s\n') % m.rel(abs))
 
     repo.forget(forget)
     repo.remove(remove, unlink=not after)
@@ -2215,12 +2228,12 @@ def remove(ui, repo, *pats, **opts):
 def rename(ui, repo, *pats, **opts):
     """rename files; equivalent of copy + remove
 
-    Mark dest as copies of sources; mark sources for deletion.  If
-    dest is a directory, copies are put in that directory.  If dest is
+    Mark dest as copies of sources; mark sources for deletion. If
+    dest is a directory, copies are put in that directory. If dest is
     a file, there can only be one source.
 
     By default, this command copies the contents of files as they
-    stand in the working directory.  If invoked with --after, the
+    stand in the working directory. If invoked with --after, the
     operation is recorded, but no copying is performed.
 
     This command takes effect in the next commit. To undo a rename
@@ -2231,6 +2244,35 @@ def rename(ui, repo, *pats, **opts):
         return cmdutil.copy(ui, repo, pats, opts, rename=True)
     finally:
         del wlock
+
+def resolve(ui, repo, *pats, **opts):
+    """resolve file merges from a branch merge or update
+
+    This command will attempt to resolve unresolved merges from the
+    last update or merge command. This will use the local file
+    revision preserved at the last update or merge to cleanly retry
+    the file merge attempt. With no file or options specified, this
+    command will attempt to resolve all unresolved files.
+    """
+
+    if len([x for x in opts if opts[x]]) > 1:
+        raise util.Abort(_("too many options specified"))
+
+    ms = merge_.mergestate(repo)
+    m = cmdutil.match(repo, pats, opts)
+
+    for f in ms:
+        if m(f):
+            if opts.get("list"):
+                ui.write("%s %s\n" % (ms[f].upper(), f))
+            elif opts.get("mark"):
+                ms.mark(f, "r")
+            elif opts.get("unmark"):
+                ms.mark(f, "u")
+            else:
+                wctx = repo.workingctx()
+                mctx = wctx.parents()[-1]
+                ms.resolve(f, wctx, mctx)
 
 def revert(ui, repo, *pats, **opts):
     """restore individual files or dirs to an earlier state
@@ -2250,13 +2292,13 @@ def revert(ui, repo, *pats, **opts):
     back" some or all of an earlier change.
     See 'hg help dates' for a list of formats valid for -d/--date.
 
-    Revert modifies the working directory.  It does not commit any
-    changes, or change the parent of the working directory.  If you
+    Revert modifies the working directory. It does not commit any
+    changes, or change the parent of the working directory. If you
     revert to a revision other than the parent of the working
     directory, the reverted files will thus appear modified
     afterwards.
 
-    If a file has been deleted, it is restored.  If the executable
+    If a file has been deleted, it is restored. If the executable
     mode of a file was changed, it is reset.
 
     If names are given, all files matching the names are reverted.
@@ -2297,30 +2339,32 @@ def revert(ui, repo, *pats, **opts):
     try:
         # walk dirstate.
         files = []
-        for src, abs, rel, exact in cmdutil.walk(repo, pats, opts,
-                                                 badmatch=mf.has_key):
-            names[abs] = (rel, exact)
-            if src != 'b':
-                files.append(abs)
+
+        m = cmdutil.match(repo, pats, opts)
+        m.bad = lambda x,y: False
+        for abs in repo.walk(m):
+            names[abs] = m.rel(abs), m.exact(abs)
 
         # walk target manifest.
 
-        def badmatch(path):
+        def badfn(path, msg):
             if path in names:
-                return True
+                return False
             path_ = path + '/'
             for f in names:
                 if f.startswith(path_):
-                    return True
+                    return False
+            repo.ui.warn("%s: %s\n" % (m.rel(path), msg))
             return False
 
-        for src, abs, rel, exact in cmdutil.walk(repo, pats, opts, node=node,
-                                                 badmatch=badmatch):
-            if abs in names or src == 'b':
-                continue
-            names[abs] = (rel, exact)
+        m = cmdutil.match(repo, pats, opts)
+        m.bad = badfn
+        for abs in repo.walk(m, node=node):
+            if abs not in names:
+                names[abs] = m.rel(abs), m.exact(abs)
 
-        changes = repo.status(files=files, match=names.has_key)[:4]
+        m = cmdutil.matchfiles(repo, names)
+        changes = repo.status(match=m)[:4]
         modified, added, removed, deleted = map(dict.fromkeys, changes)
 
         # if f is a rename, also revert the source
@@ -2492,7 +2536,7 @@ def serve(ui, repo, **opts):
     Start a local HTTP repository browser and pull server.
 
     By default, the server logs accesses to stdout and errors to
-    stderr.  Use the "-A" and "-E" options to log to files.
+    stderr. Use the "-A" and "-E" options to log to files.
     """
 
     if opts["stdio"]:
@@ -2531,8 +2575,17 @@ def serve(ui, repo, **opts):
             if port == ':80':
                 port = ''
 
-            ui.status(_('listening at http://%s%s/%s (%s:%d)\n') %
-                      (self.httpd.fqaddr, port, prefix, self.httpd.addr, self.httpd.port))
+            bindaddr = self.httpd.addr
+            if bindaddr == '0.0.0.0':
+                bindaddr = '*'
+            elif ':' in bindaddr: # IPv6
+                bindaddr = '[%s]' % bindaddr
+
+            fqaddr = self.httpd.fqaddr
+            if ':' in fqaddr:
+                fqaddr = '[%s]' % fqaddr
+            ui.status(_('listening at http://%s%s/%s (bound to %s:%d)\n') %
+                      (fqaddr, port, prefix, bindaddr, self.httpd.port))
 
         def run(self):
             self.httpd.serve_forever()
@@ -2544,10 +2597,10 @@ def serve(ui, repo, **opts):
 def status(ui, repo, *pats, **opts):
     """show changed files in the working directory
 
-    Show status of files in the repository.  If names are given, only
-    files that match are shown.  Files that are clean or ignored or
+    Show status of files in the repository. If names are given, only
+    files that match are shown. Files that are clean or ignored or
     source of a copy/move operation, are not listed unless -c (clean),
-    -i (ignored), -C (copies) or -A is given.  Unless options described
+    -i (ignored), -C (copies) or -A is given. Unless options described
     with "show only ..." are given, the options -mardu are used.
 
     Option -q/--quiet hides untracked (unknown and ignored) files
@@ -2572,65 +2625,47 @@ def status(ui, repo, *pats, **opts):
       = the previous added file was copied from here
     """
 
-    all = opts['all']
     node1, node2 = cmdutil.revpair(repo, opts.get('rev'))
-
-    files, matchfn, anypats = cmdutil.matchpats(repo, pats, opts)
     cwd = (pats and repo.getcwd()) or ''
-    modified, added, removed, deleted, unknown, ignored, clean = [
-        n for n in repo.status(node1=node1, node2=node2, files=files,
-                               match=matchfn,
-                               list_ignored=opts['ignored']
-                                            or all and not ui.quiet,
-                               list_clean=opts['clean'] or all,
-                               list_unknown=opts['unknown']
-                                            or not (ui.quiet or
-                                                    opts['modified'] or
-                                                    opts['added'] or
-                                                    opts['removed'] or
-                                                    opts['deleted'] or
-                                                    opts['ignored']))]
-
-    changetypes = (('modified', 'M', modified),
-                   ('added', 'A', added),
-                   ('removed', 'R', removed),
-                   ('deleted', '!', deleted),
-                   ('unknown', '?', unknown),
-                   ('ignored', 'I', ignored))
-
-    explicit_changetypes = changetypes + (('clean', 'C', clean),)
-
+    end = opts['print0'] and '\0' or '\n'
     copy = {}
-    showcopy = {}
-    if ((all or opts.get('copies')) and not opts.get('no_status')):
+    states = 'modified added removed deleted unknown ignored clean'.split()
+    show = [k for k in states if opts[k]]
+    if opts['all']:
+        show += ui.quiet and (states[:4] + ['clean']) or states
+    if not show:
+        show = ui.quiet and states[:4] or states[:5]
+
+    stat = repo.status(node1, node2, cmdutil.match(repo, pats, opts),
+                       'ignored' in show, 'clean' in show, 'unknown' in show)
+    changestates = zip(states, 'MAR!?IC', stat)
+
+    if (opts['all'] or opts['copies']) and not opts['no_status']:
         if opts.get('rev') == []:
             # fast path, more correct with merge parents
-            showcopy = copy = repo.dirstate.copies().copy()
+            copy = repo.dirstate.copies()
         else:
             ctxn = repo.changectx(nullid)
             ctx1 = repo.changectx(node1)
             ctx2 = repo.changectx(node2)
             if node2 is None:
                 ctx2 = repo.workingctx()
-            copy, diverge = copies.copies(repo, ctx1, ctx2, ctxn)
-            for k, v in copy.items():
-                copy[v] = k
+            for k, v in copies.copies(repo, ctx1, ctx2, ctxn)[0].items():
+                if v in stat[1]:
+                    copy[v] = k
+                elif k in stat[1]:
+                    copy[k] = v
 
-    end = opts['print0'] and '\0' or '\n'
-
-    for opt, char, changes in ([ct for ct in explicit_changetypes
-                                if all or opts[ct[0]]]
-                               or changetypes):
-
-        if opts['no_status']:
-            format = "%%s%s" % end
-        else:
+    for state, char, files in changestates:
+        if state in show:
             format = "%s %%s%s" % (char, end)
+            if opts['no_status']:
+                format = "%%s%s" % end
 
-        for f in changes:
-            ui.write(format % repo.pathto(f, cwd))
-            if f in copy and (f in added or f in showcopy):
-                ui.write('  %s%s' % (repo.pathto(copy[f], cwd), end))
+            for f in files:
+                ui.write(format % repo.pathto(f, cwd))
+                if f in copy:
+                    ui.write('  %s%s' % (repo.pathto(copy[f], cwd), end))
 
 def tag(ui, repo, name1, *names, **opts):
     """add one or more tags for the current or given revision
@@ -2647,7 +2682,7 @@ def tag(ui, repo, name1, *names, **opts):
     To facilitate version control, distribution, and merging of tags,
     they are stored as a file named ".hgtags" which is managed
     similarly to other project files and can be hand-edited if
-    necessary.  The file '.hg/localtags' is used for local tags (not
+    necessary. The file '.hg/localtags' is used for local tags (not
     shared among repositories).
 
     See 'hg help dates' for a list of formats valid for -d/--date.
@@ -2942,8 +2977,8 @@ table = {
            _('a changeset up to which you would like to bundle')),
           ('', 'base', [],
            _('a base changeset to specify instead of a destination')),
-          ('a', 'all', None,
-           _('bundle all changesets in the repository')),
+          ('a', 'all', None, _('bundle all changesets in the repository')),
+          ('t', 'type', 'bzip2', _('bundle compression type to use')),
          ] + remoteopts,
          _('hg bundle [-f] [-a] [-r REV]... [--base REV]... FILE [DEST]')),
     "cat":
@@ -3183,6 +3218,12 @@ table = {
            _('forcibly copy over an existing managed file')),
          ] + walkopts + dryrunopts,
          _('hg rename [OPTION]... SOURCE... DEST')),
+    "resolve":
+        (resolve,
+         [('l', 'list', None, _('list state of files needing merge')),
+          ('m', 'mark', None, _('mark files as resolved')),
+          ('u', 'unmark', None, _('unmark files as resolved'))],
+          ('hg resolve [OPTION] [FILES...]')),
     "revert":
         (revert,
          [('a', 'all', None, _('revert all changes when no arguments given')),

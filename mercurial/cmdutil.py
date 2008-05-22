@@ -9,6 +9,7 @@ from node import hex, nullid, nullrev, short
 from i18n import _
 import os, sys, bisect, stat
 import mdiff, bdiff, util, templater, templatefilters, patch, errno
+import match as _match
 
 revrangesep = ':'
 
@@ -223,21 +224,22 @@ def make_file(repo, pat, node=None,
                               pathname),
                 mode)
 
-def matchpats(repo, pats=[], opts={}, globbed=False, default=None):
-    cwd = repo.getcwd()
-    return util.cmdmatcher(repo.root, cwd, pats or [], opts.get('include'),
-                           opts.get('exclude'), globbed=globbed,
-                           default=default)
+def match(repo, pats=[], opts={}, globbed=False, default='relpath'):
+    if not globbed and default == 'relpath':
+        pats = util.expand_glob(pats or [])
+    m = _match.match(repo.root, repo.getcwd(), pats,
+                    opts.get('include'), opts.get('exclude'), default)
+    def badfn(f, msg):
+        repo.ui.warn("%s: %s\n" % (m.rel(f), msg))
+        return False
+    m.bad = badfn
+    return m
 
-def walk(repo, pats=[], opts={}, node=None, badmatch=None, globbed=False,
-         default=None):
-    files, matchfn, anypats = matchpats(repo, pats, opts, globbed=globbed,
-                                        default=default)
-    exact = dict.fromkeys(files)
-    cwd = repo.getcwd()
-    for src, fn in repo.walk(node=node, files=files, match=matchfn,
-                             badmatch=badmatch):
-        yield src, fn, repo.pathto(fn, cwd), fn in exact
+def matchall(repo):
+    return _match.always(repo.root, repo.getcwd())
+
+def matchfiles(repo, files):
+    return _match.exact(repo.root, repo.getcwd(), files)
 
 def findrenames(repo, added=None, removed=None, threshold=0.5):
     '''find renamed files -- yields (before, after, score) tuples'''
@@ -274,11 +276,14 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
         similarity = float(opts.get('similarity') or 0)
     add, remove = [], []
     mapping = {}
-    for src, abs, rel, exact in walk(repo, pats, opts):
+    m = match(repo, pats, opts)
+    for abs in repo.walk(m):
         target = repo.wjoin(abs)
-        if src == 'f' and abs not in repo.dirstate:
+        rel = m.rel(abs)
+        exact = m.exact(abs)
+        if abs not in repo.dirstate:
             add.append(abs)
-            mapping[abs] = rel, exact
+            mapping[abs] = rel, m.exact(abs)
             if repo.ui.verbose or not exact:
                 repo.ui.status(_('adding %s\n') % ((pats and rel) or abs))
         if repo.dirstate[abs] != 'r' and (not util.lexists(target)
@@ -313,8 +318,11 @@ def copy(ui, repo, pats, opts, rename=False):
 
     def walkpat(pat):
         srcs = []
-        for tag, abs, rel, exact in walk(repo, [pat], opts, globbed=True):
+        m = match(repo, [pat], opts, globbed=True)
+        for abs in repo.walk(m):
             state = repo.dirstate[abs]
+            rel = m.rel(abs)
+            exact = m.exact(abs)
             if state in '?r':
                 if exact and state == '?':
                     ui.warn(_('%s: not copying - file is not managed\n') % rel)
@@ -883,7 +891,7 @@ def show_changeset(ui, repo, opts, buffered=False, matchfn=False):
     # options
     patch = False
     if opts.get('patch'):
-        patch = matchfn or util.always
+        patch = matchfn or matchall(repo)
 
     tmpl = opts.get('template')
     mapfile = None
@@ -971,11 +979,11 @@ def walkchangerevs(ui, repo, pats, change, opts):
                 if windowsize < sizelimit:
                     windowsize *= 2
 
-    files, matchfn, anypats = matchpats(repo, pats, opts)
+    m = match(repo, pats, opts)
     follow = opts.get('follow') or opts.get('follow_first')
 
     if repo.changelog.count() == 0:
-        return [], matchfn
+        return [], m
 
     if follow:
         defrange = '%s:0' % repo.changectx().rev()
@@ -983,10 +991,10 @@ def walkchangerevs(ui, repo, pats, change, opts):
         defrange = '-1:0'
     revs = revrange(repo, opts['rev'] or [defrange])
     wanted = {}
-    slowpath = anypats or opts.get('removed')
+    slowpath = m.anypats() or opts.get('removed')
     fncache = {}
 
-    if not slowpath and not files:
+    if not slowpath and not m.files():
         # No files, no patterns.  Display all revs.
         wanted = dict.fromkeys(revs)
     copies = []
@@ -1011,7 +1019,7 @@ def walkchangerevs(ui, repo, pats, change, opts):
                     if rev[0] < cl_count:
                         yield rev
         def iterfiles():
-            for filename in files:
+            for filename in m.files():
                 yield filename, None
             for filename_node in copies:
                 yield filename_node
@@ -1050,7 +1058,7 @@ def walkchangerevs(ui, repo, pats, change, opts):
                     yield j, change(j)[3]
 
         for rev, changefiles in changerevgen():
-            matches = filter(matchfn, changefiles)
+            matches = filter(m, changefiles)
             if matches:
                 fncache[rev] = matches
                 wanted[rev] = 1
@@ -1103,7 +1111,7 @@ def walkchangerevs(ui, repo, pats, change, opts):
                 del wanted[x]
 
     def iterate():
-        if follow and not files:
+        if follow and not m.files():
             ff = followfilter(onlyfirst=opts.get('follow_first'))
             def want(rev):
                 if ff.match(rev) and rev in wanted:
@@ -1123,13 +1131,13 @@ def walkchangerevs(ui, repo, pats, change, opts):
                 if not fns:
                     def fns_generator():
                         for f in change(rev)[3]:
-                            if matchfn(f):
+                            if m(f):
                                 yield f
                     fns = fns_generator()
                 yield 'add', rev, fns
             for rev in nrevs:
                 yield 'iter', rev, None
-    return iterate(), matchfn
+    return iterate(), m
 
 def commit(ui, repo, commitfunc, pats, opts):
     '''commit the specified files or all outstanding changes'''
@@ -1143,13 +1151,13 @@ def commit(ui, repo, commitfunc, pats, opts):
     if opts.get('addremove'):
         addremove(repo, pats, opts)
 
-    fns, match, anypats = matchpats(repo, pats, opts)
+    m = match(repo, pats, opts)
     if pats:
-        status = repo.status(files=fns, match=match)
+        status = repo.status(match=m)
         modified, added, removed, deleted, unknown = status[:5]
         files = modified + added + removed
         slist = None
-        for f in fns:
+        for f in m.files():
             if f == '.':
                 continue
             if f not in files:
@@ -1173,9 +1181,8 @@ def commit(ui, repo, commitfunc, pats, opts):
                                        "unsupported file type!") % rel)
                 elif f not in repo.dirstate:
                     raise util.Abort(_("file %s not tracked!") % rel)
-    else:
-        files = []
+        m = matchfiles(repo, files)
     try:
-        return commitfunc(ui, repo, files, message, match, opts)
+        return commitfunc(ui, repo, message, m, opts)
     except ValueError, inst:
         raise util.Abort(str(inst))
