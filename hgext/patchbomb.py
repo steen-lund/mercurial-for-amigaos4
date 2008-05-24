@@ -64,9 +64,9 @@
 #
 # That should be all.  Now your patchbomb is on its way out.
 
-import os, errno, socket, tempfile
+import os, errno, socket, tempfile, cStringIO
 import email.MIMEMultipart, email.MIMEText, email.MIMEBase
-import email.Utils, email.Encoders
+import email.Utils, email.Encoders, email.Generator
 from mercurial import cmdutil, commands, hg, mail, patch, util
 from mercurial.i18n import _
 from mercurial.node import bin
@@ -404,11 +404,12 @@ def patchbomb(ui, repo, *revs, **opts):
             ui.status('Displaying ', m['Subject'], ' ...\n')
             ui.flush()
             if 'PAGER' in os.environ:
-                fp = os.popen(os.environ['PAGER'], 'w')
+                fp = util.popen(os.environ['PAGER'], 'w')
             else:
                 fp = ui
+            generator = email.Generator.Generator(fp, mangle_from_=False)
             try:
-                fp.write(m.as_string(0))
+                generator.flatten(m, 0)
                 fp.write('\n')
             except IOError, inst:
                 if inst.errno != errno.EPIPE:
@@ -418,9 +419,10 @@ def patchbomb(ui, repo, *revs, **opts):
         elif opts.get('mbox'):
             ui.status('Writing ', m['Subject'], ' ...\n')
             fp = open(opts.get('mbox'), 'In-Reply-To' in m and 'ab+' or 'wb+')
+            generator = email.Generator.Generator(fp, mangle_from_=True)
             date = util.datestr(start_time, '%a %b %d %H:%M:%S %Y')
             fp.write('From %s %s\n' % (sender_addr, date))
-            fp.write(m.as_string(0))
+            generator.flatten(m, 0)
             fp.write('\n\n')
             fp.close()
         else:
@@ -429,7 +431,10 @@ def patchbomb(ui, repo, *revs, **opts):
             ui.status('Sending ', m['Subject'], ' ...\n')
             # Exim does not remove the Bcc field
             del m['Bcc']
-            sendmail(sender, to + bcc + cc, m.as_string(0))
+            fp = cStringIO.StringIO()
+            generator = email.Generator.Generator(fp, mangle_from_=False)
+            generator.flatten(m, 0)
+            sendmail(sender, to + bcc + cc, fp.getvalue())
 
 cmdtable = {
     "email":
