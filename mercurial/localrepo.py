@@ -11,6 +11,7 @@ import repo, changegroup
 import changelog, dirstate, filelog, manifest, context, weakref
 import lock, transaction, stat, errno, ui
 import os, revlog, time, util, extensions, hook, inspect
+import match as match_
 
 class localrepository(repo.repository):
     capabilities = util.set(('lookup', 'changegroupsubset'))
@@ -476,6 +477,9 @@ class localrepository(repo.repository):
     def wjoin(self, f):
         return os.path.join(self.root, f)
 
+    def rjoin(self, f):
+        return os.path.join(self.root, util.pconvert(f))
+
     def file(self, f):
         if f[0] == '/':
             f = f[1:]
@@ -745,7 +749,7 @@ class localrepository(repo.repository):
                            p1=p1, p2=p2, extra=extra, empty_ok=True)
 
     def commit(self, files=None, text="", user=None, date=None,
-               match=util.always, force=False, force_editor=False,
+               match=None, force=False, force_editor=False,
                p1=None, p2=None, extra={}, empty_ok=False):
         wlock = lock = tr = None
         valid = 0 # don't save the dirstate if this isn't set
@@ -783,7 +787,7 @@ class localrepository(repo.repository):
                 update_dirstate = True
 
                 if (not force and p2 != nullid and
-                    (files or match != util.always)):
+                    (match and (match.files() or match.anypats()))):
                     raise util.Abort(_('cannot partially commit a merge '
                                        '(do not specify files or patterns)'))
             else:
@@ -928,21 +932,15 @@ class localrepository(repo.repository):
                 self.dirstate.invalidate()
             del tr, lock, wlock
 
-    def walk(self, node=None, files=[], match=util.always, badmatch=None):
+    def walk(self, match, node=None):
         '''
         walk recursively through the directory tree or a given
         changeset, finding all files matched by the match
         function
-
-        results are yielded in a tuple (src, filename), where src
-        is one of:
-        'f' the file was found in the directory tree
-        'm' the file was only in the dirstate and not in the tree
-        'b' file was not found and matched badmatch
         '''
 
         if node:
-            fdict = dict.fromkeys(files)
+            fdict = dict.fromkeys(match.files())
             # for dirstate.walk, files=['.'] means "walk the whole tree".
             # follow that here, too
             fdict.pop('.', None)
@@ -956,21 +954,18 @@ class localrepository(repo.repository):
                         del fdict[ffn]
                         break
                 if match(fn):
-                    yield 'm', fn
+                    yield fn
             ffiles = fdict.keys()
             ffiles.sort()
             for fn in ffiles:
-                if badmatch and badmatch(fn):
-                    if match(fn):
-                        yield 'b', fn
-                else:
-                    self.ui.warn(_('%s: No such file in rev %s\n')
-                                 % (self.pathto(fn), short(node)))
+                if match.bad(fn, 'No such file in rev ' + short(node)) \
+                        and match(fn):
+                    yield fn
         else:
-            for src, fn in self.dirstate.walk(files, match, badmatch=badmatch):
-                yield src, fn
+            for fn in self.dirstate.walk(match):
+                yield fn
 
-    def status(self, node1=None, node2=None, files=[], match=util.always,
+    def status(self, node1=None, node2=None, match=None,
                list_ignored=False, list_clean=False, list_unknown=True):
         """return status of files between two nodes or node and working directory
 
@@ -990,6 +985,9 @@ class localrepository(repo.repository):
                     del mf[fn]
             return mf
 
+        if not match:
+            match = match_.always(self.root, self.getcwd())
+
         modified, added, removed, deleted, unknown = [], [], [], [], []
         ignored, clean = [], []
 
@@ -1006,10 +1004,8 @@ class localrepository(repo.repository):
         # are we comparing the working directory?
         if not node2:
             (lookup, modified, added, removed, deleted, unknown,
-             ignored, clean) = self.dirstate.status(files, match,
-                                                    list_ignored, list_clean,
-                                                    list_unknown)
-
+             ignored, clean) = self.dirstate.status(match, list_ignored,
+                                                    list_clean, list_unknown)
             # are we comparing working dir against its parent?
             if compareworking:
                 if lookup:
@@ -1989,7 +1985,7 @@ class localrepository(repo.repository):
             self.ui.status(_("adding changesets\n"))
             cor = cl.count() - 1
             chunkiter = changegroup.chunkiter(source)
-            if cl.addgroup(chunkiter, csmap, trp, 1) is None and not emptyok:
+            if cl.addgroup(chunkiter, csmap, trp) is None and not emptyok:
                 raise util.Abort(_("received changelog group is empty"))
             cnr = cl.count() - 1
             changesets = cnr - cor
