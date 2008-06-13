@@ -13,13 +13,13 @@ of the GNU General Public License, incorporated herein by reference.
 from node import bin, hex, nullid, nullrev, short
 from i18n import _
 import changegroup, errno, ancestor, mdiff
-import sha, struct, util, zlib
+import struct, util, zlib
 
 _pack = struct.pack
 _unpack = struct.unpack
 _compress = zlib.compress
 _decompress = zlib.decompress
-_sha = sha.new
+_sha = util.sha1
 
 # revlog flags
 REVLOGV0 = 0
@@ -1133,7 +1133,7 @@ class revlog(object):
 
         yield changegroup.closechunk()
 
-    def addgroup(self, revs, linkmapper, transaction, unique=0):
+    def addgroup(self, revs, linkmapper, transaction):
         """
         add a delta group
 
@@ -1170,8 +1170,6 @@ class revlog(object):
                 link = linkmapper(cs)
                 if node in self.nodemap:
                     # this can happen if two branches make the same change
-                    # if unique:
-                    #    raise RevlogError(_("already have %s") % hex(node[:4]))
                     chain = node
                     continue
                 delta = buffer(chunk, 80)
