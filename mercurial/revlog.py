@@ -13,13 +13,13 @@ of the GNU General Public License, incorporated herein by reference.
 from node import bin, hex, nullid, nullrev, short
 from i18n import _
 import changegroup, errno, ancestor, mdiff
-import sha, struct, util, zlib
+import struct, util, zlib
 
 _pack = struct.pack
 _unpack = struct.unpack
 _compress = zlib.compress
 _decompress = zlib.decompress
-_sha = sha.new
+_sha = util.sha1
 
 # revlog flags
 REVLOGV0 = 0
@@ -32,12 +32,15 @@ REVLOG_DEFAULT_VERSION = REVLOG_DEFAULT_FORMAT | REVLOG_DEFAULT_FLAGS
 class RevlogError(Exception):
     pass
 
-class LookupError(RevlogError):
+class LookupError(RevlogError, KeyError):
     def __init__(self, name, index, message):
         self.name = name
         if isinstance(name, str) and len(name) == 20:
             name = short(name)
         RevlogError.__init__(self, _('%s@%s: %s') % (index, name, message))
+
+    def __str__(self):
+        return RevlogError.__str__(self)
 
 def getoffset(q):
     return int(q >> 16)
@@ -1133,7 +1136,7 @@ class revlog(object):
 
         yield changegroup.closechunk()
 
-    def addgroup(self, revs, linkmapper, transaction, unique=0):
+    def addgroup(self, revs, linkmapper, transaction):
         """
         add a delta group
 
@@ -1170,8 +1173,6 @@ class revlog(object):
                 link = linkmapper(cs)
                 if node in self.nodemap:
                     # this can happen if two branches make the same change
-                    # if unique:
-                    #    raise RevlogError(_("already have %s") % hex(node[:4]))
                     chain = node
                     continue
                 delta = buffer(chunk, 80)

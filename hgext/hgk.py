@@ -4,49 +4,48 @@
 #
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
-#
-# The hgk extension allows browsing the history of a repository in a
-# graphical way. It requires Tcl/Tk version 8.4 or later. (Tcl/Tk is
-# not distributed with Mercurial.)
-#
-# hgk consists of two parts: a Tcl script that does the displaying and
-# querying of information, and an extension to mercurial named hgk.py,
-# which provides hooks for hgk to get information. hgk can be found in
-# the contrib directory, and hgk.py can be found in the hgext
-# directory.
-#
-# To load the hgext.py extension, add it to your .hgrc file (you have
-# to use your global $HOME/.hgrc file, not one in a repository). You
-# can specify an absolute path:
-#
-#   [extensions]
-#   hgk=/usr/local/lib/hgk.py
-#
-# Mercurial can also scan the default python library path for a file
-# named 'hgk.py' if you set hgk empty:
-#
-#   [extensions]
-#   hgk=
-#
-# The hg view command will launch the hgk Tcl script. For this command
-# to work, hgk must be in your search path. Alternately, you can
-# specify the path to hgk in your .hgrc file:
-#
-#   [hgk]
-#   path=/location/of/hgk
-#
-# hgk can make use of the extdiff extension to visualize
-# revisions. Assuming you had already configured extdiff vdiff
-# command, just add:
-#
-#   [hgk]
-#   vdiff=vdiff
-#
-# Revisions context menu will now display additional entries to fire
-# vdiff on hovered and selected revisions.
+'''browsing the repository in a graphical way
+
+The hgk extension allows browsing the history of a repository in a
+graphical way. It requires Tcl/Tk version 8.4 or later. (Tcl/Tk is
+not distributed with Mercurial.)
+
+hgk consists of two parts: a Tcl script that does the displaying and
+querying of information, and an extension to mercurial named hgk.py,
+which provides hooks for hgk to get information. hgk can be found in
+the contrib directory, and hgk.py can be found in the hgext directory.
+
+To load the hgext.py extension, add it to your .hgrc file (you have
+to use your global $HOME/.hgrc file, not one in a repository). You
+can specify an absolute path:
+
+  [extensions]
+  hgk=/usr/local/lib/hgk.py
+
+Mercurial can also scan the default python library path for a file
+named 'hgk.py' if you set hgk empty:
+
+  [extensions]
+  hgk=
+
+The hg view command will launch the hgk Tcl script. For this command
+to work, hgk must be in your search path. Alternately, you can
+specify the path to hgk in your .hgrc file:
+
+  [hgk]
+  path=/location/of/hgk
+
+hgk can make use of the extdiff extension to visualize revisions.
+Assuming you had already configured extdiff vdiff command, just add:
+
+  [hgk]
+  vdiff=vdiff
+
+Revisions context menu will now display additional entries to fire
+vdiff on hovered and selected revisions.'''
 
 import os
-from mercurial import commands, util, patch, revlog
+from mercurial import commands, util, patch, revlog, cmdutil
 from mercurial.node import nullid, nullrev, short
 
 def difftree(ui, repo, node1=None, node2=None, *files, **opts):
@@ -55,7 +54,8 @@ def difftree(ui, repo, node1=None, node2=None, *files, **opts):
         assert node2 is not None
         mmap = repo.changectx(node1).manifest()
         mmap2 = repo.changectx(node2).manifest()
-        status = repo.status(node1, node2, files=files)[:5]
+        m = cmdutil.match(repo, files)
+        status = repo.status(node1, node2, match=m)[:5]
         modified, added, removed, deleted, unknown = status
 
         empty = short(nullid)
@@ -92,8 +92,8 @@ def difftree(ui, repo, node1=None, node2=None, *files, **opts):
         if opts['patch']:
             if opts['pretty']:
                 catcommit(ui, repo, node2, "")
-            patch.diff(repo, node1, node2,
-                       files=files,
+            m = cmdutil.match(repo, files)
+            patch.diff(repo, node1, node2, match=m,
                        opts=patch.diffopts(ui, {'git': True}))
         else:
             __difftree(repo, node1, node2, files=files)

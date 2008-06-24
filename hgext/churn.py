@@ -4,12 +4,7 @@
 #
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
-#
-#
-# Aliases map file format is simple one alias per line in the following
-# format:
-#
-# <alias email> <actual email>
+'''allow graphing the number of lines changed per contributor'''
 
 from mercurial.i18n import gettext as _
 from mercurial import mdiff, cmdutil, util, node
@@ -64,7 +59,7 @@ def __gather(ui, repo, node1, node2):
 
     lines = 0
 
-    changes = repo.status(node1, node2, None, util.always)[:5]
+    changes = repo.status(node1, node2)[:5]
 
     modified, added, removed, deleted, unknown = changes
 
@@ -137,7 +132,11 @@ def gather_stats(ui, repo, amap, revs=None, progress=False):
     return stats
 
 def churn(ui, repo, **opts):
-    "Graphs the number of lines changed"
+    '''graphs the number of lines changed
+
+    The map file format used to specify aliases is fairly simple:
+
+    <alias email> <actual email>'''
 
     def pad(s, l):
         if len(s) < l:
