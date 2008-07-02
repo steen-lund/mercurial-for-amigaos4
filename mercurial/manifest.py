@@ -8,7 +8,7 @@
 from node import bin, hex, nullid
 from revlog import revlog, RevlogError
 from i18n import _
-import array, struct, mdiff
+import array, struct, mdiff, parsers, util
 
 class manifestdict(dict):
     def __init__(self, mapping=None, flags=None):
@@ -18,16 +18,8 @@ class manifestdict(dict):
         self._flags = flags
     def flags(self, f):
         return self._flags.get(f, "")
-    def execf(self, f):
-        "test for executable in manifest flags"
-        return "x" in self.flags(f)
-    def linkf(self, f):
-        "test for symlink in manifest flags"
-        return "l" in self.flags(f)
-    def set(self, f, execf=False, linkf=False):
-        if linkf: self._flags[f] = "l"
-        elif execf: self._flags[f] = "x"
-        else: self._flags[f] = ""
+    def set(self, f, flags):
+        self._flags[f] = flags
     def copy(self):
         return manifestdict(dict.copy(self), dict.copy(self._flags))
 
@@ -39,14 +31,7 @@ class manifest(revlog):
 
     def parse(self, lines):
         mfdict = manifestdict()
-        fdict = mfdict._flags
-        for l in lines.splitlines():
-            f, n = l.split('\0')
-            if len(n) > 40:
-                fdict[f] = n[40:]
-                mfdict[f] = bin(n[:40])
-            else:
-                mfdict[f] = bin(n)
+        parsers.parse_manifest(mfdict, mfdict._flags, lines)
         return mfdict
 
     def readdelta(self, node):
@@ -141,9 +126,7 @@ class manifest(revlog):
         # if we're using the listcache, make sure it is valid and
         # parented by the same node we're diffing against
         if not (changed and self.listcache and p1 and self.mapcache[0] == p1):
-            files = map.keys()
-            files.sort()
-
+            files = util.sort(map)
             for f in files:
                 checkforbidden(f)
 

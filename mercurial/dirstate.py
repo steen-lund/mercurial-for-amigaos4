@@ -31,6 +31,13 @@ class dirstate(object):
         elif name == '_copymap':
             self._read()
             return self._copymap
+        elif name == '_foldmap':
+            _foldmap = {}
+            for name in self._map:
+                norm = os.path.normcase(os.path.normpath(name))
+                _foldmap[norm] = name
+            self._foldmap = _foldmap
+            return self._foldmap
         elif name == '_branch':
             try:
                 self._branch = (self._opener("branch").read().strip()
@@ -63,14 +70,54 @@ class dirstate(object):
         elif name == '_slash':
             self._slash = self._ui.configbool('ui', 'slash') and os.sep != '/'
             return self._slash
+        elif name == '_checklink':
+            self._checklink = util.checklink(self._root)
+            return self._checklink
         elif name == '_checkexec':
             self._checkexec = util.checkexec(self._root)
             return self._checkexec
+        elif name == '_checkcase':
+            self._checkcase = not util.checkcase(self._join('.hg'))
+            return self._checkcase
+        elif name == 'normalize':
+            if self._checkcase:
+                self.normalize = self._normalize
+            else:
+                self.normalize = lambda x: x
+            return self.normalize
         else:
             raise AttributeError, name
 
     def _join(self, f):
         return os.path.join(self._root, f)
+
+    def flagfunc(self, fallback):
+        if self._checklink:
+            if self._checkexec:
+                def f(x):
+                    p = os.path.join(self._root, x)
+                    if os.path.islink(p):
+                        return 'l'
+                    if util.is_exec(p):
+                        return 'x'
+                    return ''
+                return f
+            def f(x):
+                if os.path.islink(os.path.join(self._root, x)):
+                    return 'l'
+                if 'x' in fallback(x):
+                    return 'x'
+                return ''
+            return f
+        if self._checkexec:
+            def f(x):
+                if 'l' in fallback(x):
+                    return 'l'
+                if util.is_exec(os.path.join(self._root, x)):
+                    return 'x'
+                return ''
+            return f
+        return fallback
 
     def getcwd(self):
         cwd = os.getcwd()
@@ -106,9 +153,7 @@ class dirstate(object):
         return key in self._map
 
     def __iter__(self):
-        a = self._map.keys()
-        a.sort()
-        for x in a:
+        for x in util.sort(self._map):
             yield x
 
     def parents(self):
@@ -161,7 +206,7 @@ class dirstate(object):
             dmap[f] = e # we hold onto e[4] because making a subtuple is slow
 
     def invalidate(self):
-        for a in "_map _copymap _branch _pl _dirs _ignore".split():
+        for a in "_map _copymap _foldmap _branch _pl _dirs _ignore".split():
             if a in self.__dict__:
                 delattr(self, a)
         self._dirty = False
@@ -316,6 +361,16 @@ class dirstate(object):
         except KeyError:
             self._ui.warn(_("not in dirstate: %s\n") % f)
 
+    def _normalize(self, path):
+        normpath = os.path.normcase(os.path.normpath(path))
+        if normpath in self._foldmap:
+            return self._foldmap[normpath]
+        elif os.path.exists(path):
+            self._foldmap[normpath] = util.fspath(path, self._root)
+            return self._foldmap[normpath]
+        else:
+            return path
+
     def clear(self):
         self._map = {}
         if "_dirs" in self.__dict__:
@@ -327,7 +382,7 @@ class dirstate(object):
     def rebuild(self, parent, files):
         self.clear()
         for f in files:
-            if files.execf(f):
+            if 'x' in files.flags(f):
                 self._map[f] = ('n', 0777, -1, 0, 0)
             else:
                 self._map[f] = ('n', 0666, -1, 0, 0)
@@ -379,8 +434,7 @@ class dirstate(object):
         if not unknown:
             return ret
 
-        b = self._map.keys()
-        b.sort()
+        b = util.sort(self._map)
         blen = len(b)
 
         for x in unknown:
@@ -418,13 +472,7 @@ class dirstate(object):
                 return True
         return False
 
-    def walk(self, files=None, match=util.always, badmatch=None):
-        # filter out the stat
-        for src, f, st in self.statwalk(files, match, badmatch=badmatch):
-            yield src, f
-
-    def statwalk(self, files=None, match=util.always, unknown=True,
-                 ignored=False, badmatch=None, directories=False):
+    def walk(self, match, unknown, ignored):
         '''
         walk recursively through the directory tree, finding all files
         matched by the match function
@@ -432,14 +480,20 @@ class dirstate(object):
         results are yielded in a tuple (src, filename, st), where src
         is one of:
         'f' the file was found in the directory tree
-        'd' the file is a directory of the tree
         'm' the file was only in the dirstate and not in the tree
-        'b' file was not found and matched badmatch
 
         and st is the stat result if the file was found in the directory.
         '''
 
+        def fwarn(f, msg):
+            self._ui.warn('%s: %s\n' % (self.pathto(ff), msg))
+            return False
+        badfn = fwarn
+        if hasattr(match, 'bad'):
+            badfn = match.bad
+
         # walk all files by default
+        files = match.files()
         if not files:
             files = ['.']
             dc = self._map.copy()
@@ -483,8 +537,8 @@ class dirstate(object):
             wadd = work.append
             found = []
             add = found.append
-            if directories:
-                add((normpath(s[common_prefix_len:]), 'd', lstat(s)))
+            if hasattr(match, 'dir'):
+                match.dir(normpath(s[common_prefix_len:]))
             while work:
                 top = work.pop()
                 entries = listdir(top, stat=True)
@@ -503,30 +557,30 @@ class dirstate(object):
                             continue
                 for f, kind, st in entries:
                     np = pconvert(join(nd, f))
+                    nn = self.normalize(np)
                     if np in known:
                         continue
-                    known[np] = 1
+                    known[nn] = 1
                     p = join(top, f)
                     # don't trip over symlinks
                     if kind == stat.S_IFDIR:
                         if not ignore(np):
                             wadd(p)
-                            if directories:
-                                add((np, 'd', st))
+                            if hasattr(match, 'dir'):
+                                match.dir(np)
                         if np in dc and match(np):
-                            add((np, 'm', st))
+                            add((nn, 'm', st))
                     elif imatch(np):
                         if supported(np, st.st_mode):
-                            add((np, 'f', st))
+                            add((nn, 'f', st))
                         elif np in dc:
-                            add((np, 'm', st))
-            found.sort()
-            return found
+                            add((nn, 'm', st))
+            return util.sort(found)
 
         # step one, find all files that match our criteria
-        files.sort()
-        for ff in files:
+        for ff in util.sort(files):
             nf = normpath(ff)
+            nn = self.normalize(nf)
             f = _join(ff)
             try:
                 st = lstat(f)
@@ -537,42 +591,39 @@ class dirstate(object):
                         found = True
                         break
                 if not found:
-                    if inst.errno != errno.ENOENT or not badmatch:
-                        self._ui.warn('%s: %s\n' %
-                                      (self.pathto(ff), inst.strerror))
-                    elif badmatch and badmatch(ff) and imatch(nf):
-                        yield 'b', ff, None
+                    if inst.errno != errno.ENOENT:
+                        fwarn(ff, inst.strerror)
+                    elif badfn(ff, inst.strerror) and imatch(nf):
+                        yield 'f', ff, None
                 continue
             if s_isdir(st.st_mode):
                 if not dirignore(nf):
                     for f, src, st in findfiles(f):
                         yield src, f, st
             else:
-                if nf in known:
+                if nn in known:
                     continue
-                known[nf] = 1
+                known[nn] = 1
                 if match(nf):
                     if supported(ff, st.st_mode, verbose=True):
-                        yield 'f', nf, st
+                        yield 'f', self.normalize(nf), st
                     elif ff in dc:
                         yield 'm', nf, st
 
         # step two run through anything left in the dc hash and yield
         # if we haven't already seen it
-        ks = dc.keys()
-        ks.sort()
-        for k in ks:
+        for k in util.sort(dc):
             if k in known:
                 continue
             known[k] = 1
             if imatch(k):
                 yield 'm', k, None
 
-    def status(self, files, match, list_ignored, list_clean, list_unknown=True):
+    def status(self, match, ignored, clean, unknown):
+        listignored, listclean, listunknown = ignored, clean, unknown
         lookup, modified, added, unknown, ignored = [], [], [], [], []
         removed, deleted, clean = [], [], []
 
-        files = files or []
         _join = self._join
         lstat = os.lstat
         cmap = self._copymap
@@ -586,17 +637,17 @@ class dirstate(object):
         dadd = deleted.append
         cadd = clean.append
 
-        for src, fn, st in self.statwalk(files, match, unknown=list_unknown,
-                                         ignored=list_ignored):
-            if fn in dmap:
-                type_, mode, size, time, foo = dmap[fn]
-            else:
-                if (list_ignored or fn in files) and self._dirignore(fn):
-                    if list_ignored:
+        for src, fn, st in self.walk(match, listunknown, listignored):
+            if fn not in dmap:
+                if (listignored or match.exact(fn)) and self._dirignore(fn):
+                    if listignored:
                         iadd(fn)
-                elif list_unknown:
+                elif listunknown:
                     uadd(fn)
                 continue
+
+            state, mode, size, time, foo = dmap[fn]
+
             if src == 'm':
                 nonexistent = True
                 if not st:
@@ -609,13 +660,11 @@ class dirstate(object):
                     # We need to re-check that it is a valid file
                     if st and self._supported(fn, st.st_mode):
                         nonexistent = False
-                # XXX: what to do with file no longer present in the fs
-                # who are not removed in the dirstate ?
-                if nonexistent and type_ in "nma":
+                if nonexistent and state in "nma":
                     dadd(fn)
                     continue
             # check the common case first
-            if type_ == 'n':
+            if state == 'n':
                 if not st:
                     st = lstat(_join(fn))
                 if (size >= 0 and
@@ -626,13 +675,13 @@ class dirstate(object):
                     madd(fn)
                 elif time != int(st.st_mtime):
                     ladd(fn)
-                elif list_clean:
+                elif listclean:
                     cadd(fn)
-            elif type_ == 'm':
+            elif state == 'm':
                 madd(fn)
-            elif type_ == 'a':
+            elif state == 'a':
                 aadd(fn)
-            elif type_ == 'r':
+            elif state == 'r':
                 radd(fn)
 
         return (lookup, modified, added, removed, deleted, unknown, ignored,
