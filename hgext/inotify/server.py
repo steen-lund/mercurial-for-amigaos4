@@ -12,8 +12,8 @@ import common
 import errno, os, select, socket, stat, struct, sys, time
 
 try:
-    import hgext.inotify.linux as inotify
-    from hgext.inotify.linux import watcher
+    import linux as inotify
+    from linux import watcher
 except ImportError:
     print >> sys.stderr, '*** native support is required for this extension'
     raise
@@ -534,9 +534,7 @@ class Watcher(object):
                 self.ui.note('%s processing %d deferred events as %d\n' %
                              (self.event_time(), self.deferred,
                               len(self.eventq)))
-            eventq = self.eventq.items()
-            eventq.sort()
-            for wpath, evts in eventq:
+            for wpath, evts in util.sort(self.eventq.items()):
                 for evt in evts:
                     self.deferred_event(wpath, evt)
             self.eventq.clear()
