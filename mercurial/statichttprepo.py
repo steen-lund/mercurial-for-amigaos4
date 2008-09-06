@@ -9,7 +9,7 @@
 
 from i18n import _
 import changelog, httprangereader
-import repo, localrepo, manifest, util
+import repo, localrepo, manifest, util, store
 import urllib, urllib2, errno
 
 class rangereader(httprangereader.httprangereader):
@@ -54,15 +54,12 @@ class statichttprepository(localrepo.localrepository):
                 raise repo.RepoError(_("requirement '%s' not supported") % r)
 
         # setup store
-        if "store" in requirements:
-            self.encodefn = util.encodefilename
-            self.decodefn = util.decodefilename
-            self.spath = self.path + "/store"
-        else:
-            self.encodefn = lambda x: x
-            self.decodefn = lambda x: x
-            self.spath = self.path
-        self.sopener = util.encodedopener(opener(self.spath), self.encodefn)
+        def pjoin(a, b):
+            return a + '/' + b
+        self.store = store.store(requirements, self.path, opener, pjoin)
+        self.spath = self.store.path
+        self.sopener = self.store.opener
+        self.sjoin = self.store.join
 
         self.manifest = manifest.manifest(self.sopener)
         self.changelog = changelog.changelog(self.sopener)
