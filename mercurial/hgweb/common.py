@@ -10,14 +10,17 @@ import errno, mimetypes, os
 
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
+HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+HTTP_METHOD_NOT_ALLOWED = 405
 HTTP_SERVER_ERROR = 500
 
 class ErrorResponse(Exception):
     def __init__(self, code, message=None):
         Exception.__init__(self)
         self.code = code
-        if message:
+        if message is not None:
             self.message = message
         else:
             self.message = _statusmessage(code)
