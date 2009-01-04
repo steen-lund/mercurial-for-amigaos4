@@ -688,7 +688,10 @@ def debugcomplete(ui, cmd='', **opts):
         ui.write("%s\n" % "\n".join(options))
         return
 
-    ui.write("%s\n" % "\n".join(util.sort(cmdutil.findpossible(cmd, table))))
+    cmdlist = cmdutil.findpossible(cmd, table)
+    if ui.verbose:
+        cmdlist = [' '.join(c[0]) for c in cmdlist.values()]
+    ui.write("%s\n" % "\n".join(util.sort(cmdlist)))
 
 def debugfsinfo(ui, path = "."):
     file('.debugfsinfo', 'w').write('')
@@ -1794,7 +1797,7 @@ def locate(ui, repo, *pats, **opts):
         if not rev and abs not in repo.dirstate:
             continue
         if opts.get('fullpath'):
-            ui.write(os.path.join(repo.root, abs), end)
+            ui.write(repo.wjoin(abs), end)
         else:
             ui.write(((pats and m.rel(abs)) or abs), end)
         ret = 0
