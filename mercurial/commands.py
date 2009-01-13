@@ -328,29 +328,34 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
     state = hbisect.load_state(repo)
 
     if command:
+        commandpath = util.find_exe(command)
         changesets = 1
-        while changesets:
-            # update state
-            status = os.spawnlp(os.P_WAIT, command)
-            node = repo.lookup(rev or '.')
-            if status == 125:
-                transition = "skip"
-            elif status == 0:
-                transition = "good"
-            # status < 0 means process was killed
-            elif status == 127 or status < 0:
-                break
-            else:
-                transition = "bad"
-            state[transition].append(node)
-            ui.note(_('Changeset %s: %s\n') % (short(node), transition))
-            check_state(state, interactive=False)
-            # bisect
-            nodes, changesets, good = hbisect.bisect(repo.changelog, state)
-            # update to next check
-            cmdutil.bail_if_changed(repo)
-            hg.clean(repo, nodes[0], show_stats=False)
-        hbisect.save_state(repo, state)
+        try:
+            while changesets:
+                # update state
+                status = os.spawnl(os.P_WAIT, commandpath)
+                if status == 125:
+                    transition = "skip"
+                elif status == 0:
+                    transition = "good"
+                # status < 0 means process was killed
+                elif status == 127:
+                    raise util.Abort(_("failed to execute %s") % command)
+                elif status < 0:
+                    raise util.Abort(_("%s killed") % command)
+                else:
+                    transition = "bad"
+                node = repo.lookup(rev or '.')
+                state[transition].append(node)
+                ui.note(_('Changeset %s: %s\n') % (short(node), transition))
+                check_state(state, interactive=False)
+                # bisect
+                nodes, changesets, good = hbisect.bisect(repo.changelog, state)
+                # update to next check
+                cmdutil.bail_if_changed(repo)
+                hg.clean(repo, nodes[0], show_stats=False)
+        finally:
+            hbisect.save_state(repo, state)
         return print_result(nodes, not status)
 
     # update state
@@ -688,7 +693,10 @@ def debugcomplete(ui, cmd='', **opts):
         ui.write("%s\n" % "\n".join(options))
         return
 
-    ui.write("%s\n" % "\n".join(util.sort(cmdutil.findpossible(cmd, table))))
+    cmdlist = cmdutil.findpossible(cmd, table)
+    if ui.verbose:
+        cmdlist = [' '.join(c[0]) for c in cmdlist.values()]
+    ui.write("%s\n" % "\n".join(util.sort(cmdlist)))
 
 def debugfsinfo(ui, path = "."):
     file('.debugfsinfo', 'w').write('')
@@ -780,7 +788,7 @@ def debugstate(ui, repo, nodates=None):
     """show the contents of the current dirstate"""
     timestr = ""
     showdate = not nodates
-    for file_, ent in util.sort(repo.dirstate._map.items()):
+    for file_, ent in util.sort(repo.dirstate._map.iteritems()):
         if showdate:
             if ent[3] == -1:
                 # Pad or slice to locale representation
@@ -1007,7 +1015,18 @@ def diff(ui, repo, *pats, **opts):
     Use the --git option to generate diffs in the git extended diff
     format. Read the diffs help topic for more information.
     """
-    node1, node2 = cmdutil.revpair(repo, opts.get('rev'))
+
+    revs = opts.get('rev')
+    change = opts.get('change')
+
+    if revs and change:
+        msg = _('cannot specify --rev and --change at the same time')
+        raise util.Abort(msg)
+    elif change:
+        node2 = repo.lookup(change)
+        node1 = repo[node2].parents()[0].node()
+    else:
+        node1, node2 = cmdutil.revpair(repo, revs)
 
     m = cmdutil.match(repo, pats, opts)
     it = patch.diff(repo, node1, node2, match=m, opts=patch.diffopts(ui, opts))
@@ -1325,7 +1344,7 @@ def help_(ui, name=None, with_version=False):
         # description
         doc = gettext(i[0].__doc__)
         if not doc:
-            doc = _("(No help text available)")
+            doc = _("(no help text available)")
         if ui.quiet:
             doc = doc.splitlines(0)[0]
         ui.write("\n%s\n" % doc.rstrip())
@@ -1340,7 +1359,7 @@ def help_(ui, name=None, with_version=False):
     def helplist(header, select=None):
         h = {}
         cmds = {}
-        for c, e in table.items():
+        for c, e in table.iteritems():
             f = c.split("|", 1)[0]
             if select and not select(f):
                 continue
@@ -1354,7 +1373,7 @@ def help_(ui, name=None, with_version=False):
                 continue
             doc = gettext(e[0].__doc__)
             if not doc:
-                doc = _("(No help text available)")
+                doc = _("(no help text available)")
             h[f] = doc.splitlines(0)[0].rstrip()
             cmds[f] = c.lstrip("^")
 
@@ -1397,7 +1416,7 @@ def help_(ui, name=None, with_version=False):
 
         # description
         if not doc:
-            doc = _("(No help text available)")
+            doc = _("(no help text available)")
         if callable(doc):
             doc = doc()
 
@@ -1410,7 +1429,7 @@ def help_(ui, name=None, with_version=False):
         except KeyError:
             raise cmdutil.UnknownCommand(name)
 
-        doc = gettext(mod.__doc__) or _('No help text available')
+        doc = gettext(mod.__doc__) or _('no help text available')
         doc = doc.splitlines(0)
         ui.write(_('%s extension - %s\n') % (name.split('.')[-1], doc[0]))
         for d in doc[1:]:
@@ -1794,7 +1813,7 @@ def locate(ui, repo, *pats, **opts):
         if not rev and abs not in repo.dirstate:
             continue
         if opts.get('fullpath'):
-            ui.write(os.path.join(repo.root, abs), end)
+            ui.write(repo.wjoin(abs), end)
         else:
             ui.write(((pats and m.rel(abs)) or abs), end)
         ret = 0
@@ -2738,7 +2757,7 @@ def status(ui, repo, *pats, **opts):
         if node2 is None:
             added = stat[0] + stat[1] # merged?
 
-        for k, v in copies.copies(repo, ctx1, ctx2, ctxn)[0].items():
+        for k, v in copies.copies(repo, ctx1, ctx2, ctxn)[0].iteritems():
             if k in added:
                 copy[k] = v
             elif v in added:
@@ -2821,8 +2840,6 @@ def tag(ui, repo, name1, *names, **opts):
 
 def tags(ui, repo):
     """list repository tags
-
-    List the repository tags.
 
     This lists both regular and local tags. When the -v/--verbose switch
     is used, a third column "local" is printed for local tags.
@@ -3071,7 +3088,7 @@ table = {
           ('g', 'good', False, _('mark changeset good')),
           ('b', 'bad', False, _('mark changeset bad')),
           ('s', 'skip', False, _('skip testing changeset')),
-          ('c', 'command', '', _('Use command to check changeset state')),
+          ('c', 'command', '', _('use command to check changeset state')),
           ('U', 'noupdate', False, _('do not update to target'))],
          _("[-gbsr] [-c CMD] [REV]")),
     "branch":
@@ -3166,7 +3183,8 @@ table = {
     "debugwalk": (debugwalk, walkopts, _('[OPTION]... [FILE]...')),
     "^diff":
         (diff,
-         [('r', 'rev', [], _('revision'))
+         [('r', 'rev', [], _('revision')),
+          ('c', 'change', '', _('change made by revision'))
          ] + diffopts + diffopts2 + walkopts,
          _('[OPTION]... [-r REV1 [-r REV2]] [FILE]...')),
     "^export":

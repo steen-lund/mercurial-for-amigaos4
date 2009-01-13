@@ -34,7 +34,7 @@ def rebasemerge(repo, rev, first=False):
     if not first:
         ancestor.ancestor = newancestor
     else:
-        repo.ui.debug(_("First revision, do not change ancestor\n"))
+        repo.ui.debug(_("first revision, do not change ancestor\n"))
     stats = merge.update(repo, rev, True, True, False)
     return stats
 
@@ -281,7 +281,7 @@ def storestatus(repo, originalwd, target, state, collapse, external):
     f.write(repo[target].hex() + '\n')
     f.write(repo[external].hex() + '\n')
     f.write('%d\n' % int(collapse))
-    for d, v in state.items():
+    for d, v in state.iteritems():
         oldrev = repo[d].hex()
         newrev = repo[v].hex()
         f.write("%s:%s\n" % (oldrev, newrev))
