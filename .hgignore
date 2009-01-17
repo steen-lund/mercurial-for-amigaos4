@@ -27,6 +27,8 @@ Output/Mercurial-*.exe
 .DS_Store
 tags
 cscope.*
+i18n/hg.pot
+locale/*/LC_MESSAGES/hg.mo
 
 syntax: regexp
 ^\.pc/

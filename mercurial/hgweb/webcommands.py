@@ -7,10 +7,9 @@
 
 import os, mimetypes, re, cgi, copy
 import webutil
-from mercurial import revlog, archival, templatefilters
+from mercurial import error, archival, templatefilters
 from mercurial.node import short, hex, nullid
 from mercurial.util import binary, datestr
-from mercurial.repo import RepoError
 from common import paritygen, staticfile, get_contact, ErrorResponse
 from common import HTTP_OK, HTTP_FORBIDDEN, HTTP_NOT_FOUND
 from mercurial import graphmod, util
@@ -39,7 +38,7 @@ def rawfile(web, req, tmpl):
 
     try:
         fctx = webutil.filectx(web.repo, req)
-    except revlog.LookupError, inst:
+    except error.LookupError, inst:
         try:
             content = manifest(web, req, tmpl)
             req.respond(HTTP_OK, web.ctype)
@@ -93,7 +92,7 @@ def file(web, req, tmpl):
         return manifest(web, req, tmpl)
     try:
         return _filerevision(web, tmpl, webutil.filectx(web.repo, req))
-    except revlog.LookupError, inst:
+    except error.LookupError, inst:
         try:
             return manifest(web, req, tmpl)
         except ErrorResponse:
@@ -169,7 +168,7 @@ def changelog(web, req, tmpl, shortlog = False):
             hi = len(web.repo) - 1
         try:
             ctx = web.repo[hi]
-        except RepoError:
+        except error.RepoError:
             return _search(web, tmpl, hi) # XXX redirect to 404 page?
 
     def changelist(limit=0, **map):
@@ -275,7 +274,7 @@ def manifest(web, req, tmpl):
     l = len(path)
     abspath = "/" + path
 
-    for f, n in mf.items():
+    for f, n in mf.iteritems():
         if f[:l] != path:
             continue
         remain = f[l:]
@@ -386,7 +385,7 @@ def summary(web, req, tmpl):
         parity = paritygen(web.stripecount)
 
         b = web.repo.branchtags()
-        l = [(-web.repo.changelog.rev(n), n, t) for t, n in b.items()]
+        l = [(-web.repo.changelog.rev(n), n, t) for t, n in b.iteritems()]
         for r,n,t in util.sort(l):
             yield {'parity': parity.next(),
                    'branch': t,
@@ -521,7 +520,7 @@ def filelog(web, req, tmpl):
         fctx = webutil.filectx(web.repo, req)
         f = fctx.path()
         fl = fctx.filelog()
-    except revlog.LookupError:
+    except error.LookupError:
         f = webutil.cleanpath(web.repo, req.form['file'][0])
         fl = web.repo.file(f)
         numrevs = len(fl)
