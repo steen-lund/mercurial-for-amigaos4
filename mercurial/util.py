@@ -13,9 +13,9 @@ platform-specific details from the core.
 """
 
 from i18n import _
-import cStringIO, errno, getpass, re, shutil, sys, tempfile, traceback
+import cStringIO, errno, getpass, re, shutil, sys, tempfile, traceback, error
 import os, stat, threading, time, calendar, ConfigParser, locale, glob, osutil
-import imp
+import imp, unicodedata
 
 # Python compatibility
 
@@ -138,9 +138,21 @@ def fromlocal(s):
     except LookupError, k:
         raise Abort(_("%s, please check your locale settings") % k)
 
-def locallen(s):
-    """Find the length in characters of a local string"""
-    return len(s.decode(_encoding, "replace"))
+def colwidth(s):
+    "Find the column width of a UTF-8 string for display"
+    d = s.decode(_encoding, 'replace')
+    if hasattr(unicodedata, 'east_asian_width'):
+        w = unicodedata.east_asian_width
+        return sum([w(c) in 'WF' and 2 or 1 for c in d])
+    return len(d)
+
+def version():
+    """Return version information if available."""
+    try:
+        import __version__
+        return __version__.version
+    except ImportError:
+        return 'unknown'
 
 # used by parsedate
 defaultdateformats = (
@@ -176,9 +188,6 @@ extendeddateformats = defaultdateformats + (
     "%b",
     "%b %Y",
     )
-
-class SignalInterrupt(Exception):
-    """Exception raised on SIGTERM and SIGHUP."""
 
 # differences from SafeConfigParser:
 # - case-sensitive keys
@@ -326,9 +335,6 @@ def increasingchunks(source, min=1024, max=65536):
 
 class Abort(Exception):
     """Raised if a command needs to print an error and exit."""
-
-class UnexpectedOutput(Abort):
-    """Raised to print an error with part of output and exit."""
 
 def always(fn): return True
 def never(fn): return False
@@ -705,9 +711,6 @@ def system(cmd, environ={}, cwd=None, onerr=None, errprefix=None):
         if cwd is not None and oldcwd != cwd:
             os.chdir(oldcwd)
 
-class SignatureError:
-    pass
-
 def checksignature(func):
     '''wrap a function with code to check for calling errors'''
     def check(*args, **kwargs):
@@ -715,7 +718,7 @@ def checksignature(func):
             return func(*args, **kwargs)
         except TypeError:
             if len(traceback.extract_tb(sys.exc_info()[2])) == 1:
-                raise SignatureError
+                raise error.SignatureError
             raise
 
     return check
@@ -1991,3 +1994,24 @@ def drop_scheme(scheme, path):
 def uirepr(s):
     # Avoid double backslash in Windows path repr()
     return repr(s).replace('\\\\', '\\')
+
+def termwidth():
+    if 'COLUMNS' in os.environ:
+        try:
+            return int(os.environ['COLUMNS'])
+        except ValueError:
+            pass
+    try:
+        import termios, array, fcntl
+        for dev in (sys.stdout, sys.stdin):
+            try:
+                fd = dev.fileno()
+                if not os.isatty(fd):
+                    continue
+                arri = fcntl.ioctl(fd, termios.TIOCGWINSZ, '\0' * 8)
+                return array.array('h', arri)[1]
+            except ValueError:
+                pass
+    except ImportError:
+        pass
+    return 80
