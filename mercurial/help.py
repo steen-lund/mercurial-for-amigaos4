@@ -135,8 +135,8 @@ HGRCPATH::
     from the current repository is read.
 
     For each element in HGRCPATH:
-    * if it's a directory, all directories ending with .rc are added
-    * otherwise, the directory itself will be added
+    * if it's a directory, all files ending with .rc are added
+    * otherwise, the file itself will be added
 
 HGUSER::
     This is the string used as the author of a commit. If not set,
@@ -178,7 +178,7 @@ PYTHONPATH::
     revisions.
 
     A plain integer is treated as a revision number. Negative
-    integers are treated as toplogical offsets from the tip, with
+    integers are treated as topological offsets from the tip, with
     -1 denoting the tip. As such, negative numbers are only useful
     if you've memorized your local tree numbers and want to save
     typing a single digit. This editor suggests copy and paste.
@@ -286,6 +286,8 @@ PYTHONPATH::
           was committed. Will be empty if the branch name was default.
     - date: Date information. The date when the changeset was committed.
     - desc: String. The text of the changeset description.
+    - diffstat: String. Statistics of changes with the following format:
+          "modified files: +added/-removed lines"
     - files: List of strings. All files modified, added, or removed by
           this changeset.
     - file_adds: List of strings. Files added by this changeset.
