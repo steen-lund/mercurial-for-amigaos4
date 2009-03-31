@@ -26,7 +26,6 @@ def rebasemerge(repo, rev, first=False):
 
     def newancestor(a, b, pfunc):
         ancestor.ancestor = oldancestor
-        anc = ancestor.ancestor(a, b, pfunc)
         if b == rev:
             return repo[rev].parents()[0].rev()
         return ancestor.ancestor(a, b, pfunc)
@@ -337,11 +336,10 @@ def abort(repo, originalwd, target, state):
 
 def buildstate(repo, dest, src, base, collapse):
     'Define which revisions are going to be rebased and where'
-    state = {}
     targetancestors = util.set()
 
     if not dest:
-         # Destination defaults to the latest revision in the current branch
+        # Destination defaults to the latest revision in the current branch
         branch = repo[None].branch()
         dest = repo[branch].rev()
     else:

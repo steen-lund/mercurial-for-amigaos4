@@ -683,6 +683,12 @@ def debugancestor(ui, repo, *args):
     a = r.ancestor(lookup(rev1), lookup(rev2))
     ui.write("%d:%s\n" % (r.rev(a), hex(a)))
 
+def debugcommands(ui, cmd='', *args):
+    for cmd, vals in util.sort(table.iteritems()):
+        cmd = cmd.split('|')[0].strip('^')
+        opts = ', '.join([i[1] for i in vals[1]])
+        ui.write('%s: %s\n' % (cmd, opts))
+
 def debugcomplete(ui, cmd='', **opts):
     """returns the completion list associated with the given command"""
 
@@ -894,7 +900,7 @@ def debuginstall(ui):
     ui.status(_("Checking templates...\n"))
     try:
         import templater
-        t = templater.templater(templater.templatepath("map-cmdline.default"))
+        templater.templater(templater.templatepath("map-cmdline.default"))
     except Exception, inst:
         ui.write(" %s\n" % inst)
         ui.write(_(" (templates seem to have been installed incorrectly)\n"))
@@ -1690,8 +1696,8 @@ def import_(ui, repo, patch1, *patches, **opts):
 
                 files = {}
                 try:
-                    fuzz = patch.patch(tmpname, ui, strip=strip, cwd=repo.root,
-                                       files=files)
+                    patch.patch(tmpname, ui, strip=strip, cwd=repo.root,
+                                files=files)
                 finally:
                     files = patch.updatedir(ui, repo, files, similarity=sim/100.)
                 if not opts.get('no_commit'):
@@ -2435,7 +2441,6 @@ def revert(ui, repo, *pats, **opts):
     wlock = repo.wlock()
     try:
         # walk dirstate.
-        files = []
 
         m = cmdutil.match(repo, pats, opts)
         m.bad = lambda x,y: False
@@ -3135,6 +3140,7 @@ table = {
          _('[OPTION]... [SOURCE]... DEST')),
     "debugancestor": (debugancestor, [], _('[INDEX] REV1 REV2')),
     "debugcheckstate": (debugcheckstate, []),
+    "debugcommands": (debugcommands, [], _('[COMMAND]')),
     "debugcomplete":
         (debugcomplete,
          [('o', 'options', None, _('show the command options'))],
@@ -3417,6 +3423,6 @@ table = {
     "version": (version_, []),
 }
 
-norepo = ("clone init version help debugcomplete debugdata"
+norepo = ("clone init version help debugcommands debugcomplete debugdata"
           " debugindex debugindexdot debugdate debuginstall debugfsinfo")
 optionalrepo = ("identify paths serve showconfig debugancestor")

@@ -10,7 +10,7 @@ from cvs import convert_cvs
 from darcs import darcs_source
 from git import convert_git
 from hg import mercurial_source, mercurial_sink
-from subversion import debugsvnlog, svn_source, svn_sink
+from subversion import svn_source, svn_sink
 from monotone import monotone_source
 from gnuarch import gnuarch_source
 from bzr import bzr_source
@@ -188,11 +188,11 @@ class converter(object):
     def writeauthormap(self):
         authorfile = self.authorfile
         if authorfile:
-           self.ui.status(_('Writing author map file %s\n') % authorfile)
-           ofile = open(authorfile, 'w+')
-           for author in self.authors:
-               ofile.write("%s=%s\n" % (author, self.authors[author]))
-           ofile.close()
+            self.ui.status(_('Writing author map file %s\n') % authorfile)
+            ofile = open(authorfile, 'w+')
+            for author in self.authors:
+                ofile.write("%s=%s\n" % (author, self.authors[author]))
+            ofile.close()
 
     def readauthormap(self, authorfile):
         afile = open(authorfile, 'r')
