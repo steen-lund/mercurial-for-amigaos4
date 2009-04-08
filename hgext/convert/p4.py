@@ -10,7 +10,7 @@
 from mercurial import util
 from mercurial.i18n import _
 
-from common import commit, converter_source, checktool
+from common import commit, converter_source, checktool, NoRepo
 import marshal
 
 def loaditer(f):
@@ -28,7 +28,10 @@ class p4_source(converter_source):
     def __init__(self, ui, path, rev=None):
         super(p4_source, self).__init__(ui, path, rev=rev)
 
-        checktool('p4')
+        if not path.startswith('//'):
+            raise NoRepo('%s does not look like a P4 repo' % path)
+
+        checktool('p4', abort=False)
 
         self.p4changes = {}
         self.heads = {}

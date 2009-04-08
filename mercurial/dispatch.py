@@ -7,8 +7,8 @@
 
 from i18n import _
 import os, sys, atexit, signal, pdb, socket, errno, shlex, time
-import util, commands, hg, lock, fancyopts, extensions, hook, error
-import cmdutil
+import util, commands, hg, fancyopts, extensions, hook, error
+import cmdutil, encoding
 import ui as _ui
 
 def run():
@@ -304,7 +304,7 @@ def _dispatch(ui, args):
     # check for fallback encoding
     fallback = lui.config('ui', 'fallbackencoding')
     if fallback:
-        util._fallbackencoding = fallback
+        encoding.fallbackencoding = fallback
 
     fullargs = args
     cmd, func, args, options, cmdoptions = _parse(lui, args)
@@ -319,9 +319,9 @@ def _dispatch(ui, args):
             "and --repository may only be abbreviated as --repo!"))
 
     if options["encoding"]:
-        util._encoding = options["encoding"]
+        encoding.encoding = options["encoding"]
     if options["encodingmode"]:
-        util._encodingmode = options["encodingmode"]
+        encoding.encodingmode = options["encodingmode"]
     if options["time"]:
         def get_times():
             t = os.times()
@@ -379,25 +379,22 @@ def _runcommand(ui, options, cmd, cmdfunc):
             raise error.ParseError(cmd, _("invalid arguments"))
 
     if options['profile']:
-        import hotshot, hotshot.stats
-        prof = hotshot.Profile("hg.prof")
-        try:
-            try:
-                return prof.runcall(checkargs)
-            except:
-                try:
-                    ui.warn(_('exception raised - generating '
-                             'profile anyway\n'))
-                except:
-                    pass
-                raise
-        finally:
-            prof.close()
-            stats = hotshot.stats.load("hg.prof")
-            stats.strip_dirs()
-            stats.sort_stats('time', 'calls')
-            stats.print_stats(40)
-    elif options['lsprof']:
+        format = ui.config('profiling', 'format', default='text')
+
+        if not format in ['text', 'kcachegrind']:
+            ui.warn(_("unrecognized profiling format '%s'"
+                        " - Ignored\n") % format)
+            format = 'text'
+
+        output = ui.config('profiling', 'output')
+
+        if output:
+            path = os.path.expanduser(output)
+            path = ui.expandpath(path)
+            ostream = open(path, 'wb')
+        else:
+            ostream = sys.stderr
+
         try:
             from mercurial import lsprof
         except ImportError:
@@ -410,8 +407,18 @@ def _runcommand(ui, options, cmd, cmdfunc):
             return checkargs()
         finally:
             p.disable()
-            stats = lsprof.Stats(p.getstats())
-            stats.sort()
-            stats.pprint(top=10, file=sys.stderr, climit=5)
+
+            if format == 'kcachegrind':
+                import lsprofcalltree
+                calltree = lsprofcalltree.KCacheGrind(p)
+                calltree.output(ostream)
+            else:
+                # format == 'text'
+                stats = lsprof.Stats(p.getstats())
+                stats.sort()
+                stats.pprint(top=10, file=ostream, climit=5)
+
+            if output:
+                ostream.close()
     else:
         return checkargs()

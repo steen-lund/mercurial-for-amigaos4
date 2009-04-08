@@ -10,7 +10,8 @@ This software may be used and distributed according to the terms
 of the GNU General Public License, incorporated herein by reference.
 """
 
-from node import bin, hex, nullid, nullrev, short
+# import stuff from node for others to import from revlog
+from node import bin, hex, nullid, nullrev, short #@UnusedImport
 from i18n import _
 import changegroup, errno, ancestor, mdiff, parsers
 import struct, util, zlib, error
@@ -41,6 +42,8 @@ def gettype(q):
 def offset_type(offset, type):
     return long(long(offset) << 16 | type)
 
+nullhash = _sha(nullid)
+
 def hash(text, p1, p2):
     """generate a hash from the given text and its parent hashes
 
@@ -48,10 +51,17 @@ def hash(text, p1, p2):
     in a manner that makes it easy to distinguish nodes with the same
     content in the revision graph.
     """
-    l = [p1, p2]
-    l.sort()
-    s = _sha(l[0])
-    s.update(l[1])
+    # As of now, if one of the parent node is null, p2 is null
+    if p2 == nullid:
+        # deep copy of a hash is faster than creating one
+        s = nullhash.copy()
+        s.update(p1)
+    else:
+        # none of the parent nodes are nullid
+        l = [p1, p2]
+        l.sort()
+        s = _sha(l[0])
+        s.update(l[1])
     s.update(text)
     return s.digest()
 
@@ -837,7 +847,7 @@ class revlog(object):
             # odds of a binary node being all hex in ASCII are 1 in 10**25
             try:
                 node = id
-                r = self.rev(node) # quick search the index
+                self.rev(node) # quick search the index
                 return node
             except LookupError:
                 pass # may be partial hex id
@@ -857,7 +867,7 @@ class revlog(object):
             try:
                 # a full hex nodeid?
                 node = bin(id)
-                r = self.rev(node)
+                self.rev(node)
                 return node
             except (TypeError, LookupError):
                 pass

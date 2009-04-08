@@ -7,8 +7,8 @@
 '''\
 use suffixes to refer to ancestor revisions
 
-This extension allows you to use git-style suffixes to refer to
-the ancestors of a specific revision.
+This extension allows you to use git-style suffixes to refer to the
+ancestors of a specific revision.
 
 For example, if you can refer to a revision as "foo", then:
 
@@ -23,7 +23,6 @@ For example, if you can refer to a revision as "foo", then:
   foo~1 = foo^1 = foo^ = first parent of foo
   foo~2 = foo^1^1 = foo^^ = first parent of first parent of foo
 '''
-import mercurial.repo
 from mercurial import error
 
 def reposetup(ui, repo):
