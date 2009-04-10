@@ -1,8 +1,8 @@
 # monotone support for the convert extension
 
-import os, re, time
+import os, re
 from mercurial import util
-from common import NoRepo, MissingTool, commit, converter_source, checktool
+from common import NoRepo, commit, converter_source, checktool
 from common import commandline
 from mercurial.i18n import _
 
@@ -13,6 +13,10 @@ class monotone_source(converter_source, commandline):
 
         self.ui = ui
         self.path = path
+
+        norepo = NoRepo (_("%s does not look like a monotone repo") % path)
+        if not os.path.exists(os.path.join(path, '_MTN')):
+            raise norepo
 
         # regular expressions for parsing monotone output
         space    = r'\s*'
@@ -38,10 +42,6 @@ class monotone_source(converter_source, commandline):
         self.manifest = None
         self.files = None
         self.dirs  = None
-
-        norepo = NoRepo (_("%s does not look like a monotone repo") % path)
-        if not os.path.exists(path):
-            raise norepo
 
         checktool('mtn', abort=False)
 
@@ -111,9 +111,8 @@ class monotone_source(converter_source, commandline):
     def mtnrenamefiles(self, files, fromdir, todir):
         renamed = {}
         for tofile in files:
-            suffix = tofile.lstrip(todir)
-            if todir + suffix == tofile:
-                renamed[tofile] = (fromdir + suffix).lstrip("/")
+            if tofile.startswith(todir):
+                renamed[tofile] = fromdir + tofile[len(todir):]
         return renamed
 
 
@@ -155,7 +154,9 @@ class monotone_source(converter_source, commandline):
                 if self.mtnisdir(toname, rev):
                     renamed = self.mtnrenamefiles(self.files, fromname, toname)
                     for tofile, fromfile in renamed.items():
-                        self.ui.debug (_("copying file in renamed dir from '%s' to '%s'") % (fromfile, tofile), '\n')
+                        self.ui.debug (_("copying file in renamed directory "
+                                         "from '%s' to '%s'")
+                                       % (fromfile, tofile), '\n')
                         files[tofile] = rev
                     for fromfile in renamed.values():
                         files[fromfile] = rev

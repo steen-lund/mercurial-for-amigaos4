@@ -6,11 +6,10 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-import os, mimetypes
-from mercurial.node import hex, nullid
-from mercurial import ui, hg, util, hook, error
+import os
+from mercurial import ui, hg, util, hook, error, encoding
 from mercurial import templater, templatefilters
-from common import get_mtime, style_map, ErrorResponse
+from common import get_mtime, ErrorResponse
 from common import HTTP_OK, HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_SERVER_ERROR
 from common import HTTP_UNAUTHORIZED, HTTP_METHOD_NOT_ALLOWED
 from request import wsgirequest
@@ -38,9 +37,7 @@ class hgweb(object):
         self.stripecount = 1
         # a repo owner may set web.templates in .hg/hgrc to get any file
         # readable by the user running the CGI script
-        self.templatepath = self.config("web", "templates",
-                                        templater.templatepath(),
-                                        untrusted=False)
+        self.templatepath = self.config('web', 'templates')
 
     # The CGI scripts are often run by a user different from the repo owner.
     # Trust the settings from the .hg/hgrc files by default.
@@ -66,7 +63,7 @@ class hgweb(object):
             self.maxshortchanges = int(self.config("web", "maxshortchanges", 60))
             self.maxfiles = int(self.config("web", "maxfiles", 10))
             self.allowpull = self.configbool("web", "allowpull", True)
-            self.encoding = self.config("web", "encoding", util._encoding)
+            self.encoding = self.config("web", "encoding", encoding.encoding)
 
     def run(self):
         if not os.environ.get('GATEWAY_INTERFACE', '').startswith("CGI/1."):
@@ -238,7 +235,7 @@ class hgweb(object):
 
         start = req.url[-1] == '?' and '&' or '?'
         sessionvars = webutil.sessionvars(vars, start)
-        mapfile = style_map(self.templatepath, style)
+        mapfile = templater.stylemap(style, self.templatepath)
 
         if not self.reponame:
             self.reponame = (self.config("web", "name")

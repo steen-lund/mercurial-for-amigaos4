@@ -13,13 +13,13 @@ from mercurial.i18n import _
 
 
 def children(ui, repo, file_=None, **opts):
-    """show the children of the given or working dir revision
+    """show the children of the given or working directory revision
 
-    Print the children of the working directory's revisions.
-    If a revision is given via --rev, the children of that revision
-    will be printed. If a file argument is given, revision in
-    which the file was last changed (after the working directory
-    revision or the argument to --rev if given) is printed.
+    Print the children of the working directory's revisions. If a
+    revision is given via --rev, the children of that revision will be
+    printed. If a file argument is given, revision in which the file
+    was last changed (after the working directory revision or the
+    argument to --rev if given) is printed.
     """
     rev = opts.get('rev')
     if file_:
@@ -35,7 +35,7 @@ def children(ui, repo, file_=None, **opts):
 cmdtable = {
     "children":
         (children,
-         [('r', 'rev', '', _('show children of the specified rev')),
+         [('r', 'rev', '', _('show children of the specified revision')),
          ] + templateopts,
          _('hg children [-r REV] [FILE]')),
 }

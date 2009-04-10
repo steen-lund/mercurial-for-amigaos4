@@ -8,17 +8,18 @@
 
 '''zeroconf support for mercurial repositories
 
-Zeroconf enabled repositories will be announced in a network without the need
-to configure a server or a service. They can be discovered without knowing
-their actual IP address.
+Zeroconf enabled repositories will be announced in a network without
+the need to configure a server or a service. They can be discovered
+without knowing their actual IP address.
 
-To use the zeroconf extension add the following entry to your hgrc file:
+To use the zeroconf extension add the following entry to your hgrc
+file:
 
 [extensions]
 hgext.zeroconf =
 
-To allow other people to discover your repository using run "hg serve" in your
-repository.
+To allow other people to discover your repository using run "hg serve"
+in your repository.
 
  $ cd test
  $ hg serve
@@ -77,8 +78,9 @@ def publish(name, desc, path, port):
         ip = getip()
         localip = socket.inet_aton(ip)
 
-    parts = socket.gethostname().split('.')
-    host = parts[0] + ".local"
+    hostname = socket.gethostname().split('.')[0]
+    host = hostname + ".local"
+    name = "%s-%s" % (hostname, name)
 
     # advertise to browsers
     svc = Zeroconf.ServiceInfo('_http._tcp.local.',
@@ -130,7 +132,7 @@ class listener(object):
 def getzcpaths():
     server = Zeroconf.Zeroconf()
     l = listener()
-    browser = Zeroconf.ServiceBrowser(server, "_hg._tcp.local.", l)
+    Zeroconf.ServiceBrowser(server, "_hg._tcp.local.", l)
     time.sleep(1)
     server.close()
     for v in l.found.values():
