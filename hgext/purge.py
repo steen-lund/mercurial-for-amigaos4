@@ -29,18 +29,18 @@
 
 from mercurial import util, commands, cmdutil
 from mercurial.i18n import _
-import os
+import os, stat
 
 def purge(ui, repo, *dirs, **opts):
     '''removes files not tracked by Mercurial
 
-    Delete files not known to Mercurial. This is useful to test local and
-    uncommitted changes in an otherwise-clean source tree.
+    Delete files not known to Mercurial. This is useful to test local
+    and uncommitted changes in an otherwise-clean source tree.
 
     This means that purge will delete:
      - Unknown files: files marked with "?" by "hg status"
-     - Empty directories: in fact Mercurial ignores directories unless they
-       contain files under source control managment
+     - Empty directories: in fact Mercurial ignores directories unless
+       they contain files under source control managment
     But it will leave untouched:
      - Modified and unmodified tracked files
      - Ignored files (unless --all is specified)
@@ -49,9 +49,10 @@ def purge(ui, repo, *dirs, **opts):
     If directories are given on the command line, only files in these
     directories are considered.
 
-    Be careful with purge, as you could irreversibly delete some files you
-    forgot to add to the repository. If you only want to print the list of
-    files that this program would delete, use the --print option.
+    Be careful with purge, as you could irreversibly delete some files
+    you forgot to add to the repository. If you only want to print the
+    list of files that this program would delete, use the --print
+    option.
     '''
     act = not opts['print']
     eol = '\n'
@@ -71,6 +72,17 @@ def purge(ui, repo, *dirs, **opts):
         else:
             ui.write('%s%s' % (name, eol))
 
+    def removefile(path):
+        try:
+            os.remove(path)
+        except OSError:
+            # read-only files cannot be unlinked under Windows
+            s = os.stat(path)
+            if (s.st_mode & stat.S_IWRITE) != 0:
+                raise
+            os.chmod(path, stat.S_IMODE(s.st_mode) | stat.S_IWRITE)
+            os.remove(path)
+
     directories = []
     match = cmdutil.match(repo, dirs, opts)
     match.dir = directories.append
@@ -78,7 +90,7 @@ def purge(ui, repo, *dirs, **opts):
 
     for f in util.sort(status[4] + status[5]):
         ui.note(_('Removing file %s\n') % f)
-        remove(os.remove, f)
+        remove(removefile, f)
 
     for f in util.sort(directories)[::-1]:
         if match(f) and not os.listdir(repo.wjoin(f)):
