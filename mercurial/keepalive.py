@@ -447,7 +447,6 @@ class HTTPResponse(httplib.HTTPResponse):
         return value
 
     def readline(self, limit=-1):
-        data = ""
         i = self._rbuf.find('\n')
         while i < 0 and not (0 < limit <= len(self._rbuf)):
             new = self._raw_read(self._rbufsize)
@@ -494,7 +493,7 @@ def error_handler(url):
         HANDLE_ERRORS = i
         try:
             fo = urllib2.urlopen(url)
-            foo = fo.read()
+            fo.read()
             fo.close()
             try: status, reason = fo.status, fo.reason
             except AttributeError: status, reason = None, None
@@ -616,7 +615,7 @@ def test_timeout(url):
 def test(url, N=10):
     print "checking error hander (do this on a non-200)"
     try: error_handler(url)
-    except IOError, e:
+    except IOError:
         print "exiting - exception will prevent further tests"
         sys.exit()
     print

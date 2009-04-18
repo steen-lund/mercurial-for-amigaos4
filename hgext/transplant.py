@@ -9,8 +9,8 @@
 
 This extension allows you to transplant patches from another branch.
 
-Transplanted patches are recorded in .hg/transplant/transplants, as a map
-from a changeset hash to its hash in the source repository.
+Transplanted patches are recorded in .hg/transplant/transplants, as a
+map from a changeset hash to its hash in the source repository.
 '''
 
 from mercurial.i18n import _
@@ -216,8 +216,8 @@ class transplanter:
             try:
                 files = {}
                 try:
-                    fuzz = patch.patch(patchfile, self.ui, cwd=repo.root,
-                                       files=files)
+                    patch.patch(patchfile, self.ui, cwd=repo.root,
+                                files=files)
                     if not files:
                         self.ui.warn(_('%s: empty changeset')
                                      % revlog.hex(node))
@@ -439,28 +439,31 @@ def transplant(ui, repo, *revs, **opts):
     (transplanted from CHANGESETHASH)
 
     You can rewrite the changelog message with the --filter option.
-    Its argument will be invoked with the current changelog message
-    as $1 and the patch as $2.
+    Its argument will be invoked with the current changelog message as
+    $1 and the patch as $2.
 
-    If --source is specified, selects changesets from the named
-    repository. If --branch is specified, selects changesets from the
-    branch holding the named revision, up to that revision. If --all
-    is specified, all changesets on the branch will be transplanted,
-    otherwise you will be prompted to select the changesets you want.
+    If --source/-s is specified, selects changesets from the named
+    repository. If --branch/-b is specified, selects changesets from
+    the branch holding the named revision, up to that revision. If
+    --all/-a is specified, all changesets on the branch will be
+    transplanted, otherwise you will be prompted to select the
+    changesets you want.
 
-    hg transplant --branch REVISION --all will rebase the selected branch
-    (up to the named revision) onto your current working directory.
+    hg transplant --branch REVISION --all will rebase the selected
+    branch (up to the named revision) onto your current working
+    directory.
 
-    You can optionally mark selected transplanted changesets as
-    merge changesets. You will not be prompted to transplant any
-    ancestors of a merged transplant, and you can merge descendants
-    of them normally instead of transplanting them.
+    You can optionally mark selected transplanted changesets as merge
+    changesets. You will not be prompted to transplant any ancestors
+    of a merged transplant, and you can merge descendants of them
+    normally instead of transplanting them.
 
     If no merges or revisions are provided, hg transplant will start
     an interactive changeset browser.
 
-    If a changeset application fails, you can fix the merge by hand and
-    then resume where you left off by calling hg transplant --continue.
+    If a changeset application fails, you can fix the merge by hand
+    and then resume where you left off by calling hg transplant
+    --continue/-c.
     '''
     def getremotechanges(repo, url):
         sourcerepo = ui.expandpath(url)

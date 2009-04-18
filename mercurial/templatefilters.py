@@ -6,7 +6,7 @@
 # of the GNU General Public License, incorporated herein by reference.
 
 import cgi, re, os, time, urllib, textwrap
-import util, templater
+import util, templater, encoding
 
 agescales = [("second", 1),
              ("minute", 60),
@@ -76,7 +76,7 @@ def nl2br(text):
     return text.replace('\n', '<br/>\n')
 
 def obfuscate(text):
-    text = unicode(text, util._encoding, 'replace')
+    text = unicode(text, encoding.encoding, 'replace')
     return ''.join(['&#%d;' % ord(c) for c in text])
 
 def domain(author):
@@ -129,15 +129,18 @@ _escapes = [
     ('\r', '\\r'), ('\f', '\\f'), ('\b', '\\b'),
 ]
 
+def jsonescape(s):
+    for k, v in _escapes:
+        s = s.replace(k, v)
+    return s
+
 def json(obj):
     if obj is None or obj is False or obj is True:
         return {None: 'null', False: 'false', True: 'true'}[obj]
     elif isinstance(obj, int) or isinstance(obj, float):
         return str(obj)
     elif isinstance(obj, str):
-        for k, v in _escapes:
-            obj = obj.replace(k, v)
-        return '"%s"' % obj
+        return '"%s"' % jsonescape(obj)
     elif isinstance(obj, unicode):
         return json(obj.encode('utf-8'))
     elif hasattr(obj, 'keys'):
@@ -169,6 +172,8 @@ filters = {
     "hgdate": lambda x: "%d %d" % x,
     "isodate": lambda x: util.datestr(x, '%Y-%m-%d %H:%M %1%2'),
     "isodatesec": lambda x: util.datestr(x, '%Y-%m-%d %H:%M:%S %1%2'),
+    "json": json,
+    "jsonescape": jsonescape,
     "obfuscate": obfuscate,
     "permissions": permissions,
     "person": person,
@@ -182,5 +187,4 @@ filters = {
     "user": lambda x: util.shortuser(x),
     "stringescape": lambda x: x.encode('string_escape'),
     "xmlescape": xmlescape,
-    "json": json,
 }

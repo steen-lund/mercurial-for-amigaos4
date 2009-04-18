@@ -58,7 +58,7 @@ def reposetup(ui, repo):
                 if not ignored and not self.inotifyserver:
                     result = client.query(ui, repo, files, match, False,
                                           clean, unknown)
-                    if ui.config('inotify', 'debug'):
+                    if result and ui.config('inotify', 'debug'):
                         r2 = super(inotifydirstate, self).status(
                             match, False, clean, unknown)
                         for c,a,b in zip('LMARDUIC', result, r2):
@@ -80,23 +80,21 @@ def reposetup(ui, repo):
                                    'removing it)\n'))
                     os.unlink(repo.join('inotify.sock'))
                 if err[0] in (errno.ECONNREFUSED, errno.ENOENT) and autostart:
-                    query = None
                     ui.debug(_('(starting inotify server)\n'))
                     try:
                         try:
                             server.start(ui, repo)
-                            query = client.query
                         except server.AlreadyStartedException, inst:
                             # another process may have started its own
                             # inotify server while this one was starting.
                             ui.debug(str(inst))
-                            query = client.query
                     except Exception, inst:
                         ui.warn(_('could not start inotify server: '
                                        '%s\n') % inst)
-                    if query:
+                    else:
+                        # server is started, send query again
                         try:
-                            return query(ui, repo, files or [], match,
+                            return client.query(ui, repo, files, match,
                                          ignored, clean, unknown)
                         except socket.error, err:
                             ui.warn(_('could not talk to new inotify '
