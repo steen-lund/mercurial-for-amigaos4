@@ -7,9 +7,9 @@
 
 import os, mimetypes, re, cgi, copy
 import webutil
-from mercurial import error, archival, templatefilters
-from mercurial.node import short, hex, nullid
-from mercurial.util import binary, datestr
+from mercurial import error, archival, templater, templatefilters
+from mercurial.node import short, hex
+from mercurial.util import binary
 from common import paritygen, staticfile, get_contact, ErrorResponse
 from common import HTTP_OK, HTTP_FORBIDDEN, HTTP_NOT_FOUND
 from mercurial import graphmod, util
@@ -172,7 +172,6 @@ def changelog(web, req, tmpl, shortlog = False):
             return _search(web, tmpl, hi) # XXX redirect to 404 page?
 
     def changelist(limit=0, **map):
-        cl = web.repo.changelog
         l = [] # build a list in forward order for efficiency
         for i in xrange(start, end):
             ctx = web.repo[i]
@@ -611,7 +610,7 @@ def static(web, req, tmpl):
     # readable by the user running the CGI script
     static = web.config("web", "static", None, untrusted=False)
     if not static:
-        tp = web.templatepath
+        tp = web.templatepath or templater.templatepath()
         if isinstance(tp, str):
             tp = [tp]
         static = [os.path.join(p, 'static') for p in tp]
@@ -643,7 +642,7 @@ def graph(web, req, tmpl):
     tree = list(graphmod.graph(web.repo, rev, downrev))
     canvasheight = (len(tree) + 1) * bg_height - 27;
     data = []
-    for i, (ctx, vtx, edges) in enumerate(tree):
+    for (ctx, vtx, edges) in tree:
         node = short(ctx.node())
         age = templatefilters.age(ctx.date())
         desc = templatefilters.firstline(ctx.description())

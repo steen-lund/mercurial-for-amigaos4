@@ -9,7 +9,7 @@
 
 from mercurial.i18n import _
 from mercurial import patch, cmdutil, util, templater
-import os, sys
+import sys
 import time, datetime
 
 def maketemplater(ui, repo, tmpl):
@@ -21,9 +21,10 @@ def maketemplater(ui, repo, tmpl):
     t.use_template(tmpl)
     return t
 
-def changedlines(ui, repo, ctx1, ctx2):
+def changedlines(ui, repo, ctx1, ctx2, fns):
     lines = 0
-    diff = ''.join(patch.diff(repo, ctx1.node(), ctx2.node()))
+    fmatch = cmdutil.match(repo, pats=fns)
+    diff = ''.join(patch.diff(repo, ctx1.node(), ctx2.node(), fmatch))
     for l in diff.split('\n'):
         if (l.startswith("+") and not l.startswith("+++ ") or
             l.startswith("-") and not l.startswith("--- ")):
@@ -71,7 +72,7 @@ def countrate(ui, repo, amap, *pats, **opts):
                 continue
 
             ctx1 = parents[0]
-            lines = changedlines(ui, repo, ctx1, ctx)
+            lines = changedlines(ui, repo, ctx1, ctx, fns)
             rate[key] = rate.get(key, 0) + lines
 
         if opts.get('progress'):
@@ -79,7 +80,7 @@ def countrate(ui, repo, amap, *pats, **opts):
             newpct = int(100.0 * count / max(len(repo), 1))
             if pct < newpct:
                 pct = newpct
-                ui.write(_("\rgenerating stats: %d%%") % pct)
+                ui.write("\r" + _("generating stats: %d%%") % pct)
                 sys.stdout.flush()
 
     if opts.get('progress'):
@@ -92,9 +93,9 @@ def countrate(ui, repo, amap, *pats, **opts):
 def churn(ui, repo, *pats, **opts):
     '''graph count of revisions grouped by template
 
-    Will graph count of changed lines or revisions grouped by template or
-    alternatively by date, if dateformat is used. In this case it will override
-    template.
+    Will graph count of changed lines or revisions grouped by template
+    or alternatively by date, if dateformat is used. In this case it
+    will override template.
 
     By default statistics are counted for number of changed lines.
 
@@ -149,7 +150,7 @@ cmdtable = {
     "churn":
         (churn,
          [('r', 'rev', [], _('count rate for the specified revision or range')),
-          ('d', 'date', '', _('count rate for revs matching date spec')),
+          ('d', 'date', '', _('count rate for revisions matching date spec')),
           ('t', 'template', '{author|email}', _('template to group changesets')),
           ('f', 'dateformat', '',
               _('strftime-compatible format for grouping by date')),
