@@ -59,13 +59,12 @@ To use, configure notify extension and enable in hgrc like this:
    # key is glob pattern, value is ","-separated list of subscriber emails
    pattern = user@host
 
- glob patterns are matched against path to repo root.
+ glob patterns are matched against path to repository root.
 
- if you like, you can put notify config file in repo that users can
- push changes to, they can manage their own subscriptions.'''
+ if you like, you can put notify config file in repository that users
+ can push changes to, they can manage their own subscriptions.'''
 
 from mercurial.i18n import _
-from mercurial.node import bin, short
 from mercurial import patch, cmdutil, templater, util, mail
 import email.Parser, fnmatch, socket, time
 
@@ -100,7 +99,7 @@ class notifier(object):
         self.ui = ui
         cfg = self.ui.config('notify', 'config')
         if cfg:
-            self.ui.readsections(cfg, 'usersubs', 'reposubs')
+            self.ui.readconfig(cfg, sections=['usersubs', 'reposubs'])
         self.repo = repo
         self.stripcount = int(self.ui.config('notify', 'strip', 0))
         self.root = self.strip(self.repo.root)
@@ -269,7 +268,7 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
     ctx = repo[node]
 
     if not n.subs:
-        ui.debug(_('notify: no subscribers to repo %s\n') % n.root)
+        ui.debug(_('notify: no subscribers to repository %s\n') % n.root)
         return
     if n.skipsource(source):
         ui.debug(_('notify: changes have source "%s" - skipping\n') % source)

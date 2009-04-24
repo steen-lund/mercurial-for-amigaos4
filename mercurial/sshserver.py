@@ -37,7 +37,11 @@ class sshserver(object):
         self.fout.flush()
 
     def serve_forever(self):
-        while self.serve_one(): pass
+        try:
+            while self.serve_one(): pass
+        finally:
+            if self.lock is not None:
+                self.lock.release()
         sys.exit(0)
 
     def serve_one(self):
@@ -122,8 +126,6 @@ class sshserver(object):
         self.fout.flush()
 
     def do_changegroupsubset(self):
-        bases = []
-        heads = []
         argmap = dict([self.getarg(), self.getarg()])
         bases = [bin(n) for n in argmap['bases'].split(' ')]
         heads = [bin(n) for n in argmap['heads'].split(' ')]

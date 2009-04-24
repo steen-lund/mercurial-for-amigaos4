@@ -134,6 +134,38 @@ class logstream:
             self._stdout.close()
             self._stdout = None
 
+
+# Check to see if the given path is a local Subversion repo. Verify this by
+# looking for several svn-specific files and directories in the given
+# directory.
+def filecheck(path, proto):
+    for x in ('locks', 'hooks', 'format', 'db', ):
+        if not os.path.exists(os.path.join(path, x)):
+            return False
+    return True
+
+# Check to see if a given path is the root of an svn repo over http. We verify
+# this by requesting a version-controlled URL we know can't exist and looking
+# for the svn-specific "not found" XML.
+def httpcheck(path, proto):
+   return ('<m:human-readable errcode="160013">' in
+           urllib.urlopen('%s://%s/!svn/ver/0/.svn' % (proto, path)).read())
+
+protomap = {'http': httpcheck,
+            'https': httpcheck,
+            'file': filecheck,
+            }
+def issvnurl(url):
+    if not '://' in url:
+        return False
+    proto, path = url.split('://', 1)
+    check = protomap.get(proto, lambda p, p2: False)
+    while '/' in path:
+        if check(path, proto):
+            return True
+        path = path.rsplit('/', 1)[0]
+    return False
+
 # SVN conversion code stolen from bzr-svn and tailor
 #
 # Subversion looks like a versioned filesystem, branches structures
@@ -151,6 +183,12 @@ class logstream:
 class svn_source(converter_source):
     def __init__(self, ui, url, rev=None):
         super(svn_source, self).__init__(ui, url, rev=rev)
+
+        if not (url.startswith('svn://') or url.startswith('svn+ssh://') or
+                (os.path.exists(url) and
+                 os.path.exists(os.path.join(url, '.svn'))) or
+                issvnurl(url)):
+            raise NoRepo("%s does not look like a Subversion repo" % url)
 
         try:
             SubversionException
@@ -177,7 +215,7 @@ class svn_source(converter_source):
             if at >= 0:
                 latest = int(url[at+1:])
                 url = url[:at]
-        except ValueError, e:
+        except ValueError:
             pass
         self.url = geturl(url)
         self.encoding = 'UTF-8' # Subversion is always nominal UTF-8
@@ -194,7 +232,7 @@ class svn_source(converter_source):
             self.commits = {}
             self.paths = {}
             self.uuid = svn.ra.get_uuid(self.ra).decode(self.encoding)
-        except SubversionException, e:
+        except SubversionException:
             ui.print_exc()
             raise NoRepo("%s does not look like a Subversion repo" % self.url)
 
@@ -215,7 +253,7 @@ class svn_source(converter_source):
 
         try:
             self.get_blacklist()
-        except IOError, e:
+        except IOError:
             pass
 
         self.head = self.latest(self.module, latest)
@@ -246,7 +284,7 @@ class svn_source(converter_source):
             svn.client.ls(self.url.rstrip('/') + '/' + urllib.quote(path),
                                  optrev, False, self.ctx)
             return True
-        except SubversionException, err:
+        except SubversionException:
             return False
 
     def getheads(self):
@@ -309,7 +347,7 @@ class svn_source(converter_source):
 
         if self.startrev and self.heads:
             if len(self.heads) > 1:
-                raise util.Abort(_('svn: start revision is not supported with '
+                raise util.Abort(_('svn: start revision is not supported '
                                    'with more than one branch'))
             revnum = self.revnum(self.heads[0])
             if revnum < self.startrev:
@@ -438,7 +476,7 @@ class svn_source(converter_source):
                 pendings = remainings
                 tagspath = srctagspath
 
-        except SubversionException, (inst, num):
+        except SubversionException:
             self.ui.note(_('no tags found at revision %d\n') % start)
         return tags
 
@@ -533,7 +571,7 @@ class svn_source(converter_source):
                 try:
                     svn_rev = int(line.strip())
                     blacklist.add(svn_rev)
-                except ValueError, e:
+                except ValueError:
                     pass # not an integer or a comment
 
     def is_blacklisted(self, svn_rev):
@@ -735,7 +773,7 @@ class svn_source(converter_source):
             rev = self.revid(revnum)
             # branch log might return entries for a parent we already have
 
-            if (rev in self.commits or revnum < to_revnum):
+            if rev in self.commits or revnum < to_revnum:
                 return None, branched
 
             parents = []
@@ -1103,7 +1141,7 @@ class svn_sink(converter_sink, commandline):
         for f, v in files:
             try:
                 data = source.getfile(f, v)
-            except IOError, inst:
+            except IOError:
                 self.delete.append(f)
             else:
                 e = source.getmode(f, v)

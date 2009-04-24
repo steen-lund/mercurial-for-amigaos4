@@ -7,193 +7,99 @@
 
 from i18n import _
 import errno, getpass, os, re, socket, sys, tempfile
-import ConfigParser, traceback, util
+import config, traceback, util, error
 
-def dupconfig(orig):
-    new = util.configparser(orig.defaults())
-    updateconfig(orig, new)
-    return new
-
-def updateconfig(source, dest, sections=None):
-    if not sections:
-        sections = source.sections()
-    for section in sections:
-        if not dest.has_section(section):
-            dest.add_section(section)
-        for name, value in source.items(section, raw=True):
-            dest.set(section, name, value)
+_booleans = {'1':True, 'yes':True, 'true':True, 'on':True,
+             '0':False, 'no':False, 'false':False, 'off':False}
 
 class ui(object):
-    _isatty = None
-
-    def __init__(self, verbose=False, debug=False, quiet=False,
-                 interactive=True, traceback=False, report_untrusted=True,
-                 parentui=None):
-        self.overlay = None
+    def __init__(self, parentui=None):
         self.buffers = []
-        if parentui is None:
-            # this is the parent of all ui children
-            self.parentui = None
-            self.quiet = quiet
-            self.verbose = verbose
-            self.debugflag = debug
-            self.interactive = interactive
-            self.traceback = traceback
-            self.report_untrusted = report_untrusted
-            self.trusted_users = {}
-            self.trusted_groups = {}
-            # if ucdata is not None, its keys must be a superset of cdata's
-            self.cdata = util.configparser()
-            self.ucdata = None
-            # we always trust global config files
-            self.check_trusted = False
-            self.readconfig(util.rcpath())
-            self.check_trusted = True
-            self.updateopts(verbose, debug, quiet, interactive)
-        else:
+        self.quiet = self.verbose = self.debugflag = self.traceback = False
+        self.interactive = self.report_untrusted = True
+        self.overlay = config.config()
+        self.cdata = config.config()
+        self.ucdata = config.config()
+        self.parentui = None
+        self.trusted_users = {}
+        self.trusted_groups = {}
+
+        if parentui:
             # parentui may point to an ui object which is already a child
             self.parentui = parentui.parentui or parentui
+            self.cdata.update(self.parentui.cdata)
+            self.ucdata.update(self.parentui.ucdata)
+            # we want the overlay from the parent, not the root
+            self.overlay.update(parentui.overlay)
+            self.buffers = parentui.buffers
             self.trusted_users = parentui.trusted_users.copy()
             self.trusted_groups = parentui.trusted_groups.copy()
-            self.cdata = dupconfig(self.parentui.cdata)
-            if self.parentui.ucdata:
-                self.ucdata = dupconfig(self.parentui.ucdata)
-            if self.parentui.overlay:
-                self.overlay = dupconfig(self.parentui.overlay)
-            if self.parentui is not parentui and parentui.overlay is not None:
-                if self.overlay is None:
-                    self.overlay = util.configparser()
-                updateconfig(parentui.overlay, self.overlay)
-            self.buffers = parentui.buffers
+            self.fixconfig()
+        else:
+            # we always trust global config files
+            for f in util.rcpath():
+                self.readconfig(f, assumetrusted=True)
 
     def __getattr__(self, key):
         return getattr(self.parentui, key)
 
+    _isatty = None
     def isatty(self):
         if ui._isatty is None:
-            ui._isatty = sys.stdin.isatty()
+            try:
+                ui._isatty = sys.stdin.isatty()
+            except AttributeError: # not a real file object
+                ui._isatty = False
         return ui._isatty
 
-    def updateopts(self, verbose=False, debug=False, quiet=False,
-                   interactive=True, traceback=False, config=[]):
-        for section, name, value in config:
-            self.setconfig(section, name, value)
-
-        if quiet or verbose or debug:
-            self.setconfig('ui', 'quiet', str(bool(quiet)))
-            self.setconfig('ui', 'verbose', str(bool(verbose)))
-            self.setconfig('ui', 'debug', str(bool(debug)))
-
-        self.verbosity_constraints()
-
-        if not interactive:
-            self.setconfig('ui', 'interactive', 'False')
-            self.interactive = False
-
-        self.traceback = self.traceback or traceback
-
-    def verbosity_constraints(self):
-        self.quiet = self.configbool('ui', 'quiet')
-        self.verbose = self.configbool('ui', 'verbose')
-        self.debugflag = self.configbool('ui', 'debug')
-
-        if self.debugflag:
-            self.verbose = True
-            self.quiet = False
-        elif self.verbose and self.quiet:
-            self.quiet = self.verbose = False
-
-    def _is_trusted(self, fp, f, warn=True):
-        if not self.check_trusted:
-            return True
+    def _is_trusted(self, fp, f):
         st = util.fstat(fp)
         if util.isowner(fp, st):
             return True
+
         tusers = self.trusted_users
         tgroups = self.trusted_groups
-        if not tusers:
-            user = util.username()
-            if user is not None:
-                self.trusted_users[user] = 1
-                self.fixconfig(section='trusted')
-        if (tusers or tgroups) and '*' not in tusers and '*' not in tgroups:
-            user = util.username(st.st_uid)
-            group = util.groupname(st.st_gid)
-            if user not in tusers and group not in tgroups:
-                if warn and self.report_untrusted:
-                    self.warn(_('Not trusting file %s from untrusted '
-                                'user %s, group %s\n') % (f, user, group))
-                return False
-        return True
+        if '*' in tusers or '*' in tgroups:
+            return True
 
-    def readconfig(self, fn, root=None):
-        if isinstance(fn, basestring):
-            fn = [fn]
-        for f in fn:
-            try:
-                fp = open(f)
-            except IOError:
-                continue
-            cdata = self.cdata
-            trusted = self._is_trusted(fp, f)
-            if not trusted:
-                if self.ucdata is None:
-                    self.ucdata = dupconfig(self.cdata)
-                cdata = self.ucdata
-            elif self.ucdata is not None:
-                # use a separate configparser, so that we don't accidentally
-                # override ucdata settings later on.
-                cdata = util.configparser()
+        user = util.username(st.st_uid)
+        group = util.groupname(st.st_gid)
+        if user in tusers or group in tgroups or user == util.username():
+            return True
 
-            try:
-                cdata.readfp(fp, f)
-            except ConfigParser.ParsingError, inst:
-                msg = _("Failed to parse %s\n%s") % (f, inst)
-                if trusted:
-                    raise util.Abort(msg)
-                self.warn(_("Ignored: %s\n") % msg)
+        if self.report_untrusted:
+            self.warn(_('Not trusting file %s from untrusted '
+                        'user %s, group %s\n') % (f, user, group))
+        return False
 
+    def readconfig(self, filename, root=None, assumetrusted=False,
+                   sections = None):
+        try:
+            fp = open(filename)
+        except IOError:
+            if not sections: # ignore unless we were looking for something
+                return
+            raise
+
+        cdata = config.config()
+        trusted = sections or assumetrusted or self._is_trusted(fp, filename)
+
+        try:
+            cdata.read(filename, fp)
+        except error.ConfigError, inst:
             if trusted:
-                if cdata != self.cdata:
-                    updateconfig(cdata, self.cdata)
-                if self.ucdata is not None:
-                    updateconfig(cdata, self.ucdata)
-        # override data from config files with data set with ui.setconfig
-        if self.overlay:
-            updateconfig(self.overlay, self.cdata)
+                raise
+            self.warn(_("Ignored: %s\n") % str(inst))
+
+        if trusted:
+            self.cdata.update(cdata, sections)
+            self.cdata.update(self.overlay, sections)
+        self.ucdata.update(cdata, sections)
+        self.ucdata.update(self.overlay, sections)
+
         if root is None:
             root = os.path.expanduser('~')
         self.fixconfig(root=root)
-
-    def readsections(self, filename, *sections):
-        """Read filename and add only the specified sections to the config data
-
-        The settings are added to the trusted config data.
-        """
-        if not sections:
-            return
-
-        cdata = util.configparser()
-        try:
-            try:
-                fp = open(filename)
-            except IOError, inst:
-                raise util.Abort(_("unable to open %s: %s") %
-                                 (filename, getattr(inst, "strerror", inst)))
-            try:
-                cdata.readfp(fp, filename)
-            finally:
-                fp.close()
-        except ConfigParser.ParsingError, inst:
-            raise util.Abort(_("failed to parse %s\n%s") % (filename, inst))
-
-        for section in sections:
-            if not cdata.has_section(section):
-                cdata.add_section(section)
-
-        updateconfig(cdata, self.cdata, sections)
-        if self.ucdata:
-            updateconfig(cdata, self.ucdata, sections)
 
     def fixconfig(self, section=None, name=None, value=None, root=None):
         # translate paths relative to root (or home) into absolute paths
@@ -202,8 +108,7 @@ class ui(object):
                 root = os.getcwd()
             items = section and [(name, value)] or []
             for cdata in self.cdata, self.ucdata, self.overlay:
-                if not cdata: continue
-                if not items and cdata.has_section('paths'):
+                if not items and 'paths' in cdata:
                     pathsitems = cdata.items('paths')
                 else:
                     pathsitems = items
@@ -212,73 +117,54 @@ class ui(object):
                         cdata.set("paths", n,
                                   os.path.normpath(os.path.join(root, path)))
 
-        # update verbosity/interactive/report_untrusted settings
+        # update ui options
         if section is None or section == 'ui':
-            if name is None or name in ('quiet', 'verbose', 'debug'):
-                self.verbosity_constraints()
-            if name is None or name == 'interactive':
-                interactive = self.configbool("ui", "interactive", None)
-                if interactive is None and self.interactive:
-                    self.interactive = self.isatty()
-                else:
-                    self.interactive = interactive
-            if name is None or name == 'report_untrusted':
-                self.report_untrusted = (
-                    self.configbool("ui", "report_untrusted", True))
+            self.debugflag = self.configbool('ui', 'debug')
+            self.verbose = self.debugflag or self.configbool('ui', 'verbose')
+            self.quiet = not self.debugflag and self.configbool('ui', 'quiet')
+            if self.verbose and self.quiet:
+                self.quiet = self.verbose = False
+
+            self.report_untrusted = self.configbool("ui", "report_untrusted",
+                                                    True)
+            self.interactive = self.configbool("ui", "interactive",
+                                               self.isatty())
+            self.traceback = self.configbool('ui', 'traceback', False)
 
         # update trust information
-        if (section is None or section == 'trusted') and self.trusted_users:
+        if section is None or section == 'trusted':
             for user in self.configlist('trusted', 'users'):
                 self.trusted_users[user] = 1
             for group in self.configlist('trusted', 'groups'):
                 self.trusted_groups[group] = 1
 
     def setconfig(self, section, name, value):
-        if not self.overlay:
-            self.overlay = util.configparser()
         for cdata in (self.overlay, self.cdata, self.ucdata):
-            if not cdata: continue
-            if not cdata.has_section(section):
-                cdata.add_section(section)
             cdata.set(section, name, value)
         self.fixconfig(section, name, value)
 
     def _get_cdata(self, untrusted):
-        if untrusted and self.ucdata:
+        if untrusted:
             return self.ucdata
         return self.cdata
 
-    def _config(self, section, name, default, funcname, untrusted, abort):
-        cdata = self._get_cdata(untrusted)
-        if cdata.has_option(section, name):
-            try:
-                func = getattr(cdata, funcname)
-                return func(section, name)
-            except (ConfigParser.InterpolationError, ValueError), inst:
-                msg = _("Error in configuration section [%s] "
-                        "parameter '%s':\n%s") % (section, name, inst)
-                if abort:
-                    raise util.Abort(msg)
-                self.warn(_("Ignored: %s\n") % msg)
-        return default
-
-    def _configcommon(self, section, name, default, funcname, untrusted):
-        value = self._config(section, name, default, funcname,
-                             untrusted, abort=True)
-        if self.debugflag and not untrusted and self.ucdata:
-            uvalue = self._config(section, name, None, funcname,
-                                  untrusted=True, abort=False)
+    def config(self, section, name, default=None, untrusted=False):
+        value = self._get_cdata(untrusted).get(section, name, default)
+        if self.debugflag and not untrusted:
+            uvalue = self.ucdata.get(section, name)
             if uvalue is not None and uvalue != value:
                 self.warn(_("Ignoring untrusted configuration option "
                             "%s.%s = %s\n") % (section, name, uvalue))
         return value
 
-    def config(self, section, name, default=None, untrusted=False):
-        return self._configcommon(section, name, default, 'get', untrusted)
-
     def configbool(self, section, name, default=False, untrusted=False):
-        return self._configcommon(section, name, default, 'getboolean',
-                                  untrusted)
+        v = self.config(section, name, None, untrusted)
+        if v == None:
+            return default
+        if v.lower() not in _booleans:
+            raise error.ConfigError(_("%s.%s not a boolean ('%s')")
+                                    % (section, name, v))
+        return _booleans[v.lower()]
 
     def configlist(self, section, name, default=None, untrusted=False):
         """Return a list of comma/space separated strings"""
@@ -291,38 +177,20 @@ class ui(object):
 
     def has_section(self, section, untrusted=False):
         '''tell whether section exists in config.'''
-        cdata = self._get_cdata(untrusted)
-        return cdata.has_section(section)
-
-    def _configitems(self, section, untrusted, abort):
-        items = {}
-        cdata = self._get_cdata(untrusted)
-        if cdata.has_section(section):
-            try:
-                items.update(dict(cdata.items(section)))
-            except ConfigParser.InterpolationError, inst:
-                msg = _("Error in configuration section [%s]:\n"
-                        "%s") % (section, inst)
-                if abort:
-                    raise util.Abort(msg)
-                self.warn(_("Ignored: %s\n") % msg)
-        return items
+        return section in self._get_cdata(untrusted)
 
     def configitems(self, section, untrusted=False):
-        items = self._configitems(section, untrusted=untrusted, abort=True)
-        if self.debugflag and not untrusted and self.ucdata:
-            uitems = self._configitems(section, untrusted=True, abort=False)
-            for k in util.sort(uitems):
-                if uitems[k] != items.get(k):
+        items = self._get_cdata(untrusted).items(section)
+        if self.debugflag and not untrusted:
+            for k,v in self.ucdata.items(section):
+                if self.cdata.get(section, k) != v:
                     self.warn(_("Ignoring untrusted configuration option "
-                                "%s.%s = %s\n") % (section, k, uitems[k]))
-        return util.sort(items.items())
+                                "%s.%s = %s\n") % (section, k, v))
+        return items
 
     def walkconfig(self, untrusted=False):
         cdata = self._get_cdata(untrusted)
-        sections = cdata.sections()
-        sections.sort()
-        for section in sections:
+        for section in cdata.sections():
             for name, value in self.configitems(section, untrusted):
                 yield section, name, str(value).replace('\n', '\\n')
 

@@ -10,7 +10,7 @@ from cvs import convert_cvs
 from darcs import darcs_source
 from git import convert_git
 from hg import mercurial_source, mercurial_sink
-from subversion import debugsvnlog, svn_source, svn_sink
+from subversion import svn_source, svn_sink
 from monotone import monotone_source
 from gnuarch import gnuarch_source
 from bzr import bzr_source
@@ -18,7 +18,7 @@ from p4 import p4_source
 import filemap
 
 import os, shutil
-from mercurial import hg, util
+from mercurial import hg, util, encoding
 from mercurial.i18n import _
 
 orig_encoding = 'ascii'
@@ -188,33 +188,38 @@ class converter(object):
     def writeauthormap(self):
         authorfile = self.authorfile
         if authorfile:
-           self.ui.status(_('Writing author map file %s\n') % authorfile)
-           ofile = open(authorfile, 'w+')
-           for author in self.authors:
-               ofile.write("%s=%s\n" % (author, self.authors[author]))
-           ofile.close()
+            self.ui.status(_('Writing author map file %s\n') % authorfile)
+            ofile = open(authorfile, 'w+')
+            for author in self.authors:
+                ofile.write("%s=%s\n" % (author, self.authors[author]))
+            ofile.close()
 
     def readauthormap(self, authorfile):
         afile = open(authorfile, 'r')
         for line in afile:
-            if line.strip() == '':
+
+            line = line.strip()
+            if not line or line.startswith('#'):
                 continue
+
             try:
                 srcauthor, dstauthor = line.split('=', 1)
-                srcauthor = srcauthor.strip()
-                dstauthor = dstauthor.strip()
-                if srcauthor in self.authors and dstauthor != self.authors[srcauthor]:
-                    self.ui.status(
-                        _('Overriding mapping for author %s, was %s, will be %s\n')
-                        % (srcauthor, self.authors[srcauthor], dstauthor))
-                else:
-                    self.ui.debug(_('mapping author %s to %s\n')
-                                  % (srcauthor, dstauthor))
-                    self.authors[srcauthor] = dstauthor
-            except IndexError:
-                self.ui.warn(
-                    _('Ignoring bad line in author map file %s: %s\n')
-                    % (authorfile, line.rstrip()))
+            except ValueError:
+                msg = _('Ignoring bad line in author map file %s: %s\n')
+                self.ui.warn(msg % (authorfile, line.rstrip()))
+                continue
+
+            srcauthor = srcauthor.strip()
+            dstauthor = dstauthor.strip()
+            if self.authors.get(srcauthor) in (None, dstauthor):
+                msg = _('mapping author %s to %s\n')
+                self.ui.debug(msg % (srcauthor, dstauthor))
+                self.authors[srcauthor] = dstauthor
+                continue
+
+            m = _('overriding mapping for author %s, was %s, will be %s\n')
+            self.ui.status(m % (srcauthor, self.authors[srcauthor], dstauthor))
+
         afile.close()
 
     def cachecommit(self, rev):
@@ -275,7 +280,7 @@ class converter(object):
                 if "\n" in desc:
                     desc = desc.splitlines()[0]
                 # convert log message to local encoding without using
-                # tolocal() because util._encoding conver() use it as
+                # tolocal() because encoding.encoding conver() use it as
                 # 'utf-8'
                 self.ui.status("%d %s\n" % (num, recode(desc)))
                 self.ui.note(_("source: %s\n") % recode(c))
@@ -308,8 +313,8 @@ class converter(object):
 
 def convert(ui, src, dest=None, revmapfile=None, **opts):
     global orig_encoding
-    orig_encoding = util._encoding
-    util._encoding = 'UTF-8'
+    orig_encoding = encoding.encoding
+    encoding.encoding = 'UTF-8'
 
     if not dest:
         dest = hg.defaultdest(src) + "-hg"

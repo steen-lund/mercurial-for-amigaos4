@@ -14,7 +14,7 @@ def verify(repo):
     try:
         return _verify(repo)
     finally:
-        del lock
+        lock.release()
 
 def _verify(repo):
     mflinkrevs = {}
@@ -72,10 +72,11 @@ def _verify(repo):
     def checkentry(obj, i, node, seen, linkrevs, f):
         lr = obj.linkrev(obj.rev(node))
         if lr < 0 or (havecl and lr not in linkrevs):
-            t = "unexpected"
             if lr < 0 or lr >= len(cl):
-                t = "nonexistent"
-            err(None, _("rev %d point to %s changeset %d") % (i, t, lr), f)
+                msg = _("rev %d points to nonexistent changeset %d")
+            else:
+                msg = _("rev %d points to unexpected changeset %d")
+            err(None, msg % (i, lr), f)
             if linkrevs:
                 warn(_(" (expected %s)") % " ".join(map(str,linkrevs)))
             lr = None # can't be trusted
@@ -219,7 +220,7 @@ def _verify(repo):
                         warn(_("warning: %s@%s: copy source revision is nullid %s:%s")
                             % (f, lr, rp[0], short(rp[1])))
                     else:
-                        rev = fl2.rev(rp[1])
+                        fl2.rev(rp[1])
             except Exception, inst:
                 exc(lr, _("checking rename of %s") % short(n), inst, f)
 
