@@ -9,13 +9,15 @@ from node import bin, hex, nullid, nullrev, short
 from i18n import _
 import repo, changegroup
 import changelog, dirstate, filelog, manifest, context, weakref
-import lock, transaction, stat, errno, ui, store
+import lock, transaction, stat, errno, ui, store, encoding
 import os, time, util, extensions, hook, inspect, error
 import match as match_
 import merge as merge_
 
+from lock import release
+
 class localrepository(repo.repository):
-    capabilities = util.set(('lookup', 'changegroupsubset'))
+    capabilities = set(('lookup', 'changegroupsubset'))
     supported = ('revlogv1', 'store', 'fncache')
 
     def __init__(self, parentui, path=None, create=0):
@@ -160,7 +162,7 @@ class localrepository(repo.repository):
         if local:
             try:
                 fp = self.opener('localtags', 'r+')
-            except IOError, err:
+            except IOError:
                 fp = self.opener('localtags', 'a')
             else:
                 prevtags = fp.read()
@@ -174,7 +176,7 @@ class localrepository(repo.repository):
         if use_dirstate:
             try:
                 fp = self.wfile('.hgtags', 'rb+')
-            except IOError, err:
+            except IOError:
                 fp = self.wfile('.hgtags', 'ab')
             else:
                 prevtags = fp.read()
@@ -188,7 +190,7 @@ class localrepository(repo.repository):
                 fp.write(prevtags)
 
         # committed tags are stored in UTF-8
-        writetags(fp, names, util.fromlocal, prevtags)
+        writetags(fp, names, encoding.fromlocal, prevtags)
 
         if use_dirstate and '.hgtags' not in self.dirstate:
             self.add(['.hgtags'])
@@ -254,7 +256,7 @@ class localrepository(repo.repository):
                     warn(_("cannot parse entry"))
                     continue
                 node, key = s
-                key = util.tolocal(key.strip()) # stored in UTF-8
+                key = encoding.tolocal(key.strip()) # stored in UTF-8
                 try:
                     bin_n = bin(node)
                 except TypeError:
@@ -297,7 +299,7 @@ class localrepository(repo.repository):
             readtags(f.data().splitlines(), f, "global")
 
         try:
-            data = util.fromlocal(self.opener("localtags").read())
+            data = encoding.fromlocal(self.opener("localtags").read())
             # localtags are stored in the local character set
             # while the internal tag table is stored in UTF-8
             readtags(data.splitlines(), "localtags", "local")
@@ -397,7 +399,7 @@ class localrepository(repo.repository):
         # the branch cache is stored on disk as UTF-8, but in the local
         # charset internally
         for k, v in partial.iteritems():
-            self.branchcache[util.tolocal(k)] = v
+            self.branchcache[encoding.tolocal(k)] = v
         return self.branchcache
 
 
@@ -593,8 +595,9 @@ class localrepository(repo.repository):
         return self._filter("decode", filename, data)
 
     def transaction(self):
-        if self._transref and self._transref():
-            return self._transref().nest()
+        tr = self._transref and self._transref() or None
+        if tr and tr.running():
+            return tr.nest()
 
         # abort here if the journal already exists
         if os.path.exists(self.sjoin("journal")):
@@ -619,7 +622,7 @@ class localrepository(repo.repository):
         return tr
 
     def recover(self):
-        l = self.lock()
+        lock = self.lock()
         try:
             if os.path.exists(self.sjoin("journal")):
                 self.ui.status(_("rolling back interrupted transaction\n"))
@@ -630,7 +633,7 @@ class localrepository(repo.repository):
                 self.ui.warn(_("no interrupted transaction available\n"))
                 return False
         finally:
-            del l
+            lock.release()
 
     def rollback(self):
         wlock = lock = None
@@ -647,13 +650,13 @@ class localrepository(repo.repository):
                 except IOError:
                     self.ui.warn(_("Named branch could not be reset, "
                                    "current branch still is: %s\n")
-                                 % util.tolocal(self.dirstate.branch()))
+                                 % encoding.tolocal(self.dirstate.branch()))
                 self.invalidate()
                 self.dirstate.invalidate()
             else:
                 self.ui.warn(_("no rollback information available\n"))
         finally:
-            del lock, wlock
+            release(lock, wlock)
 
     def invalidate(self):
         for a in "changelog manifest".split():
@@ -682,8 +685,10 @@ class localrepository(repo.repository):
         return l
 
     def lock(self, wait=True):
-        if self._lockref and self._lockref():
-            return self._lockref()
+        l = self._lockref and self._lockref()
+        if l is not None and l.held:
+            l.lock()
+            return l
 
         l = self._lock(self.sjoin("lock"), wait, None, self.invalidate,
                        _('repository %s') % self.origroot)
@@ -691,8 +696,10 @@ class localrepository(repo.repository):
         return l
 
     def wlock(self, wait=True):
-        if self._wlockref and self._wlockref():
-            return self._wlockref()
+        l = self._wlockref and self._wlockref()
+        if l is not None and l.held:
+            l.lock()
+            return l
 
         l = self._lock(self.join("wlock"), wait, self.dirstate.write,
                        self.dirstate.invalidate, _('working directory of %s') %
@@ -784,7 +791,7 @@ class localrepository(repo.repository):
         if extra.get("close"):
             force = True
         if files:
-            files = util.unique(files)
+            files = list(set(files))
         try:
             wlock = self.wlock()
             lock = self.lock()
@@ -830,7 +837,7 @@ class localrepository(repo.repository):
             return r
 
         finally:
-            del lock, wlock
+            release(lock, wlock)
 
     def commitctx(self, ctx):
         """Add a new revision to current repository.
@@ -846,7 +853,7 @@ class localrepository(repo.repository):
                                    empty_ok=True, use_dirstate=False,
                                    update_dirstate=False)
         finally:
-            del lock, wlock
+            release(lock, wlock)
 
     def _commitctx(self, wctx, force=False, force_editor=False, empty_ok=False,
                   use_dirstate=True, update_dirstate=True):
@@ -943,7 +950,8 @@ class localrepository(repo.repository):
                 if p2 != nullid:
                     edittext.append("HG: branch merge")
                 if branchname:
-                    edittext.append("HG: branch '%s'" % util.tolocal(branchname))
+                    edittext.append("HG: branch '%s'"
+                                    % encoding.tolocal(branchname))
                 edittext.extend(["HG: added %s" % f for f in added])
                 edittext.extend(["HG: changed %s" % f for f in updated])
                 edittext.extend(["HG: removed %s" % f for f in removed])
@@ -1060,13 +1068,15 @@ class localrepository(repo.repository):
                     wlock = None
                     try:
                         try:
+                            # updating the dirstate is optional
+                            # so we dont wait on the lock
                             wlock = self.wlock(False)
                             for f in fixup:
                                 self.dirstate.normal(f)
                         except error.LockError:
                             pass
                     finally:
-                        del wlock
+                        release(wlock)
 
         if not parentworking:
             mf1 = mfmatches(ctx1)
@@ -1132,7 +1142,7 @@ class localrepository(repo.repository):
                     self.dirstate.add(f)
             return rejected
         finally:
-            del wlock
+            wlock.release()
 
     def forget(self, list):
         wlock = self.wlock()
@@ -1143,7 +1153,7 @@ class localrepository(repo.repository):
                 else:
                     self.dirstate.forget(f)
         finally:
-            del wlock
+            wlock.release()
 
     def remove(self, list, unlink=False):
         wlock = None
@@ -1166,14 +1176,13 @@ class localrepository(repo.repository):
                 else:
                     self.dirstate.remove(f)
         finally:
-            del wlock
+            release(wlock)
 
     def undelete(self, list):
-        wlock = None
+        manifests = [self.manifest.read(self.changelog.read(p)[0])
+                     for p in self.dirstate.parents() if p != nullid]
+        wlock = self.wlock()
         try:
-            manifests = [self.manifest.read(self.changelog.read(p)[0])
-                         for p in self.dirstate.parents() if p != nullid]
-            wlock = self.wlock()
             for f in list:
                 if self.dirstate[f] != 'r':
                     self.ui.warn(_("%s not removed!\n") % f)
@@ -1183,24 +1192,23 @@ class localrepository(repo.repository):
                     self.wwrite(f, t, m.flags(f))
                     self.dirstate.normal(f)
         finally:
-            del wlock
+            wlock.release()
 
     def copy(self, source, dest):
-        wlock = None
-        try:
-            p = self.wjoin(dest)
-            if not (os.path.exists(p) or os.path.islink(p)):
-                self.ui.warn(_("%s does not exist!\n") % dest)
-            elif not (os.path.isfile(p) or os.path.islink(p)):
-                self.ui.warn(_("copy failed: %s is not a file or a "
-                               "symbolic link\n") % dest)
-            else:
-                wlock = self.wlock()
+        p = self.wjoin(dest)
+        if not (os.path.exists(p) or os.path.islink(p)):
+            self.ui.warn(_("%s does not exist!\n") % dest)
+        elif not (os.path.isfile(p) or os.path.islink(p)):
+            self.ui.warn(_("copy failed: %s is not a file or a "
+                           "symbolic link\n") % dest)
+        else:
+            wlock = self.wlock()
+            try:
                 if self.dirstate[dest] in '?r':
                     self.dirstate.add(dest)
                 self.dirstate.copy(source, dest)
-        finally:
-            del wlock
+            finally:
+                wlock.release()
 
     def heads(self, start=None, closed=True):
         heads = self.changelog.heads(start)
@@ -1297,9 +1305,9 @@ class localrepository(repo.repository):
         """
         m = self.changelog.nodemap
         search = []
-        fetch = {}
-        seen = {}
-        seenbranch = {}
+        fetch = set()
+        seen = set()
+        seenbranch = set()
         if base == None:
             base = {}
 
@@ -1327,7 +1335,7 @@ class localrepository(repo.repository):
         if not unknown:
             return base.keys(), [], []
 
-        req = dict.fromkeys(unknown)
+        req = set(unknown)
         reqcnt = 0
 
         # search through remote branches
@@ -1353,13 +1361,13 @@ class localrepository(repo.repository):
                     self.ui.debug(_("found incomplete branch %s:%s\n")
                                   % (short(n[0]), short(n[1])))
                     search.append(n[0:2]) # schedule branch range for scanning
-                    seenbranch[n] = 1
+                    seenbranch.add(n)
                 else:
                     if n[1] not in seen and n[1] not in fetch:
                         if n[2] in m and n[3] in m:
                             self.ui.debug(_("found new changeset %s\n") %
                                           short(n[1]))
-                            fetch[n[1]] = 1 # earliest unknown
+                            fetch.add(n[1]) # earliest unknown
                         for p in n[2:4]:
                             if p in m:
                                 base[p] = 1 # latest known
@@ -1367,8 +1375,8 @@ class localrepository(repo.repository):
                     for p in n[2:4]:
                         if p not in req and p not in m:
                             r.append(p)
-                            req[p] = 1
-                seen[n[0]] = 1
+                            req.add(p)
+                seen.add(n[0])
 
             if r:
                 reqcnt += 1
@@ -1394,7 +1402,7 @@ class localrepository(repo.repository):
                         if f <= 2:
                             self.ui.debug(_("found new branch changeset %s\n") %
                                               short(p))
-                            fetch[p] = 1
+                            fetch.add(p)
                             base[i] = 1
                         else:
                             self.ui.debug(_("narrowed branch search to %s:%s\n")
@@ -1405,7 +1413,7 @@ class localrepository(repo.repository):
                 search = newsearch
 
         # sanity check our fetch list
-        for f in fetch.keys():
+        for f in fetch:
             if f in m:
                 raise error.RepoError(_("already have changeset ")
                                       + short(f[:4]))
@@ -1421,7 +1429,7 @@ class localrepository(repo.repository):
 
         self.ui.debug(_("%d total queries\n") % reqcnt)
 
-        return base.keys(), fetch.keys(), heads
+        return base.keys(), list(fetch), heads
 
     def findoutgoing(self, remote, base=None, heads=None, force=False):
         """Return list of nodes that are roots of subsets not in remote
@@ -1439,15 +1447,15 @@ class localrepository(repo.repository):
         self.ui.debug(_("common changesets up to ")
                       + " ".join(map(short, base.keys())) + "\n")
 
-        remain = dict.fromkeys(self.changelog.nodemap)
+        remain = set(self.changelog.nodemap)
 
         # prune everything remote has from the tree
-        del remain[nullid]
+        remain.remove(nullid)
         remove = base.keys()
         while remove:
             n = remove.pop(0)
             if n in remain:
-                del remain[n]
+                remain.remove(n)
                 for p in self.changelog.parents(n):
                     remove.append(p)
 
@@ -1494,7 +1502,7 @@ class localrepository(repo.repository):
                 cg = remote.changegroupsubset(fetch, heads, 'pull')
             return self.addchangegroup(cg, 'pull', remote.url())
         finally:
-            del lock
+            lock.release()
 
     def push(self, remote, force=False, revs=None):
         # there are two ways to push to remote repo:
@@ -1575,7 +1583,7 @@ class localrepository(repo.repository):
                 return remote.addchangegroup(cg, 'push', self.url())
             return ret[1]
         finally:
-            del lock
+            lock.release()
 
     def push_unbundle(self, remote, force, revs):
         # local repo finds heads on server, finds out what revs it
@@ -1662,11 +1670,11 @@ class localrepository(repo.repository):
             has_cl_set, junk, junk = cl.nodesbetween(None, knownheads)
             junk = None
             # Transform the list into an ersatz set.
-            has_cl_set = dict.fromkeys(has_cl_set)
+            has_cl_set = set(has_cl_set)
         else:
             # If there were no known heads, the recipient cannot be assumed to
             # know about any changesets.
-            has_cl_set = {}
+            has_cl_set = set()
 
         # Make it easy to refer to self.manifest
         mnfst = self.manifest
@@ -1924,7 +1932,7 @@ class localrepository(repo.repository):
 
         cl = self.changelog
         nodes = cl.findmissing(common)
-        revset = dict.fromkeys([cl.rev(n) for n in nodes])
+        revset = set([cl.rev(n) for n in nodes])
         self.changegroupinfo(nodes, source)
 
         def identity(x):

@@ -5,7 +5,6 @@
 # This software may be used and distributed according to the terms
 # of the GNU General Public License, incorporated herein by reference.
 
-from node import nullid, nullrev
 from i18n import _
 import util, heapq
 
@@ -161,12 +160,12 @@ def copies(repo, c1, c2, ca, checkdirs=False):
     for f in u2:
         checkcopies(f, m2, m1)
 
-    diverge2 = {}
+    diverge2 = set()
     for of, fl in diverge.items():
         if len(fl) == 1:
             del diverge[of] # not actually divergent
         else:
-            diverge2.update(dict.fromkeys(fl)) # reverse map for below
+            diverge2.update(fl) # reverse map for below
 
     if fullcopy:
         repo.ui.debug(_("  all copies found (* = to merge, ! = divergent):\n"))

@@ -12,13 +12,12 @@ revision graph is also shown.
 '''
 
 import os
-import sys
 from mercurial.cmdutil import revrange, show_changeset
-from mercurial.commands import templateopts, logopts, remoteopts
+from mercurial.commands import templateopts
 from mercurial.i18n import _
 from mercurial.node import nullrev
 from mercurial import bundlerepo, changegroup, cmdutil, commands, extensions
-from mercurial import hg, ui, url, util
+from mercurial import hg, url, util
 
 def revisions(repo, start, stop):
     """cset DAG generator yielding (rev, node, [parents]) tuples
@@ -287,7 +286,7 @@ def graphlog(ui, repo, path=None, **opts):
 
 def graphrevs(repo, nodes, opts):
     nodes.reverse()
-    include = util.set(nodes)
+    include = set(nodes)
     limit = cmdutil.loglimit(opts)
     count = 0
     for node in nodes:
@@ -385,8 +384,6 @@ def gincoming(ui, repo, source="default", **opts):
 
         chlist = other.changelog.nodesbetween(incoming, revs)[0]
         revdag = graphrevs(other, chlist, opts)
-        other_parents = []
-        displayer = show_changeset(ui, other, opts, buffered=True)
         graphdag = graphabledag(ui, repo, revdag, opts)
         ascii(ui, grapher(graphdag))
 

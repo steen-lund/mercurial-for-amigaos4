@@ -3,7 +3,7 @@
 # monkey-patching some functions in the util module
 
 import os
-from mercurial import ui, util
+from mercurial import ui, util, error
 
 hgrc = os.environ['HGRCPATH']
 f = open(hgrc)
@@ -60,7 +60,7 @@ def testui(user='foo', group='bar', tusers=(), tgroups=(),
                                      trusted)
 
     parentui = ui.ui()
-    parentui.updateopts(debug=debug)
+    parentui.setconfig('ui', 'debug', str(bool(debug)))
     u = ui.ui(parentui=parentui)
     u.readconfig('.hg/hgrc')
     if silent:
@@ -85,7 +85,6 @@ os.mkdir('.hg')
 f = open('.hg/hgrc', 'w')
 f.write('[paths]\n')
 f.write('local = /another/path\n\n')
-f.write('interpolated = %(global)s%(local)s\n\n')
 f.close()
 
 #print '# Everything is run by user foo, group bar\n'
@@ -133,19 +132,19 @@ testui(user='abc', group='def', cuser=None)
 print "# prints debug warnings"
 u = testui(user='abc', group='def', cuser='foo', debug=True)
 
-print "# ui.readsections"
+print "# ui.readconfig sections"
 filename = 'foobar'
 f = open(filename, 'w')
 f.write('[foobar]\n')
 f.write('baz = quux\n')
 f.close()
-u.readsections(filename, 'foobar')
+u.readconfig(filename, sections = ['foobar'])
 print u.config('foobar', 'baz')
 
 print
 print "# read trusted, untrusted, new ui, trusted"
 u = ui.ui()
-u.updateopts(debug=True)
+u.setconfig('ui', 'debug', 'on')
 u.readconfig(filename)
 u2 = ui.ui(parentui=u)
 def username(uid=None):
@@ -154,10 +153,8 @@ util.username = username
 u2.readconfig('.hg/hgrc')
 print 'trusted:'
 print u2.config('foobar', 'baz')
-print u2.config('paths', 'interpolated')
 print 'untrusted:'
 print u2.config('foobar', 'baz', untrusted=True)
-print u2.config('paths', 'interpolated', untrusted=True)
 
 print
 print "# error handling"
@@ -179,33 +176,15 @@ testui(user='abc', group='def', debug=True, silent=True)
 print
 print "# parse error"
 f = open('.hg/hgrc', 'w')
-f.write('foo = bar')
+f.write('foo')
 f.close()
-testui(user='abc', group='def', silent=True)
-assertraises(lambda: testui(debug=True, silent=True))
 
-print
-print "# interpolation error"
-f = open('.hg/hgrc', 'w')
-f.write('[foo]\n')
-f.write('bar = %(')
-f.close()
-u = testui(debug=True, silent=True)
-print '# regular config:'
-print '  trusted',
-assertraises(lambda: u.config('foo', 'bar'))
-print 'untrusted',
-assertraises(lambda: u.config('foo', 'bar', untrusted=True))
+try:
+    testui(user='abc', group='def', silent=True)
+except error.ConfigError, inst:
+    print inst
 
-u = testui(user='abc', group='def', debug=True, silent=True)
-print '  trusted ',
-print u.config('foo', 'bar')
-print 'untrusted',
-assertraises(lambda: u.config('foo', 'bar', untrusted=True))
-
-print '# configitems:'
-print '  trusted ',
-print u.configitems('foo')
-print 'untrusted',
-assertraises(lambda: u.configitems('foo', untrusted=True))
-
+try:
+    testui(debug=True, silent=True)
+except error.ConfigError, inst:
+    print inst

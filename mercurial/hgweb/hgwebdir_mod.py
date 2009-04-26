@@ -8,8 +8,8 @@
 
 import os
 from mercurial.i18n import _
-from mercurial import ui, hg, util, templater, templatefilters, error
-from common import ErrorResponse, get_mtime, staticfile, style_map, paritygen,\
+from mercurial import ui, hg, util, templater, templatefilters, error, encoding
+from common import ErrorResponse, get_mtime, staticfile, paritygen,\
                    get_contact, HTTP_OK, HTTP_NOT_FOUND, HTTP_SERVER_ERROR
 from hgweb_mod import hgweb
 from request import wsgirequest
@@ -21,8 +21,13 @@ class hgwebdir(object):
             return [(util.pconvert(name).strip('/'), path)
                     for name, path in items]
 
-        self.parentui = parentui or ui.ui(report_untrusted=False,
-                                          interactive = False)
+        if parentui:
+           self.parentui = parentui
+        else:
+            self.parentui = ui.ui()
+            self.parentui.setconfig('ui', 'report_untrusted', 'off')
+            self.parentui.setconfig('ui', 'interactive', 'off')
+
         self.motd = None
         self.style = 'paper'
         self.stripecount = None
@@ -119,7 +124,7 @@ class hgwebdir(object):
 
                 virtual = req.env.get("PATH_INFO", "").strip('/')
                 tmpl = self.templater(req)
-                ctype = tmpl('mimetype', encoding=util._encoding)
+                ctype = tmpl('mimetype', encoding=encoding.encoding)
                 ctype = templater.stringify(ctype)
 
                 # a static file
@@ -285,7 +290,7 @@ class hgwebdir(object):
     def templater(self, req):
 
         def header(**map):
-            yield tmpl('header', encoding=util._encoding, **map)
+            yield tmpl('header', encoding=encoding.encoding, **map)
 
         def footer(**map):
             yield tmpl("footer", **map)
@@ -317,7 +322,7 @@ class hgwebdir(object):
             style = req.form['style'][0]
         if self.stripecount is None:
             self.stripecount = int(config('web', 'stripes', 1))
-        mapfile = style_map(templater.templatepath(), style)
+        mapfile = templater.stylemap(style)
         tmpl = templater.templater(mapfile, templatefilters.filters,
                                    defaults={"header": header,
                                              "footer": footer,

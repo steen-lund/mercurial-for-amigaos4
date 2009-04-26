@@ -7,7 +7,7 @@
 
 from node import bin, hex
 from i18n import _
-import repo, os, re, util, error
+import repo, re, util, error
 
 class remotelock(object):
     def __init__(self, repo):
@@ -80,7 +80,7 @@ class sshrepository(repo.repository):
         else:
             self.abort(error.RepoError(_("no suitable response from remote hg")))
 
-        self.capabilities = util.set()
+        self.capabilities = set()
         lines.reverse()
         for l in lines:
             if l.startswith("capabilities:"):

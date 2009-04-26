@@ -52,9 +52,9 @@ class httprepository(repo.repository):
     def get_caps(self):
         if self.caps is None:
             try:
-                self.caps = util.set(self.do_read('capabilities').split())
+                self.caps = set(self.do_read('capabilities').split())
             except error.RepoError:
-                self.caps = util.set()
+                self.caps = set()
             self.ui.debug(_('capabilities: %s\n') %
                           (' '.join(self.caps or ['none'])))
         return self.caps
@@ -104,7 +104,7 @@ class httprepository(repo.repository):
         if not (proto.startswith('application/mercurial-') or
                 proto.startswith('text/plain') or
                 proto.startswith('application/hg-changegroup')):
-            self.ui.debug(_("Requested URL: '%s'\n") % url.hidepassword(cu))
+            self.ui.debug(_("requested URL: '%s'\n") % url.hidepassword(cu))
             raise error.RepoError(_("'%s' does not appear to be an hg repository")
                                   % safeurl)
 

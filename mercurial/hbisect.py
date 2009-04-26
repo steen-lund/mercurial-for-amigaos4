@@ -24,7 +24,7 @@ def bisect(changelog, state):
     """
 
     clparents = changelog.parentrevs
-    skip = dict.fromkeys([changelog.rev(n) for n in state['skip']])
+    skip = set([changelog.rev(n) for n in state['skip']])
 
     def buildancestors(bad, good):
         # only the earliest bad revision matters
@@ -78,7 +78,7 @@ def bisect(changelog, state):
     unskipped = [c for c in candidates if (c not in skip) and (c != badrev)]
     if tot == 1 or not unskipped:
         return ([changelog.node(rev) for rev in candidates], 0, good)
-    perfect = tot / 2
+    perfect = tot // 2
 
     # find the best node to test
     best_rev = None
@@ -109,7 +109,7 @@ def bisect(changelog, state):
 
         for c in children.get(rev, []):
             if ancestors[c]:
-                ancestors[c] = dict.fromkeys(ancestors[c] + a).keys()
+                ancestors[c] = list(set(ancestors[c] + a))
             else:
                 ancestors[c] = a + [c]
 
@@ -140,5 +140,5 @@ def save_state(repo, state):
                 f.write("%s %s\n" % (kind, hex(node)))
         f.rename()
     finally:
-        del wlock
+        wlock.release()
 
