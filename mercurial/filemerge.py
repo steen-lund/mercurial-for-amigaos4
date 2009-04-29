@@ -2,10 +2,10 @@
 #
 # Copyright 2006, 2007, 2008 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-from node import nullrev, short
+from node import short
 from i18n import _
 import util, os, tempfile, simplemerge, re, filecmp
 
@@ -66,7 +66,7 @@ def _picktool(repo, ui, path, binary, symlink):
         if t not in tools:
             tools[t] = int(_toolstr(ui, t, "priority", "0"))
     names = tools.keys()
-    tools = util.sort([(-p,t) for t,p in tools.items()])
+    tools = sorted([(-p,t) for t,p in tools.items()])
     uimerge = ui.config("ui", "merge")
     if uimerge:
         if uimerge not in names:

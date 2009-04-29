@@ -2,8 +2,9 @@
 #
 # Copyright 2007 Joel Rosdahl <joel@rosdahl.net>
 #
-# This software may be used and distributed according to the terms of
-# the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 '''show revision graphs in terminal windows
 
 This extension adds a --graph option to the incoming, outgoing and log
@@ -12,13 +13,12 @@ revision graph is also shown.
 '''
 
 import os
-import sys
 from mercurial.cmdutil import revrange, show_changeset
-from mercurial.commands import templateopts, logopts, remoteopts
+from mercurial.commands import templateopts
 from mercurial.i18n import _
 from mercurial.node import nullrev
 from mercurial import bundlerepo, changegroup, cmdutil, commands, extensions
-from mercurial import hg, ui, url, util
+from mercurial import hg, url, util
 
 def revisions(repo, start, stop):
     """cset DAG generator yielding (rev, node, [parents]) tuples
@@ -286,11 +286,10 @@ def graphlog(ui, repo, path=None, **opts):
     ascii(ui, grapher(graphdag))
 
 def graphrevs(repo, nodes, opts):
-    nodes.reverse()
-    include = util.set(nodes)
+    include = set(nodes)
     limit = cmdutil.loglimit(opts)
     count = 0
-    for node in nodes:
+    for node in reversed(nodes):
         if count >= limit:
             break
         ctx = repo[node]
@@ -322,10 +321,9 @@ def goutgoing(ui, repo, dest=None, **opts):
     dest, revs, checkout = hg.parseurl(
         ui.expandpath(dest or 'default-push', dest or 'default'),
         opts.get('rev'))
-    cmdutil.setremoteconfig(ui, opts)
     if revs:
         revs = [repo.lookup(rev) for rev in revs]
-    other = hg.repository(ui, dest)
+    other = hg.repository(cmdutil.remoteui(ui, opts), dest)
     ui.status(_('comparing with %s\n') % url.hidepassword(dest))
     o = repo.findoutgoing(other, force=opts.get('force'))
     if not o:
@@ -349,9 +347,7 @@ def gincoming(ui, repo, source="default", **opts):
 
     check_unsupported_flags(opts)
     source, revs, checkout = hg.parseurl(ui.expandpath(source), opts.get('rev'))
-    cmdutil.setremoteconfig(ui, opts)
-
-    other = hg.repository(ui, source)
+    other = hg.repository(cmdutil.remoteui(repo, opts), source)
     ui.status(_('comparing with %s\n') % url.hidepassword(source))
     if revs:
         revs = [other.lookup(rev) for rev in revs]
@@ -385,8 +381,6 @@ def gincoming(ui, repo, source="default", **opts):
 
         chlist = other.changelog.nodesbetween(incoming, revs)[0]
         revdag = graphrevs(other, chlist, opts)
-        other_parents = []
-        displayer = show_changeset(ui, other, opts, buffered=True)
         graphdag = graphabledag(ui, repo, revdag, opts)
         ascii(ui, grapher(graphdag))
 

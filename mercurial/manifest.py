@@ -2,8 +2,8 @@
 #
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 import array, struct, mdiff, parsers, util, error, revlog
@@ -125,12 +125,12 @@ class manifest(revlog.revlog):
             for f in l:
                 if '\n' in f or '\r' in f:
                     raise error.RevlogError(
-                        _("'\\n' and '\\r' disallowed in filenames"))
+                        _("'\\n' and '\\r' disallowed in filenames: %r") % f)
 
         # if we're using the listcache, make sure it is valid and
         # parented by the same node we're diffing against
         if not (changed and self.listcache and p1 and self.mapcache[0] == p1):
-            files = util.sort(map)
+            files = sorted(map)
             checkforbidden(files)
 
             # if this is changed to support newlines in filenames,

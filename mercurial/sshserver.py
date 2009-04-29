@@ -3,8 +3,8 @@
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 from node import bin, hex
@@ -37,7 +37,11 @@ class sshserver(object):
         self.fout.flush()
 
     def serve_forever(self):
-        while self.serve_one(): pass
+        try:
+            while self.serve_one(): pass
+        finally:
+            if self.lock is not None:
+                self.lock.release()
         sys.exit(0)
 
     def serve_one(self):
@@ -122,8 +126,6 @@ class sshserver(object):
         self.fout.flush()
 
     def do_changegroupsubset(self):
-        bases = []
-        heads = []
         argmap = dict([self.getarg(), self.getarg()])
         bases = [bin(n) for n in argmap['bases'].split(' ')]
         heads = [bin(n) for n in argmap['heads'].split(' ')]

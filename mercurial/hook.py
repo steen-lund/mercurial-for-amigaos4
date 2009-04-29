@@ -2,11 +2,12 @@
 #
 # Copyright 2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 import util, os, sys
+from mercurial import extensions
 
 def _pythonhook(ui, repo, name, hname, funcname, args, throw):
     '''call python hook. hook is callable object, looked up as
@@ -60,7 +61,7 @@ def _pythonhook(ui, repo, name, hname, funcname, args, throw):
                            '%s\n') % (hname, exc))
         if throw:
             raise
-        ui.print_exc()
+        ui.traceback()
         return True
     if r:
         if throw:
@@ -103,14 +104,19 @@ def hook(ui, repo, name, throw=False, **args):
         os.dup2(sys.__stderr__.fileno(), sys.__stdout__.fileno())
 
     try:
-        for hname, cmd in util.sort(ui.configitems('hooks')):
+        for hname, cmd in ui.configitems('hooks'):
             if hname.split('.')[0] != name or not cmd:
                 continue
             if callable(cmd):
                 r = _pythonhook(ui, repo, name, hname, cmd, args, throw) or r
             elif cmd.startswith('python:'):
-                r = _pythonhook(ui, repo, name, hname, cmd[7:].strip(),
-                                args, throw) or r
+                if cmd.count(':') == 2:
+                    path, cmd = cmd[7:].split(':')
+                    mod = extensions.loadpath(path, 'hgkook.%s' % hname)
+                    hookfn = getattr(mod, cmd)
+                else:
+                    hookfn = cmd[7:].strip()
+                r = _pythonhook(ui, repo, name, hname, hookfn, args, throw) or r
             else:
                 r = _exthook(ui, repo, hname, cmd, args, throw) or r
     finally:

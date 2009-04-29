@@ -2,8 +2,8 @@
 #
 # Copyright 2007 Bryan O'Sullivan <bos@serpentine.com>
 #
-# This software may be used and distributed according to the terms of
-# the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 '''interactive change selection during commit or qrefresh'''
 
@@ -302,6 +302,7 @@ def filterpatch(ui, chunks):
             elif r == _('q'):
                 raise util.Abort(_('user quit'))
             return r
+    pos, total = 0, len(chunks) - 1
     while chunks:
         chunk = chunks.pop()
         if isinstance(chunk, header):
@@ -327,8 +328,10 @@ def filterpatch(ui, chunks):
             # new hunk
             if resp_file[0] is None and resp_all[0] is None:
                 chunk.pretty(ui)
-            r = prompt(_('record this change to %r?') %
-                       chunk.filename())
+            r = total == 1 and prompt(_('record this change to %r?') %
+                                      chunk.filename()) \
+                           or  prompt(_('record change %d/%d to %r?') %
+                                      (pos, total, chunk.filename()))
             if r == _('y'):
                 if fixoffset:
                     chunk = copy.copy(chunk)
@@ -336,6 +339,7 @@ def filterpatch(ui, chunks):
                 applied[chunk.filename()].append(chunk)
             else:
                 fixoffset += chunk.removed - chunk.added
+        pos = pos + 1
     return reduce(operator.add, [h for h in applied.itervalues()
                                  if h[0].special() or len(h) > 1], [])
 
@@ -349,7 +353,7 @@ def record(ui, repo, *pats, **opts):
 
     You will be prompted for whether to record changes to each
     modified file, and for files with multiple changes, for each
-    change to use.  For each query, the following responses are
+    change to use. For each query, the following responses are
     possible:
 
     y - record this change
@@ -390,7 +394,7 @@ def qrecord(ui, repo, patch, *pats, **opts):
 
 
 def dorecord(ui, repo, committer, *pats, **opts):
-    if not ui.interactive:
+    if not ui.interactive():
         raise util.Abort(_('running non-interactively, use commit instead'))
 
     def recordfunc(ui, repo, message, match, opts):
@@ -418,9 +422,9 @@ def dorecord(ui, repo, committer, *pats, **opts):
         chunks = filterpatch(ui, parsepatch(fp))
         del fp
 
-        contenders = {}
+        contenders = set()
         for h in chunks:
-            try: contenders.update(dict.fromkeys(h.files()))
+            try: contenders.update(set(h.files()))
             except AttributeError: pass
 
         changed = changes[0] + changes[1] + changes[2]
@@ -429,7 +433,7 @@ def dorecord(ui, repo, committer, *pats, **opts):
             ui.status(_('no changes to record\n'))
             return 0
 
-        modified = dict.fromkeys(changes[0])
+        modified = set(changes[0])
 
         # 2. backup changed files, so we can restore them in the end
         backups = {}

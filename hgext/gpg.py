@@ -2,8 +2,8 @@
 #
 # Copyright 2005, 2006 Benoit Boissinot <benoit.boissinot@ens-lyon.org>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os, tempfile, binascii
 from mercurial import util, commands
@@ -90,11 +90,9 @@ def sigwalk(repo):
             yield (l.split(" ", 2), (context, ln))
             ln +=1
 
-    fl = repo.file(".hgsigs")
-    h = fl.heads()
-    h.reverse()
     # read the heads
-    for r in h:
+    fl = repo.file(".hgsigs")
+    for r in reversed(fl.heads()):
         fn = ".hgsigs|%s" % hgnode.short(r)
         for item in parsefile(fl.read(r).splitlines(), fn):
             yield item
@@ -154,9 +152,7 @@ def sigs(ui, repo):
             continue
         revs.setdefault(r, [])
         revs[r].extend(keys)
-    nodes = list(revs)
-    nodes.reverse()
-    for rev in nodes:
+    for rev in reversed(revs):
         for k in revs[rev]:
             r = "%5d:%s" % (rev, hgnode.hex(repo.changelog.node(rev)))
             ui.write("%-30s %s\n" % (keystr(ui, k), r))

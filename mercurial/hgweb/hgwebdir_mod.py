@@ -3,53 +3,56 @@
 # Copyright 21 May 2005 - (c) 2005 Jake Edge <jake@edge2.net>
 # Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os
 from mercurial.i18n import _
-from mercurial import ui, hg, util, templater, templatefilters, error
-from common import ErrorResponse, get_mtime, staticfile, style_map, paritygen,\
+from mercurial import ui, hg, util, templater, templatefilters
+from mercurial import config, error, encoding
+from common import ErrorResponse, get_mtime, staticfile, paritygen,\
                    get_contact, HTTP_OK, HTTP_NOT_FOUND, HTTP_SERVER_ERROR
 from hgweb_mod import hgweb
 from request import wsgirequest
+import webutil
 
-# This is a stopgap
+def cleannames(items):
+    return [(util.pconvert(name).strip('/'), path) for name, path in items]
+
 class hgwebdir(object):
-    def __init__(self, config, parentui=None):
-        def cleannames(items):
-            return [(util.pconvert(name).strip('/'), path)
-                    for name, path in items]
 
-        self.parentui = parentui or ui.ui(report_untrusted=False,
-                                          interactive = False)
+    def __init__(self, conf, baseui=None):
+
+        if baseui:
+            self.ui = baseui.copy()
+        else:
+            self.ui = ui.ui()
+            self.ui.setconfig('ui', 'report_untrusted', 'off')
+            self.ui.setconfig('ui', 'interactive', 'off')
+
         self.motd = None
         self.style = 'paper'
-        self.stripecount = None
+        self.stripecount = 1
         self.repos_sorted = ('name', False)
         self._baseurl = None
-        if isinstance(config, (list, tuple)):
-            self.repos = cleannames(config)
+
+        if isinstance(conf, (list, tuple)):
+            self.repos = cleannames(conf)
             self.repos_sorted = ('', False)
-        elif isinstance(config, dict):
-            self.repos = util.sort(cleannames(config.items()))
+        elif isinstance(conf, dict):
+            self.repos = sorted(cleannames(conf.items()))
         else:
-            if isinstance(config, util.configparser):
-                cp = config
+            if isinstance(conf, config.config):
+                cp = conf
             else:
-                cp = util.configparser()
-                cp.read(config)
+                cp = config.config()
+                cp.read(conf)
             self.repos = []
-            if cp.has_section('web'):
-                if cp.has_option('web', 'motd'):
-                    self.motd = cp.get('web', 'motd')
-                if cp.has_option('web', 'style'):
-                    self.style = cp.get('web', 'style')
-                if cp.has_option('web', 'stripes'):
-                    self.stripecount = int(cp.get('web', 'stripes'))
-                if cp.has_option('web', 'baseurl'):
-                    self._baseurl = cp.get('web', 'baseurl')
-            if cp.has_section('paths'):
+            self.motd = cp.get('web', 'motd')
+            self.style = cp.get('web', 'style', 'paper')
+            self.stripecount = cp.get('web', 'stripes', 1)
+            self._baseurl = cp.get('web', 'baseurl')
+            if 'paths' in cp:
                 paths = cleannames(cp.items('paths'))
                 for prefix, root in paths:
                     roothead, roottail = os.path.split(root)
@@ -70,14 +73,13 @@ class hgwebdir(object):
                         if prefix:
                             name = prefix + '/' + name
                         self.repos.append((name, path))
-            if cp.has_section('collections'):
-                for prefix, root in cp.items('collections'):
-                    for path in util.walkrepos(root, followsym=True):
-                        repo = os.path.normpath(path)
-                        name = repo
-                        if name.startswith(prefix):
-                            name = name[len(prefix):]
-                        self.repos.append((name.lstrip(os.sep), repo))
+            for prefix, root in cp.items('collections'):
+                for path in util.walkrepos(root, followsym=True):
+                    repo = os.path.normpath(path)
+                    name = repo
+                    if name.startswith(prefix):
+                        name = name[len(prefix):]
+                    self.repos.append((name.lstrip(os.sep), repo))
             self.repos.sort()
 
     def run(self):
@@ -119,7 +121,7 @@ class hgwebdir(object):
 
                 virtual = req.env.get("PATH_INFO", "").strip('/')
                 tmpl = self.templater(req)
-                ctype = tmpl('mimetype', encoding=util._encoding)
+                ctype = tmpl('mimetype', encoding=encoding.encoding)
                 ctype = templater.stringify(ctype)
 
                 # a static file
@@ -144,7 +146,7 @@ class hgwebdir(object):
                     if real:
                         req.env['REPO_NAME'] = virtual
                         try:
-                            repo = hg.repository(self.parentui, real)
+                            repo = hg.repository(self.ui, real)
                             return hgweb(repo).run_wsgi(req)
                         except IOError, inst:
                             msg = inst.strerror
@@ -184,18 +186,6 @@ class hgwebdir(object):
                            "node": nodeid, "url": url}
 
         def entries(sortcolumn="", descending=False, subdir="", **map):
-            def sessionvars(**map):
-                fields = []
-                if 'style' in req.form:
-                    style = req.form['style'][0]
-                    if style != get('web', 'style', ''):
-                        fields.append(('style', style))
-
-                separator = url[-1] == '?' and ';' or '?'
-                for name, value in fields:
-                    yield dict(name=name, value=value, separator=separator)
-                    separator = ';'
-
             rows = []
             parity = paritygen(self.stripecount)
             for name, path in self.repos:
@@ -203,7 +193,7 @@ class hgwebdir(object):
                     continue
                 name = name[len(subdir):]
 
-                u = ui.ui(parentui=self.parentui)
+                u = self.ui.copy()
                 try:
                     u.readconfig(os.path.join(path, '.hg', 'hgrc'))
                 except Exception, e:
@@ -243,7 +233,6 @@ class hgwebdir(object):
                            description_sort=description.upper() or "unknown",
                            lastchange=d,
                            lastchange_sort=d[1]-d[0],
-                           sessionvars=sessionvars,
                            archives=archivelist(u, "tip", url))
                 if (not sortcolumn
                     or (sortcolumn, descending) == self.repos_sorted):
@@ -285,7 +274,7 @@ class hgwebdir(object):
     def templater(self, req):
 
         def header(**map):
-            yield tmpl('header', encoding=util._encoding, **map)
+            yield tmpl('header', encoding=encoding.encoding, **map)
 
         def footer(**map):
             yield tmpl("footer", **map)
@@ -297,7 +286,7 @@ class hgwebdir(object):
                 yield config('web', 'motd', '')
 
         def config(section, name, default=None, untrusted=True):
-            return self.parentui.config(section, name, default, untrusted)
+            return self.ui.config(section, name, default, untrusted)
 
         if self._baseurl is not None:
             req.env['SCRIPT_NAME'] = self._baseurl
@@ -306,22 +295,24 @@ class hgwebdir(object):
         if not url.endswith('/'):
             url += '/'
 
+        vars = {}
+        style = self.style
+        if 'style' in req.form:
+            vars['style'] = style = req.form['style'][0]
+        start = url[-1] == '?' and '&' or '?'
+        sessionvars = webutil.sessionvars(vars, start)
+
         staticurl = config('web', 'staticurl') or url + 'static/'
         if not staticurl.endswith('/'):
             staticurl += '/'
 
-        style = self.style
-        if style is None:
-            style = config('web', 'style', '')
-        if 'style' in req.form:
-            style = req.form['style'][0]
-        if self.stripecount is None:
-            self.stripecount = int(config('web', 'stripes', 1))
-        mapfile = style_map(templater.templatepath(), style)
+        style = 'style' in req.form and req.form['style'][0] or self.style
+        mapfile = templater.stylemap(style)
         tmpl = templater.templater(mapfile, templatefilters.filters,
                                    defaults={"header": header,
                                              "footer": footer,
                                              "motd": motd,
                                              "url": url,
-                                             "staticurl": staticurl})
+                                             "staticurl": staticurl,
+                                             "sessionvars": sessionvars})
         return tmpl

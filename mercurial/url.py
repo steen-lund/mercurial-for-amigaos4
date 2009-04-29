@@ -4,8 +4,8 @@
 # Copyright 2006, 2007 Alexis S. L. Carvalho <alexis@cecm.usp.br>
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import urllib, urllib2, urlparse, httplib, os, re
 from i18n import _
@@ -84,8 +84,8 @@ def quotepath(path):
     '''
     global _safeset, _hex
     if _safeset is None:
-        _safeset = util.set(_safe)
-        _hex = util.set('abcdefABCDEF0123456789')
+        _safeset = set(_safe)
+        _hex = set('abcdefABCDEF0123456789')
     l = list(path)
     for i in xrange(len(l)):
         c = l[i]
@@ -107,7 +107,7 @@ class passwordmgr(urllib2.HTTPPasswordMgrWithDefaultRealm):
         if user and passwd:
             return (user, passwd)
 
-        if not self.ui.interactive:
+        if not self.ui.interactive():
             raise util.Abort(_('http authorization required'))
 
         self.ui.write(_("http authorization required\n"))

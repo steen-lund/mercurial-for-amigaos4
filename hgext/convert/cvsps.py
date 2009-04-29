@@ -3,8 +3,8 @@
 #
 # Copyright 2008, Frank Kingswood <frank@kingswood-consulting.co.uk>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os
 import re
@@ -34,9 +34,16 @@ class logentry(object):
         .revision  - revision number as tuple
         .tags      - list of tags on the file
         .synthetic - is this a synthetic "file ... added on ..." revision?
+        .mergepoint- the branch that has been merged from (if present in rlog output)
     '''
     def __init__(self, **entries):
         self.__dict__.update(entries)
+
+    def __repr__(self):
+        return "<%s at 0x%x: %s %s>" % (self.__class__.__name__,
+                                        id(self),
+                                        self.file,
+                                        ".".join(map(str, self.revision)))
 
 class logerror(Exception):
     pass
@@ -105,7 +112,7 @@ def createlog(ui, directory=None, root="", rlog=True, cache=None):
     re_31 = re.compile('----------------------------$')
     re_32 = re.compile('=============================================================================$')
     re_50 = re.compile('revision ([\\d.]+)(\s+locked by:\s+.+;)?$')
-    re_60 = re.compile(r'date:\s+(.+);\s+author:\s+(.+);\s+state:\s+(.+?);(\s+lines:\s+(\+\d+)?\s+(-\d+)?;)?')
+    re_60 = re.compile(r'date:\s+(.+);\s+author:\s+(.+);\s+state:\s+(.+?);(\s+lines:\s+(\+\d+)?\s+(-\d+)?;)?(.*mergepoint:\s+([^;]+);)?')
     re_70 = re.compile('branches: (.+);$')
 
     file_added_re = re.compile(r'file [^/]+ was (initially )?added on branch')
@@ -187,6 +194,7 @@ def createlog(ui, directory=None, root="", rlog=True, cache=None):
 
     # state machine begins here
     tags = {}     # dictionary of revisions on current file with their tags
+    branchmap = {} # mapping between branch names and revision numbers
     state = 0
     store = False # set when a new record can be appended
 
@@ -244,6 +252,7 @@ def createlog(ui, directory=None, root="", rlog=True, cache=None):
         elif state == 2:
             # expect 'symbolic names'
             if re_20.match(line):
+                branchmap = {}
                 state = 3
 
         elif state == 3:
@@ -261,6 +270,7 @@ def createlog(ui, directory=None, root="", rlog=True, cache=None):
                 if rev not in tags:
                     tags[rev] = []
                 tags[rev].append(match.group(1))
+                branchmap[match.group(1)] = match.group(2)
 
             elif re_31.match(line):
                 state = 5
@@ -311,6 +321,18 @@ def createlog(ui, directory=None, root="", rlog=True, cache=None):
                 e.lines = (0, int(match.group(6)))
             else:
                 e.lines = None
+
+            if match.group(7): # cvsnt mergepoint
+                myrev = match.group(8).split('.')
+                if len(myrev) == 2: # head
+                    e.mergepoint = 'HEAD'
+                else:
+                    myrev = '.'.join(myrev[:-2] + ['0', myrev[-2]])
+                    branches = [b for b in branchmap if branchmap[b] == myrev]
+                    assert len(branches) == 1, 'unknown branch: %s' % e.mergepoint
+                    e.mergepoint = branches[0]
+            else:
+                e.mergepoint = None
             e.comment = []
             state = 7
 
@@ -354,14 +376,14 @@ def createlog(ui, directory=None, root="", rlog=True, cache=None):
               e.revision[-1] == 1 and      # 1.1 or 1.1.x.1
               len(e.comment) == 1 and
               file_added_re.match(e.comment[0])):
-            ui.debug(_('found synthetic rev in %s: %r\n')
+            ui.debug(_('found synthetic revision in %s: %r\n')
                      % (e.rcs, e.comment[0]))
             e.synthetic = True
 
         if store:
             # clean up the results and save in the log.
             store = False
-            e.tags = util.sort([scache(x) for x in tags.get(e.revision, [])])
+            e.tags = sorted([scache(x) for x in tags.get(e.revision, [])])
             e.comment = scache('\n'.join(e.comment))
 
             revn = len(e.revision)
@@ -412,6 +434,7 @@ def createlog(ui, directory=None, root="", rlog=True, cache=None):
 
 class changeset(object):
     '''Class changeset has the following attributes:
+        .id        - integer identifying this changeset (list index)
         .author    - author name as CVS knows it
         .branch    - name of branch this changeset is on, or None
         .comment   - commit message
@@ -420,9 +443,15 @@ class changeset(object):
         .parents   - list of one or two parent changesets
         .tags      - list of tags on this changeset
         .synthetic - from synthetic revision "file ... added on branch ..."
+        .mergepoint- the branch that has been merged from (if present in rlog output)
     '''
     def __init__(self, **entries):
         self.__dict__.update(entries)
+
+    def __repr__(self):
+        return "<%s at 0x%x: %s>" % (self.__class__.__name__,
+                                     id(self),
+                                     getattr(self, 'id', "(no id)"))
 
 def createchangeset(ui, log, fuzz=60, mergefrom=None, mergeto=None):
     '''Convert log into changesets.'''
@@ -448,7 +477,8 @@ def createchangeset(ui, log, fuzz=60, mergefrom=None, mergeto=None):
                    (c.date[0] + c.date[1]) + fuzz) and
                   e.file not in files):
             c = changeset(comment=e.comment, author=e.author,
-                          branch=e.branch, date=e.date, entries=[])
+                          branch=e.branch, date=e.date, entries=[],
+                          mergepoint=getattr(e, 'mergepoint', None))
             changesets.append(c)
             files = {}
             if len(changesets) % 100 == 0:
@@ -470,7 +500,8 @@ def createchangeset(ui, log, fuzz=60, mergefrom=None, mergeto=None):
         #   "File file4 was added on branch ..." (synthetic, 1 entry)
         #   "Add file3 and file4 to fix ..."     (real, 2 entries)
         # Hence the check for 1 entry here.
-        c.synthetic = (len(c.entries) == 1 and c.entries[0].synthetic)
+        synth = getattr(c.entries[0], 'synthetic', None)
+        c.synthetic = (len(c.entries) == 1 and synth)
 
     # Sort files in each changeset
 
@@ -545,7 +576,7 @@ def createchangeset(ui, log, fuzz=60, mergefrom=None, mergeto=None):
             for tag in e.tags:
                 tags[tag] = True
         # remember tags only if this is the latest changeset to have it
-        c.tags = util.sort([tag for tag in tags if globaltags[tag] is c])
+        c.tags = sorted([tag for tag in tags if globaltags[tag] is c])
 
     # Find parent changesets, handle {{mergetobranch BRANCHNAME}}
     # by inserting dummy changesets with two parents, and handle
@@ -595,14 +626,25 @@ def createchangeset(ui, log, fuzz=60, mergefrom=None, mergeto=None):
             if p is not None:
                 c.parents.append(p)
 
+        if c.mergepoint:
+            if c.mergepoint == 'HEAD':
+                c.mergepoint = None
+            c.parents.append(changesets[branches[c.mergepoint]])
+
         if mergefrom:
             m = mergefrom.search(c.comment)
             if m:
                 m = m.group(1)
                 if m == 'HEAD':
                     m = None
-                if m in branches and c.branch != m:
-                    c.parents.append(changesets[branches[m]])
+                try:
+                    candidate = changesets[branches[m]]
+                except KeyError:
+                    ui.warn(_("warning: CVS commit message references "
+                              "non-existent branch %r:\n%s\n")
+                            % (m, c.comment))
+                if m in branches and c.branch != m and not candidate.synthetic:
+                    c.parents.append(candidate)
 
         if mergeto:
             m = mergeto.search(c.comment)

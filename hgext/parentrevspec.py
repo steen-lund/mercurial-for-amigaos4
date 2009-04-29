@@ -2,13 +2,14 @@
 #
 # Copyright (C) 2007 Alexis S. L. Carvalho <alexis@cecm.usp.br>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 '''\
 use suffixes to refer to ancestor revisions
 
-This extension allows you to use git-style suffixes to refer to
-the ancestors of a specific revision.
+This extension allows you to use git-style suffixes to refer to the
+ancestors of a specific revision.
 
 For example, if you can refer to a revision as "foo", then:
 
@@ -23,7 +24,6 @@ For example, if you can refer to a revision as "foo", then:
   foo~1 = foo^1 = foo^ = first parent of foo
   foo~2 = foo^1^1 = foo^^ = first parent of first parent of foo
 '''
-import mercurial.repo
 from mercurial import error
 
 def reposetup(ui, repo):

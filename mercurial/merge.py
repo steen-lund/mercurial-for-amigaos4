@@ -2,8 +2,8 @@
 #
 # Copyright 2006, 2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import nullid, nullrev, hex, bin
 from i18n import _
@@ -166,7 +166,7 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
         if repo.ui.configbool("merge", "followcopies", True):
             dirs = repo.ui.configbool("merge", "followdirs", True)
             copy, diverge = copies.copies(repo, p1, p2, pa, dirs)
-        copied = dict.fromkeys(copy.values())
+        copied = set(copy.values())
         for of, fl in diverge.iteritems():
             act("divergent renames", "dr", of, fl)
 
@@ -504,4 +504,4 @@ def update(repo, node, branchmerge, force, partial):
 
         return stats
     finally:
-        del wlock
+        wlock.release()

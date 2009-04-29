@@ -2,12 +2,12 @@
 #
 # Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import bin, hex
 from i18n import _
-import repo, os, re, util, error
+import repo, re, util, error
 
 class remotelock(object):
     def __init__(self, repo):
@@ -80,9 +80,8 @@ class sshrepository(repo.repository):
         else:
             self.abort(error.RepoError(_("no suitable response from remote hg")))
 
-        self.capabilities = util.set()
-        lines.reverse()
-        for l in lines:
+        self.capabilities = set()
+        for l in reversed(lines):
             if l.startswith("capabilities:"):
                 self.capabilities.update(l[:-1].split(":")[1].split())
                 break
