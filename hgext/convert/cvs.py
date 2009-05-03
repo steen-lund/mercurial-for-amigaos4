@@ -1,4 +1,9 @@
-# CVS conversion code inspired by hg-cvs-import and git-cvsimport
+# cvs.py: CVS conversion code inspired by hg-cvs-import and git-cvsimport
+#
+#  Copyright 2005-2009 Matt Mackall <mpm@selenic.com> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os, locale, re, socket, errno
 from cStringIO import StringIO
@@ -24,7 +29,7 @@ class convert_cvs(converter_source):
         if not self.builtin:
             checktool(cvspsexe)
 
-        self.changeset = {}
+        self.changeset = None
         self.files = {}
         self.tags = {}
         self.lastbranch = {}
@@ -34,12 +39,12 @@ class convert_cvs(converter_source):
         self.cvsrepo = file(os.path.join(cvs, "Repository")).read()[:-1]
         self.encoding = locale.getpreferredencoding()
 
-        self._parse(ui)
         self._connect()
 
-    def _parse(self, ui):
-        if self.changeset:
+    def _parse(self):
+        if self.changeset is not None:
             return
+        self.changeset = {}
 
         maxrev = 0
         cmd = self.cmd
@@ -65,13 +70,16 @@ class convert_cvs(converter_source):
 
             if self.builtin:
                 # builtin cvsps code
-                ui.status(_('using builtin cvsps\n'))
+                self.ui.status(_('using builtin cvsps\n'))
 
-                db = cvsps.createlog(ui, cache='update')
-                db = cvsps.createchangeset(ui, db,
-                      fuzz=int(ui.config('convert', 'cvsps.fuzz', 60)),
-                      mergeto=ui.config('convert', 'cvsps.mergeto', None),
-                      mergefrom=ui.config('convert', 'cvsps.mergefrom', None))
+                cache = 'update'
+                if not self.ui.configbool('convert', 'cvsps.cache', True):
+                    cache = None
+                db = cvsps.createlog(self.ui, cache=cache)
+                db = cvsps.createchangeset(self.ui, db,
+                      fuzz=int(self.ui.config('convert', 'cvsps.fuzz', 60)),
+                      mergeto=self.ui.config('convert', 'cvsps.mergeto', None),
+                      mergefrom=self.ui.config('convert', 'cvsps.mergefrom', None))
 
                 for cs in db:
                     if maxrev and cs.id>maxrev:
@@ -278,6 +286,7 @@ class convert_cvs(converter_source):
             r = self.readp.readline()
 
     def getheads(self):
+        self._parse()
         return self.heads
 
     def _getfile(self, name, rev):
@@ -327,11 +336,12 @@ class convert_cvs(converter_source):
                 elif line.startswith("E "):
                     self.ui.warn(_("cvs server: %s\n") % line[2:])
                 elif line.startswith("Remove"):
-                    l = self.readp.readline()
+                    self.readp.readline()
                 else:
                     raise util.Abort(_("unknown CVS response: %s") % line)
 
     def getfile(self, file, rev):
+        self._parse()
         data, mode = self._getfile(file, rev)
         self.modecache[(file, rev)] = mode
         return data
@@ -340,14 +350,18 @@ class convert_cvs(converter_source):
         return self.modecache[(file, rev)]
 
     def getchanges(self, rev):
+        self._parse()
         self.modecache = {}
-        return util.sort(self.files[rev].items()), {}
+        return sorted(self.files[rev].iteritems()), {}
 
     def getcommit(self, rev):
+        self._parse()
         return self.changeset[rev]
 
     def gettags(self):
+        self._parse()
         return self.tags
 
     def getchangedfiles(self, rev, i):
-        return util.sort(self.files[rev].keys())
+        self._parse()
+        return sorted(self.files[rev])

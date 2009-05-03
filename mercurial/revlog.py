@@ -1,16 +1,18 @@
-"""
-revlog.py - storage back-end for mercurial
+# revlog.py - storage back-end for mercurial
+#
+# Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
+"""Storage back-end for Mercurial.
 
 This provides efficient delta storage with O(1) retrieve and append
-and O(changes) merge between branches
-
-Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
-
-This software may be used and distributed according to the terms
-of the GNU General Public License, incorporated herein by reference.
+and O(changes) merge between branches.
 """
 
-from node import bin, hex, nullid, nullrev, short
+# import stuff from node for others to import from revlog
+from node import bin, hex, nullid, nullrev, short #@UnusedImport
 from i18n import _
 import changegroup, errno, ancestor, mdiff, parsers
 import struct, util, zlib, error
@@ -41,6 +43,8 @@ def gettype(q):
 def offset_type(offset, type):
     return long(long(offset) << 16 | type)
 
+nullhash = _sha(nullid)
+
 def hash(text, p1, p2):
     """generate a hash from the given text and its parent hashes
 
@@ -48,10 +52,17 @@ def hash(text, p1, p2):
     in a manner that makes it easy to distinguish nodes with the same
     content in the revision graph.
     """
-    l = [p1, p2]
-    l.sort()
-    s = _sha(l[0])
-    s.update(l[1])
+    # As of now, if one of the parent node is null, p2 is null
+    if p2 == nullid:
+        # deep copy of a hash is faster than creating one
+        s = nullhash.copy()
+        s.update(p1)
+    else:
+        # none of the parent nodes are nullid
+        l = [p1, p2]
+        l.sort()
+        s = _sha(l[0])
+        s.update(l[1])
     s.update(text)
     return s.digest()
 
@@ -566,7 +577,7 @@ class revlog(object):
     def ancestors(self, *revs):
         'Generate the ancestors of revs using a breadth-first visit'
         visit = list(revs)
-        seen = util.set([nullrev])
+        seen = set([nullrev])
         while visit:
             for parent in self.parentrevs(visit.pop(0)):
                 if parent not in seen:
@@ -576,7 +587,7 @@ class revlog(object):
 
     def descendants(self, *revs):
         'Generate the descendants of revs in topological order'
-        seen = util.set(revs)
+        seen = set(revs)
         for i in xrange(min(revs) + 1, len(self)):
             for x in self.parentrevs(i):
                 if x != nullrev and x in seen:
@@ -603,10 +614,9 @@ class revlog(object):
         heads = [self.rev(n) for n in heads]
 
         # we want the ancestors, but inclusive
-        has = dict.fromkeys(self.ancestors(*common))
-        has[nullrev] = None
-        for r in common:
-            has[r] = None
+        has = set(self.ancestors(*common))
+        has.add(nullrev)
+        has.update(common)
 
         # take all ancestors from heads that aren't in has
         missing = {}
@@ -669,7 +679,7 @@ class revlog(object):
             # find from roots.
             heads = dict.fromkeys(heads, 0)
             # Start at the top and keep marking parents until we're done.
-            nodestotag = heads.keys()
+            nodestotag = set(heads)
             # Remember where the top was so we can use it as a limit later.
             highestrev = max([self.rev(n) for n in nodestotag])
             while nodestotag:
@@ -687,7 +697,7 @@ class revlog(object):
                         # and we haven't already been marked as an ancestor
                         ancestors[n] = 1 # Mark as ancestor
                         # Add non-nullid parents to list of nodes to tag.
-                        nodestotag.extend([p for p in self.parents(n) if
+                        nodestotag.update([p for p in self.parents(n) if
                                            p != nullid])
                     elif n in heads: # We've seen it before, is it a fake head?
                         # So it is, real heads should not be the ancestors of
@@ -716,9 +726,8 @@ class revlog(object):
                 # any other roots.
                 lowestrev = nullrev
                 roots = [nullid]
-        # Transform our roots list into a 'set' (i.e. a dictionary where the
-        # values don't matter.
-        descendents = dict.fromkeys(roots, 1)
+        # Transform our roots list into a set.
+        descendents = set(roots)
         # Also, keep the original roots so we can filter out roots that aren't
         # 'real' roots (i.e. are descended from other roots).
         roots = descendents.copy()
@@ -742,14 +751,14 @@ class revlog(object):
                     p = tuple(self.parents(n))
                     # If any of its parents are descendents, it's not a root.
                     if (p[0] in descendents) or (p[1] in descendents):
-                        roots.pop(n)
+                        roots.remove(n)
             else:
                 p = tuple(self.parents(n))
                 # A node is a descendent if either of its parents are
                 # descendents.  (We seeded the dependents list with the roots
                 # up there, remember?)
                 if (p[0] in descendents) or (p[1] in descendents):
-                    descendents[n] = 1
+                    descendents.add(n)
                     isdescendent = True
             if isdescendent and ((ancestors is None) or (n in ancestors)):
                 # Only include nodes that are both descendents and ancestors.
@@ -768,7 +777,7 @@ class revlog(object):
                     for p in self.parents(n):
                         heads.pop(p, None)
         heads = [n for n in heads.iterkeys() if heads[n] != 0]
-        roots = roots.keys()
+        roots = list(roots)
         assert orderedout
         assert roots
         assert heads
@@ -797,7 +806,7 @@ class revlog(object):
             start = nullid
         if stop is None:
             stop = []
-        stoprevs = dict.fromkeys([self.rev(n) for n in stop])
+        stoprevs = set([self.rev(n) for n in stop])
         startrev = self.rev(start)
         reachable = {startrev: 1}
         heads = {startrev: 1}
@@ -837,7 +846,7 @@ class revlog(object):
             # odds of a binary node being all hex in ASCII are 1 in 10**25
             try:
                 node = id
-                r = self.rev(node) # quick search the index
+                self.rev(node) # quick search the index
                 return node
             except LookupError:
                 pass # may be partial hex id
@@ -857,7 +866,7 @@ class revlog(object):
             try:
                 # a full hex nodeid?
                 node = bin(id)
-                r = self.rev(node)
+                self.rev(node)
                 return node
             except (TypeError, LookupError):
                 pass
@@ -1275,7 +1284,7 @@ class revlog(object):
 
         return node
 
-    def strip(self, minlink):
+    def strip(self, minlink, transaction):
         """truncate the revlog on the first revision with a linkrev >= minlink
 
         This function is called when we're stripping revision minlink and
@@ -1304,14 +1313,12 @@ class revlog(object):
         # first truncate the files on disk
         end = self.start(rev)
         if not self._inline:
-            df = self.opener(self.datafile, "a")
-            df.truncate(end)
+            transaction.add(self.datafile, end)
             end = rev * self._io.size
         else:
             end += rev * self._io.size
 
-        indexf = self.opener(self.indexfile, "a")
-        indexf.truncate(end)
+        transaction.add(self.indexfile, end)
 
         # then reset internal state in memory to forget those revisions
         self._cache = None

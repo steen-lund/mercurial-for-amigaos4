@@ -1,11 +1,8 @@
-abort: Failed to parse .../t/.hg/hgrc
-File contains no section headers.
-file: .../t/.hg/hgrc, line: 1
-'invalid\n'
+hg: config error at .../t/.hg/hgrc:1: 'invalid'
 updating working directory
 0 files updated, 0 files merged, 0 files removed, 0 files unresolved
 [paths]
-default = .../foo%%bar
+default = .../foo%bar
 default = .../foo%bar
 bundle.mainreporoot=.../foobar
 defaults.backout=-d "0 0"

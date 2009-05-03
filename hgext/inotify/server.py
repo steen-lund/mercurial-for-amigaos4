@@ -3,8 +3,8 @@
 # Copyright 2006, 2007, 2008 Bryan O'Sullivan <bos@serpentine.com>
 # Copyright 2007, 2008 Brendan Cully <brendan@kublai.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from mercurial.i18n import _
 from mercurial import osutil, util
@@ -304,6 +304,11 @@ class Watcher(object):
                         dd[fn] = status
             else:
                 d.pop(fn, None)
+        elif not status:
+            # a directory is being removed, check its contents
+            for subfile, b in oldstatus.copy().iteritems():
+                self.updatestatus(wfn + '/' + subfile, None)
+
 
     def check_deleted(self, key):
         # Files that had been deleted but were present in the dirstate
@@ -473,8 +478,7 @@ class Watcher(object):
 
         if evt.mask & inotify.IN_ISDIR:
             self.scan(wpath)
-        else:
-            self.schedule_work(wpath, 'd')
+        self.schedule_work(wpath, 'd')
 
     def process_modify(self, wpath, evt):
         if self.ui.debugflag:
@@ -535,7 +539,7 @@ class Watcher(object):
                 self.ui.note(_('%s processing %d deferred events as %d\n') %
                              (self.event_time(), self.deferred,
                               len(self.eventq)))
-            for wpath, evts in util.sort(self.eventq.items()):
+            for wpath, evts in sorted(self.eventq.iteritems()):
                 for evt in evts:
                     self.deferred_event(wpath, evt)
             self.eventq.clear()

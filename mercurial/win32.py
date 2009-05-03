@@ -1,21 +1,23 @@
-# util_win32.py - utility functions that use win32 API
+# win32.py - utility functions that use win32 API
 #
-# Copyright 2005 Matt Mackall <mpm@selenic.com>
-# Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
+# Copyright 2005-2009 Matt Mackall <mpm@selenic.com> and others
 #
-# This software may be used and distributed according to the terms of
-# the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-# Mark Hammond's win32all package allows better functionality on
-# Windows.  this module overrides definitions in util.py.  if not
-# available, import of this module will fail, and generic code will be
-# used.
+"""Utility functions that use win32 API.
+
+Mark Hammond's win32all package allows better functionality on
+Windows. This module overrides definitions in util.py. If not
+available, import of this module will fail, and generic code will be
+used.
+"""
 
 import win32api
 
 import errno, os, sys, pywintypes, win32con, win32file, win32process
 import cStringIO, winerror
-import osutil
+import osutil, encoding
 import util
 from win32com.shell import shell,shellcon
 
@@ -212,7 +214,7 @@ def lookup_reg(key, valname=None, scope=None):
         try:
             val = QueryValueEx(OpenKey(s, key), valname)[0]
             # never let a Unicode string escape into the wild
-            return util.tolocal(val.encode('UTF-8'))
+            return encoding.tolocal(val.encode('UTF-8'))
         except EnvironmentError:
             pass
 
@@ -363,7 +365,9 @@ class posixfile_nt(object):
         except pywintypes.error, err:
             raise WinIOError(err)
 
-getuser_fallback = win32api.GetUserName
+def getuser():
+    '''return name of current user'''
+    return win32api.GetUserName()
 
 def set_signal_handler_win32():
     """Register a termination handler for console events including
@@ -373,3 +377,4 @@ def set_signal_handler_win32():
     def handler(event):
         win32process.ExitProcess(1)
     win32api.SetConsoleCtrlHandler(handler)
+

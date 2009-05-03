@@ -2,14 +2,14 @@
 # Copyright 21 May 2005 - (c) 2005 Jake Edge <jake@edge2.net>
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os, mimetypes, re, cgi, copy
 import webutil
-from mercurial import error, archival, templatefilters
-from mercurial.node import short, hex, nullid
-from mercurial.util import binary, datestr
+from mercurial import error, archival, templater, templatefilters
+from mercurial.node import short, hex
+from mercurial.util import binary
 from common import paritygen, staticfile, get_contact, ErrorResponse
 from common import HTTP_OK, HTTP_FORBIDDEN, HTTP_NOT_FOUND
 from mercurial import graphmod, util
@@ -172,7 +172,6 @@ def changelog(web, req, tmpl, shortlog = False):
             return _search(web, tmpl, hi) # XXX redirect to 404 page?
 
     def changelist(limit=0, **map):
-        cl = web.repo.changelog
         l = [] # build a list in forward order for efficiency
         for i in xrange(start, end):
             ctx = web.repo[i]
@@ -294,7 +293,7 @@ def manifest(web, req, tmpl):
         raise ErrorResponse(HTTP_NOT_FOUND, 'path not found: ' + path)
 
     def filelist(**map):
-        for f in util.sort(files):
+        for f in sorted(files):
             full = files[f]
 
             fctx = ctx.filectx(full)
@@ -306,7 +305,7 @@ def manifest(web, req, tmpl):
                    "permissions": mf.flags(full)}
 
     def dirlist(**map):
-        for d in util.sort(dirs):
+        for d in sorted(dirs):
 
             emptydirs = []
             h = dirs[d]
@@ -385,7 +384,7 @@ def summary(web, req, tmpl):
 
         b = web.repo.branchtags()
         l = [(-web.repo.changelog.rev(n), n, t) for t, n in b.iteritems()]
-        for r,n,t in util.sort(l):
+        for r,n,t in sorted(l):
             yield {'parity': parity.next(),
                    'branch': t,
                    'node': hex(n),
@@ -611,7 +610,7 @@ def static(web, req, tmpl):
     # readable by the user running the CGI script
     static = web.config("web", "static", None, untrusted=False)
     if not static:
-        tp = web.templatepath
+        tp = web.templatepath or templater.templatepath()
         if isinstance(tp, str):
             tp = [tp]
         static = [os.path.join(p, 'static') for p in tp]
@@ -643,11 +642,11 @@ def graph(web, req, tmpl):
     tree = list(graphmod.graph(web.repo, rev, downrev))
     canvasheight = (len(tree) + 1) * bg_height - 27;
     data = []
-    for i, (ctx, vtx, edges) in enumerate(tree):
+    for (ctx, vtx, edges) in tree:
         node = short(ctx.node())
         age = templatefilters.age(ctx.date())
         desc = templatefilters.firstline(ctx.description())
-        desc = cgi.escape(desc)
+        desc = cgi.escape(templatefilters.nonempty(desc))
         user = cgi.escape(templatefilters.person(ctx.user()))
         branch = ctx.branch()
         branch = branch, web.repo.branchtags().get(branch) == ctx.node()

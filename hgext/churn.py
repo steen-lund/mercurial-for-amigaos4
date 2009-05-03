@@ -3,13 +3,14 @@
 # Copyright 2006 Josef "Jeff" Sipek <jeffpc@josefsipek.net>
 # Copyright 2008 Alexander Solovyov <piranha@piranha.org.ua>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 '''command to show certain statistics about revision history'''
 
 from mercurial.i18n import _
 from mercurial import patch, cmdutil, util, templater
-import os, sys
+import sys, os
 import time, datetime
 
 def maketemplater(ui, repo, tmpl):
@@ -80,7 +81,7 @@ def countrate(ui, repo, amap, *pats, **opts):
             newpct = int(100.0 * count / max(len(repo), 1))
             if pct < newpct:
                 pct = newpct
-                ui.write(_("\rgenerating stats: %d%%") % pct)
+                ui.write("\r" + _("generating stats: %d%%") % pct)
                 sys.stdout.flush()
 
     if opts.get('progress'):
@@ -93,9 +94,9 @@ def countrate(ui, repo, amap, *pats, **opts):
 def churn(ui, repo, *pats, **opts):
     '''graph count of revisions grouped by template
 
-    Will graph count of changed lines or revisions grouped by template or
-    alternatively by date, if dateformat is used. In this case it will override
-    template.
+    Will graph count of changed lines or revisions grouped by template
+    or alternatively by date, if dateformat is used. In this case it
+    will override template.
 
     By default statistics are counted for number of changed lines.
 
@@ -115,12 +116,18 @@ def churn(ui, repo, *pats, **opts):
 
     The map file format used to specify aliases is fairly simple:
 
-    <alias email> <actual email>'''
+    <alias email> <actual email>
+
+    By default .hgchurn in the working directory root will be used, if
+    it exists. Use the --aliases option to override this.
+    '''
     def pad(s, l):
         return (s + " " * l)[:l]
 
     amap = {}
     aliases = opts.get('aliases')
+    if not aliases and os.path.exists(repo.wjoin('.hgchurn')):
+        aliases = repo.wjoin('.hgchurn')
     if aliases:
         for l in open(aliases, "r"):
             l = l.strip()
@@ -150,7 +157,7 @@ cmdtable = {
     "churn":
         (churn,
          [('r', 'rev', [], _('count rate for the specified revision or range')),
-          ('d', 'date', '', _('count rate for revs matching date spec')),
+          ('d', 'date', '', _('count rate for revisions matching date spec')),
           ('t', 'template', '{author|email}', _('template to group changesets')),
           ('f', 'dateformat', '',
               _('strftime-compatible format for grouping by date')),

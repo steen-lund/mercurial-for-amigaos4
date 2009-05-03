@@ -2,12 +2,12 @@
 #
 # Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 import re, sys, os
-from mercurial import util
+from mercurial import util, config
 
 path = ['templates', '../templates']
 
@@ -21,7 +21,7 @@ def parsestring(s, quoted=True):
 
     return s.decode('string_escape')
 
-class templater(object):
+class engine(object):
     '''template expansion engine.
 
     template expansion works like this. a map file contains key=value
@@ -44,56 +44,30 @@ class templater(object):
     template_re = re.compile(r"(?:(?:#(?=[\w\|%]+#))|(?:{(?=[\w\|%]+})))"
                              r"(\w+)(?:(?:%(\w+))|((?:\|\w+)*))[#}]")
 
-    def __init__(self, mapfile, filters={}, defaults={}, cache={},
-                 minchunk=1024, maxchunk=65536):
-        '''set up template engine.
-        mapfile is name of file to read map definitions from.
-        filters is dict of functions. each transforms a value into another.
-        defaults is dict of default map definitions.'''
-        self.mapfile = mapfile or 'template'
-        self.cache = cache.copy()
-        self.map = {}
-        self.base = (mapfile and os.path.dirname(mapfile)) or ''
+    def __init__(self, loader, filters={}, defaults={}):
+        self.loader = loader
         self.filters = filters
         self.defaults = defaults
-        self.minchunk, self.maxchunk = minchunk, maxchunk
 
-        if not mapfile:
-            return
-        if not os.path.exists(mapfile):
-            raise util.Abort(_('style not found: %s') % mapfile)
-
-        i = 0
-        for l in file(mapfile):
-            l = l.strip()
-            i += 1
-            if not l or l[0] in '#;': continue
-            m = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$', l)
-            if m:
-                key, val = m.groups()
-                if val[0] in "'\"":
-                    try:
-                        self.cache[key] = parsestring(val)
-                    except SyntaxError, inst:
-                        raise SyntaxError('%s:%s: %s' %
-                                          (mapfile, i, inst.args[0]))
-                else:
-                    self.map[key] = os.path.join(self.base, val)
-            else:
-                raise SyntaxError(_("%s:%s: parse error") % (mapfile, i))
-
-    def __contains__(self, key):
-        return key in self.cache or key in self.map
-
-    def _template(self, t):
-        '''Get the template for the given template name. Use a local cache.'''
-        if not t in self.cache:
+    def process(self, t, map):
+        '''Perform expansion. t is name of map element to expand. map contains
+        added elements for use during expansion. Is a generator.'''
+        tmpl = self.loader(t)
+        iters = [self._process(tmpl, map)]
+        while iters:
             try:
-                self.cache[t] = file(self.map[t]).read()
-            except IOError, inst:
-                raise IOError(inst.args[0], _('template file %s: %s') %
-                              (self.map[t], inst.args[1]))
-        return self.cache[t]
+                item = iters[0].next()
+            except StopIteration:
+                iters.pop(0)
+                continue
+            if isinstance(item, str):
+                yield item
+            elif item is None:
+                yield ''
+            elif hasattr(item, '__iter__'):
+                iters.insert(0, iter(item))
+            else:
+                yield str(item)
 
     def _process(self, tmpl, map):
         '''Render a template. Returns a generator.'''
@@ -123,40 +97,67 @@ class templater(object):
                 lm = map.copy()
                 for i in v:
                     lm.update(i)
-                    t = self._template(format)
-                    yield self._process(t, lm)
+                    yield self.process(format, lm)
             else:
                 if fl:
                     for f in fl.split("|")[1:]:
                         v = self.filters[f](v)
                 yield v
 
+class templater(object):
+
+    def __init__(self, mapfile, filters={}, defaults={}, cache={},
+                 minchunk=1024, maxchunk=65536):
+        '''set up template engine.
+        mapfile is name of file to read map definitions from.
+        filters is dict of functions. each transforms a value into another.
+        defaults is dict of default map definitions.'''
+        self.mapfile = mapfile or 'template'
+        self.cache = cache.copy()
+        self.map = {}
+        self.base = (mapfile and os.path.dirname(mapfile)) or ''
+        self.filters = filters
+        self.defaults = defaults
+        self.minchunk, self.maxchunk = minchunk, maxchunk
+
+        if not mapfile:
+            return
+        if not os.path.exists(mapfile):
+            raise util.Abort(_('style not found: %s') % mapfile)
+
+        conf = config.config()
+        conf.read(mapfile)
+
+        for key, val in conf[''].items():
+            if val[0] in "'\"":
+                try:
+                    self.cache[key] = parsestring(val)
+                except SyntaxError, inst:
+                    raise SyntaxError('%s: %s' %
+                                      (conf.source('', key), inst.args[0]))
+            else:
+                self.map[key] = os.path.join(self.base, val)
+
+    def __contains__(self, key):
+        return key in self.cache or key in self.map
+
+    def load(self, t):
+        '''Get the template for the given template name. Use a local cache.'''
+        if not t in self.cache:
+            try:
+                self.cache[t] = file(self.map[t]).read()
+            except IOError, inst:
+                raise IOError(inst.args[0], _('template file %s: %s') %
+                              (self.map[t], inst.args[1]))
+        return self.cache[t]
+
     def __call__(self, t, **map):
-        stream = self.expand(t, **map)
+        proc = engine(self.load, self.filters, self.defaults)
+        stream = proc.process(t, map)
         if self.minchunk:
             stream = util.increasingchunks(stream, min=self.minchunk,
                                            max=self.maxchunk)
         return stream
-
-    def expand(self, t, **map):
-        '''Perform expansion. t is name of map element to expand. map contains
-        added elements for use during expansion. Is a generator.'''
-        tmpl = self._template(t)
-        iters = [self._process(tmpl, map)]
-        while iters:
-            try:
-                item = iters[0].next()
-            except StopIteration:
-                iters.pop(0)
-                continue
-            if isinstance(item, str):
-                yield item
-            elif item is None:
-                yield ''
-            elif hasattr(item, '__iter__'):
-                iters.insert(0, iter(item))
-            else:
-                yield str(item)
 
 def templatepath(name=None):
     '''return location of template file or directory (if no name).
@@ -183,9 +184,32 @@ def templatepath(name=None):
 
     return normpaths
 
+def stylemap(style, paths=None):
+    """Return path to mapfile for a given style.
+
+    Searches mapfile in the following locations:
+    1. templatepath/style/map
+    2. templatepath/map-style
+    3. templatepath/map
+    """
+
+    if paths is None:
+        paths = templatepath()
+    elif isinstance(paths, str):
+        paths = [paths]
+
+    locations = style and [os.path.join(style, "map"), "map-" + style] or []
+    locations.append("map")
+    for path in paths:
+        for location in locations:
+            mapfile = os.path.join(path, location)
+            if os.path.isfile(mapfile):
+                return mapfile
+
+    raise RuntimeError("No hgweb templates found in %r" % paths)
+
 def stringify(thing):
     '''turn nested template iterator into string.'''
-    if hasattr(thing, '__iter__'):
+    if hasattr(thing, '__iter__') and not isinstance(thing, str):
         return "".join([stringify(t) for t in thing if t is not None])
     return str(thing)
-

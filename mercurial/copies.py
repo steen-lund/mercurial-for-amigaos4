@@ -2,16 +2,15 @@
 #
 # Copyright 2008 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-from node import nullid, nullrev
 from i18n import _
 import util, heapq
 
 def _nonoverlap(d1, d2, d3):
     "Return list of elements in d1 not in d2 or d3"
-    return util.sort([d for d in d1 if d not in d3 and d not in d2])
+    return sorted([d for d in d1 if d not in d3 and d not in d2])
 
 def _dirname(f):
     s = f.rfind("/")
@@ -47,7 +46,7 @@ def _findoldnames(fctx, limit):
         visit += [(p, depth - 1) for p in fc.parents()]
 
     # return old names sorted by depth
-    return [o[1] for o in util.sort(old.values())]
+    return [o[1] for o in sorted(old.values())]
 
 def _findlimit(repo, a, b):
     "find the earliest revision that's an ancestor of a or b but not both"
@@ -161,12 +160,12 @@ def copies(repo, c1, c2, ca, checkdirs=False):
     for f in u2:
         checkcopies(f, m2, m1)
 
-    diverge2 = {}
+    diverge2 = set()
     for of, fl in diverge.items():
         if len(fl) == 1:
             del diverge[of] # not actually divergent
         else:
-            diverge2.update(dict.fromkeys(fl)) # reverse map for below
+            diverge2.update(fl) # reverse map for below
 
     if fullcopy:
         repo.ui.debug(_("  all copies found (* = to merge, ! = divergent):\n"))

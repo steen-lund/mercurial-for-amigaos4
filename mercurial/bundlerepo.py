@@ -1,19 +1,20 @@
+# bundlerepo.py - repository class for viewing uncompressed bundles
+#
+# Copyright 2006, 2007 Benoit Boissinot <bboissin@gmail.com>
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
+"""Repository class for viewing uncompressed bundles.
+
+This provides a read-only repository interface to bundles as if they
+were part of the actual repository.
 """
-bundlerepo.py - repository class for viewing uncompressed bundles
 
-This provides a read-only repository interface to bundles as if
-they were part of the actual repository.
-
-Copyright 2006, 2007 Benoit Boissinot <bboissin@gmail.com>
-
-This software may be used and distributed according to the terms
-of the GNU General Public License, incorporated herein by reference.
-"""
-
-from node import hex, nullid, short
+from node import nullid
 from i18n import _
 import changegroup, util, os, struct, bz2, zlib, tempfile, shutil, mdiff
-import repo, localrepo, changelog, manifest, filelog, revlog, context, error
+import localrepo, changelog, manifest, filelog, revlog, error
 
 class bundlerevlog(revlog.revlog):
     def __init__(self, opener, indexfile, bundlefile,
@@ -158,7 +159,7 @@ class bundlerepository(localrepo.localrepository):
             localrepo.localrepository.__init__(self, ui, path)
         except error.RepoError:
             self._tempparent = tempfile.mkdtemp()
-            tmprepo = localrepo.instance(ui,self._tempparent,1)
+            localrepo.instance(ui,self._tempparent,1)
             localrepo.localrepository.__init__(self, ui, self._tempparent)
 
         if path:
@@ -208,25 +209,28 @@ class bundlerepository(localrepo.localrepository):
         # dict with the mapping 'filename' -> position in the bundle
         self.bundlefilespos = {}
 
-    def __getattr__(self, name):
-        if name == 'changelog':
-            self.changelog = bundlechangelog(self.sopener, self.bundlefile)
-            self.manstart = self.bundlefile.tell()
-            return self.changelog
-        elif name == 'manifest':
-            self.bundlefile.seek(self.manstart)
-            self.manifest = bundlemanifest(self.sopener, self.bundlefile,
-                                           self.changelog.rev)
-            self.filestart = self.bundlefile.tell()
-            return self.manifest
-        elif name == 'manstart':
-            self.changelog
-            return self.manstart
-        elif name == 'filestart':
-            self.manifest
-            return self.filestart
-        else:
-            return localrepo.localrepository.__getattr__(self, name)
+    @util.propertycache
+    def changelog(self):
+        c = bundlechangelog(self.sopener, self.bundlefile)
+        self.manstart = self.bundlefile.tell()
+        return c
+
+    @util.propertycache
+    def manifest(self):
+        self.bundlefile.seek(self.manstart)
+        m = bundlemanifest(self.sopener, self.bundlefile, self.changelog.rev)
+        self.filestart = self.bundlefile.tell()
+        return m
+
+    @util.propertycache
+    def manstart(self):
+        self.changelog
+        return self.manstart
+
+    @util.propertycache
+    def filestart(self):
+        self.manifest
+        return self.filestart
 
     def url(self):
         return self._url

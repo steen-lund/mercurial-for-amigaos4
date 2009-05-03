@@ -2,12 +2,12 @@
 #
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import bin, hex, nullid
 from i18n import _
-import util, error, revlog
+import util, error, revlog, encoding
 
 def _string_escape(text):
     """
@@ -155,7 +155,7 @@ class changelog(revlog.revlog):
 
     def encode_extra(self, d):
         # keys must be sorted to produce a deterministic changelog entry
-        items = [_string_escape('%s:%s' % (k, d[k])) for k in util.sort(d)]
+        items = [_string_escape('%s:%s' % (k, d[k])) for k in sorted(d)]
         return "\0".join(items)
 
     def read(self, node):
@@ -175,10 +175,10 @@ class changelog(revlog.revlog):
         if not text:
             return (nullid, "", (0, 0), [], "", {'branch': 'default'})
         last = text.index("\n\n")
-        desc = util.tolocal(text[last + 2:])
+        desc = encoding.tolocal(text[last + 2:])
         l = text[:last].split('\n')
         manifest = bin(l[0])
-        user = util.tolocal(l[1])
+        user = encoding.tolocal(l[1])
 
         extra_data = l[2].split(' ', 2)
         if len(extra_data) != 3:
@@ -205,7 +205,7 @@ class changelog(revlog.revlog):
         if "\n" in user:
             raise error.RevlogError(_("username %s contains a newline")
                                     % repr(user))
-        user, desc = util.fromlocal(user), util.fromlocal(desc)
+        user, desc = encoding.fromlocal(user), encoding.fromlocal(desc)
 
         if date:
             parseddate = "%d %d" % util.parsedate(date)
@@ -216,6 +216,6 @@ class changelog(revlog.revlog):
         if extra:
             extra = self.encode_extra(extra)
             parseddate = "%s %s" % (parseddate, extra)
-        l = [hex(manifest), user, parseddate] + util.sort(files) + ["", desc]
+        l = [hex(manifest), user, parseddate] + sorted(files) + ["", desc]
         text = "\n".join(l)
         return self.addrevision(text, transaction, len(self), p1, p2)

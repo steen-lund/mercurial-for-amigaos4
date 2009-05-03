@@ -307,14 +307,35 @@ class KeepAliveHandler:
         return r
 
     def _start_transaction(self, h, req):
+        # What follows mostly reimplements HTTPConnection.request()
+        # except it adds self.parent.addheaders in the mix.
         headers = req.headers.copy()
-        body = req.data
         if sys.version_info >= (2, 4):
             headers.update(req.unredirected_hdrs)
+        headers.update(self.parent.addheaders)
+        headers = dict((n.lower(), v) for n,v in headers.items())
+        skipheaders = {}
+        for n in ('host', 'accept-encoding'):
+            if n in headers:
+                skipheaders['skip_' + n.replace('-', '_')] = 1
         try:
-            h.request(req.get_method(), req.get_selector(), body, headers)
-        except socket.error, err: # XXX what error?
+            if req.has_data():
+                data = req.get_data()
+                h.putrequest('POST', req.get_selector(), **skipheaders)
+                if 'content-type' not in headers:
+                    h.putheader('Content-type',
+                                'application/x-www-form-urlencoded')
+                if 'content-length' not in headers:
+                    h.putheader('Content-length', '%d' % len(data))
+            else:
+                h.putrequest('GET', req.get_selector(), **skipheaders)
+        except (socket.error), err:
             raise urllib2.URLError(err)
+        for k, v in headers.items():
+            h.putheader(k, v)
+        h.endheaders()
+        if req.has_data():
+            h.send(data)
 
 class HTTPHandler(KeepAliveHandler, urllib2.HTTPHandler):
     pass
@@ -447,7 +468,6 @@ class HTTPResponse(httplib.HTTPResponse):
         return value
 
     def readline(self, limit=-1):
-        data = ""
         i = self._rbuf.find('\n')
         while i < 0 and not (0 < limit <= len(self._rbuf)):
             new = self._raw_read(self._rbufsize)
@@ -494,7 +514,7 @@ def error_handler(url):
         HANDLE_ERRORS = i
         try:
             fo = urllib2.urlopen(url)
-            foo = fo.read()
+            fo.read()
             fo.close()
             try: status, reason = fo.status, fo.reason
             except AttributeError: status, reason = None, None
@@ -616,7 +636,7 @@ def test_timeout(url):
 def test(url, N=10):
     print "checking error hander (do this on a non-200)"
     try: error_handler(url)
-    except IOError, e:
+    except IOError:
         print "exiting - exception will prevent further tests"
         sys.exit()
     print

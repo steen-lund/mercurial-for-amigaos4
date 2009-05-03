@@ -1,12 +1,14 @@
-"""
-error.py - Mercurial exceptions
+# error.py - Mercurial exceptions
+#
+# Copyright 2005-2008 Matt Mackall <mpm@selenic.com>
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-This allows us to catch exceptions at higher levels without forcing imports
+"""Mercurial exceptions.
 
-Copyright 2005-2008 Matt Mackall <mpm@selenic.com>
-
-This software may be used and distributed according to the terms
-of the GNU General Public License, incorporated herein by reference.
+This allows us to catch exceptions at higher levels without forcing
+imports.
 """
 
 # Do not import anything here, please
@@ -27,6 +29,9 @@ class LookupError(RevlogError, KeyError):
 
 class ParseError(Exception):
     """Exception raised on errors in parsing the command line."""
+
+class ConfigError(Exception):
+    'Exception raised when parsing config files'
 
 class RepoError(Exception):
     pass
@@ -62,3 +67,6 @@ class SignalInterrupt(KeyboardInterrupt):
 
 class SignatureError(Exception):
     pass
+
+class Abort(Exception):
+    """Raised if a command needs to print an error and exit."""

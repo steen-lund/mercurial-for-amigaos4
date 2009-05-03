@@ -5,14 +5,14 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Mercurial\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2009-03-01 21:10+0100\n"
+"POT-Creation-Date: 2009-03-27 18:18+0100\n"
 "PO-Revision-Date: 2009-03-03 20:05+0100\n"
 "Last-Translator: Stefano Tortarolo <stefano.tortarolo@gmail.com>\n"
 "Language-Team: Italian <Italian>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=2; plural=(n != 1);"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 #, python-format
 msgid " (default: %s)"
@@ -264,6 +264,8 @@ msgid ""
 "    the mercurial.strip method. This usually happens during\n"
 "    qpush and qpop"
 msgstr ""
+"Elimina i segnalibri se revisioni sono rimosse usando il metodo\n"
+"    mercurial.strip. Questo di norma succede durante qpush e qpop"
 
 msgid ""
 "Add a revision to the repository and\n"
@@ -282,6 +284,11 @@ msgid ""
 "    file.\n"
 "    "
 msgstr ""
+"Imposta il segnalibro corrente\n"
+"\n"
+"    Se l'utente fa l'update ad un segnalibro viene aggiornato il file\n"
+"    .hg/bookmarks.current\n"
+"    "
 
 msgid "force"
 msgstr "forza"
@@ -295,8 +302,8 @@ msgstr "elimina un dato segnalibro"
 msgid "rename a given bookmark"
 msgstr "rinomina un dato segnalibro"
 
-msgid "hg bookmarks [-f] [-d] [-m NAME] [-r NAME] [NAME]"
-msgstr "hg bookmarks [-f] [-d] [-m NOME] [-r NOME] [NOME]"
+msgid "hg bookmarks [-f] [-d] [-m NAME] [-r REV] [NAME]"
+msgstr "hg bookmarks [-f] [-d] [-m NOME] [-r REV] [NOME]"
 
 msgid ""
 "Bugzilla integration\n"
@@ -421,22 +428,22 @@ msgid ""
 msgstr ""
 
 msgid "support for bugzilla version 2.16."
-msgstr ""
+msgstr "supporto per la versione di bugzilla 2.16."
 
 #, python-format
 msgid "connecting to %s:%s as %s, password %s\n"
-msgstr ""
+msgstr "sto connettendomi a %s:%s come %s, password %s\n"
 
 msgid "run a query."
-msgstr ""
+msgstr "esegue una query."
 
 #, python-format
 msgid "query: %s %s\n"
-msgstr ""
+msgstr "query: %s %s\n"
 
 #, python-format
 msgid "failed query: %s %s\n"
-msgstr ""
+msgstr "query fallita: %s %s\n"
 
 msgid "get identity of longdesc field"
 msgstr ""
@@ -490,6 +497,9 @@ msgid ""
 "        bugzilla username and userid if so. If not, return default\n"
 "        bugzilla username and userid."
 msgstr ""
+"controlla se il committente è un utente registrato bugzilla. In tal\n"
+"        caso restituisce userid e username bugzilla. Altrimenti\n"
+"        restituisce userid e username bugzilla di default."
 
 #, python-format
 msgid "cannot find bugzilla user id for %s"
@@ -508,7 +518,7 @@ msgid "support for bugzilla 2.18 series."
 msgstr "supporto per la serie di bugzilla 2.18."
 
 msgid "support for bugzilla 3.0 series."
-msgstr ""
+msgstr "sopporto per la serie di bugzilla 3.0."
 
 msgid ""
 "return object that knows how to talk to bugzilla version in\n"
@@ -517,7 +527,7 @@ msgstr ""
 
 #, python-format
 msgid "bugzilla version %s not supported"
-msgstr ""
+msgstr "versione di bugzilla %s non supportata"
 
 msgid ""
 "find valid bug ids that are referred to in changeset\n"
@@ -526,7 +536,7 @@ msgid ""
 msgstr ""
 
 msgid "update bugzilla bug with reference to changeset."
-msgstr ""
+msgstr "aggiorna il bug bugzilla con riferimento al changeset."
 
 msgid ""
 "strip leading prefix of repo root and turn into\n"
@@ -538,6 +548,9 @@ msgid ""
 "details:\n"
 "\t{desc|tabindent}"
 msgstr ""
+"changeset {node|short} nel repository {root} si riferisce al bug {bug}.\n"
+"dettagli:\n"
+"\t{desc|tabindent}"
 
 msgid ""
 "add comment to bugzilla for each changeset that refers to a\n"
@@ -740,6 +753,7 @@ msgid ""
 "    - Monotone [mtn]\n"
 "    - GNU Arch [gnuarch]\n"
 "    - Bazaar [bzr]\n"
+"    - Perforce [p4]\n"
 "\n"
 "    Accepted destination formats [identifiers]:\n"
 "    - Mercurial [hg]\n"
@@ -806,8 +820,9 @@ msgid ""
 "        ignore integrity errors when reading. Use it to fix Mercurial\n"
 "        repositories with missing revlogs, by converting from and to\n"
 "        Mercurial.\n"
-"    --config convert.hg.saverev=True          (boolean)\n"
-"        allow target to preserve source revision ID\n"
+"    --config convert.hg.saverev=False          (boolean)\n"
+"        store original revision ID in changeset (forces target IDs to "
+"change)\n"
 "    --config convert.hg.startrev=0            (hg revision identifier)\n"
 "        convert start revision and its descendants\n"
 "\n"
@@ -884,6 +899,23 @@ msgid ""
 "    --config convert.svn.startrev=0           (svn revision number)\n"
 "        specify start Subversion revision.\n"
 "\n"
+"    Perforce Source\n"
+"    ---------------\n"
+"\n"
+"    The Perforce (P4) importer can be given a p4 depot path or a client\n"
+"    specification as source. It will convert all files in the source to\n"
+"    a flat Mercurial repository, ignoring labels, branches and "
+"integrations.\n"
+"    Note that when a depot path is given you then usually should specify a\n"
+"    target directory, because otherwise the target may be named ...-hg.\n"
+"\n"
+"    It is possible to limit the amount of source history to be converted\n"
+"    by specifying an initial Perforce revision.\n"
+"\n"
+"    --config convert.p4.startrev=0           (perforce changelist number)\n"
+"        specify initial Perforce revision.\n"
+"\n"
+"\n"
 "    Mercurial Destination\n"
 "    ---------------------\n"
 "\n"
@@ -948,7 +980,7 @@ msgid "create new cvs log cache"
 msgstr "crea una nuova cache dei log cvs"
 
 msgid "set commit time fuzz in seconds"
-msgstr ""
+msgstr "imposta il lasso temporale del commit in secondi"
 
 msgid "specify cvsroot"
 msgstr "specifica la cvsroot"
@@ -1030,7 +1062,7 @@ msgstr "Ignoro riga non valida nel file di associazione degli autori %s: %s\n"
 
 #, python-format
 msgid "spliced in %s as parents of %s\n"
-msgstr ""
+msgstr "inserito %s come genitore di %s\n"
 
 msgid "scanning source...\n"
 msgstr "sto effettuando la scansione della sorgente...\n"
@@ -1114,6 +1146,10 @@ msgid "revision must be followed by date line"
 msgstr "la revisione deve essere seguita da una riga con la data"
 
 #, python-format
+msgid "found synthetic rev in %s: %r\n"
+msgstr "trovata revisione sintetica in %s: %r\n"
+
+#, python-format
 msgid "writing cvs log cache %s\n"
 msgstr "sto scrivendo la cache dei log cvs %s\n"
 
@@ -1123,6 +1159,9 @@ msgstr "%d voci di log\n"
 
 msgid "creating changesets\n"
 msgstr "sto creando i changeset\n"
+
+msgid "synthetic changeset cannot have multiple parents"
+msgstr "changeset sintetici non possono avere genitori multipli"
 
 #, python-format
 msgid "%d changeset entries\n"
@@ -1167,6 +1206,8 @@ msgstr "sto analizzando la versione dell'albero %s...\n"
 msgid ""
 "tree analysis stopped because it points to an unregistered archive %s...\n"
 msgstr ""
+"analisi dell'albero interrotta in quanto punta ad un archivio non\n"
+"      registrato %s...\n"
 
 #, python-format
 msgid "applying revision %s...\n"
@@ -1230,6 +1271,12 @@ msgstr "%s non sembra essere un repository monotone"
 #, python-format
 msgid "copying file in renamed dir from '%s' to '%s'"
 msgstr ""
+
+msgid "reading p4 views\n"
+msgstr "sto leggendo le viste p4\n"
+
+msgid "collecting p4 changelists\n"
+msgstr "sto raccogliendo le changelist p4\n"
 
 msgid "Subversion python bindings could not be loaded"
 msgstr "Non è stato possibile caricare i binding python per Subversion"
@@ -1448,15 +1495,15 @@ msgid ""
 msgstr ""
 
 msgid "cannot specify --rev and --change at the same time"
-msgstr ""
+msgstr "impossibile specificare sia --rev sia --change"
 
 #, python-format
 msgid "running %r in %s\n"
-msgstr ""
+msgstr "sto eseguendo %r in %s\n"
 
 #, python-format
 msgid "file changed while diffing. Overwriting: %s (src: %s)\n"
-msgstr ""
+msgstr "file modificato durante il diff. Sovrascrivo: %s (sorgente: %s)\n"
 
 msgid "cleaning up temp directory\n"
 msgstr "sto ripulendo la directory temporanea\n"
@@ -1544,6 +1591,8 @@ msgstr ""
 msgid ""
 "working dir not at branch tip (use \"hg update\" to check out branch tip)"
 msgstr ""
+"directory di lavoro non al tip della branch (usa \"hg update\" per\n"
+"      fare il check out della tip della branch)"
 
 msgid "outstanding uncommitted merge"
 msgstr "c'è un merge in sospeso di cui non si è effettuato il commit"
@@ -1557,6 +1606,8 @@ msgstr "alla directory di lavoro mancano alcuni file"
 msgid ""
 "multiple heads in this branch (use \"hg heads .\" and \"hg merge\" to merge)"
 msgstr ""
+"head multiple in questa branch (usa \"hg heads .\" e \"hg merge\"\n"
+"      per fare il merge"
 
 #, python-format
 msgid "pulling from %s\n"
@@ -1808,7 +1859,7 @@ msgstr ""
 
 #, python-format
 msgid "comparing with %s\n"
-msgstr ""
+msgstr "sto confrontando con %s\n"
 
 msgid "no changes found\n"
 msgstr "nessuna modifica trovata\n"
@@ -3422,7 +3473,7 @@ msgid "pop all patches"
 msgstr "disapplica tutte le patch"
 
 msgid "queue name to pop"
-msgstr ""
+msgstr "nome della coda da disapplicare"
 
 msgid "forget any local changes"
 msgstr "dimentica ogni modifica locale"
@@ -3443,7 +3494,7 @@ msgid "merge from another queue"
 msgstr "effettua il merge da un'altra coda"
 
 msgid "merge queue name"
-msgstr ""
+msgstr "nome della coda del merge"
 
 msgid "hg qpush [-f] [-l] [-a] [-m] [-n NAME] [PATCH | INDEX]"
 msgstr "hg qpush [-f] [-l] [-a] [-m] [-n NOME] [PATCH | INDICE]"
@@ -3470,7 +3521,7 @@ msgid "hg qrename PATCH1 [PATCH2]"
 msgstr "hg qrename PATCH1 [PATCH2]"
 
 msgid "delete save entry"
-msgstr ""
+msgstr "elimina la voce salvata"
 
 msgid "update queue working dir"
 msgstr "aggiorna la directory di lavoro della coda"
@@ -3500,7 +3551,7 @@ msgid "list all guards in series file"
 msgstr "elenca tutte le guardie nel file series"
 
 msgid "pop to before first guarded applied patch"
-msgstr ""
+msgstr "disapplica fino alla prima patch con guardia applicata"
 
 msgid "pop, then reapply patches"
 msgstr "disapplica e poi riapplica le patch"
@@ -3603,16 +3654,16 @@ msgid ""
 msgstr ""
 
 msgid "email notification class."
-msgstr ""
+msgstr "classe per la notifica via email."
 
 msgid "strip leading slashes from local path, turn into web-safe path."
 msgstr ""
 
 msgid "try to clean up email addresses."
-msgstr ""
+msgstr "prova a pulire gli indirizzi email."
 
 msgid "return list of email addresses of subscribers to this repo."
-msgstr ""
+msgstr "restituisce gli indirizzi email dei sottoscritti a questo repository"
 
 msgid "format one changeset."
 msgstr "formatta un changeset."
@@ -3630,7 +3681,7 @@ msgstr "%s: %d nuovi changeset"
 
 #, python-format
 msgid "notify: sending %d subscribers %d changes\n"
-msgstr ""
+msgstr "notify: sto inviando a %d sottoscritti %d modifiche\n"
 
 #, python-format
 msgid ""
@@ -3638,6 +3689,9 @@ msgid ""
 "diffs (truncated from %d to %d lines):\n"
 "\n"
 msgstr ""
+"\n"
+"diff (troncati da %d linee a %d):\n"
+"\n"
 
 #, python-format
 msgid ""
@@ -3645,6 +3699,9 @@ msgid ""
 "diffs (%d lines):\n"
 "\n"
 msgstr ""
+"\n"
+"diff (%d linee):\n"
+"\n"
 
 msgid ""
 "send email notifications to interested subscribers.\n"
@@ -3792,7 +3849,7 @@ msgid "Please enter a valid value.\n"
 msgstr "Si prega di inserire un valore valido.\n"
 
 msgid "does the diffstat above look okay? "
-msgstr ""
+msgstr "il diffstat di sopra sembra corretto? "
 
 msgid "diffstat rejected"
 msgstr "diffstat rifiutato"
@@ -3878,13 +3935,13 @@ msgid "Final summary:\n"
 msgstr "Sommario finale:\n"
 
 msgid "Displaying "
-msgstr "Sto mostrando"
+msgstr "Sto mostrando "
 
 msgid "Writing "
-msgstr "Sto scrivendo"
+msgstr "Sto scrivendo "
 
 msgid "Sending "
-msgstr "Sto inviando"
+msgstr "Sto inviando "
 
 msgid "send patches as attachments"
 msgstr "invia patch come allegati"
@@ -3930,6 +3987,9 @@ msgstr "invia le modifiche non trovate nel repository di destinazione"
 
 msgid "send changes not in target as a binary bundle"
 msgstr "invia le modifiche non in target come bundle binario"
+
+msgid "file name of the bundle attachment"
+msgstr "nome del file dell'allegato bundle"
 
 msgid "a revision to send"
 msgstr "una revisione da inviare"
@@ -4332,7 +4392,7 @@ msgid "?"
 msgstr "?"
 
 msgid "y - record this change"
-msgstr ""
+msgstr "y - registra questa modifica"
 
 msgid "s"
 msgstr "s"
@@ -4361,7 +4421,7 @@ msgstr " e "
 
 #, python-format
 msgid "record this change to %r?"
-msgstr ""
+msgstr "registrare questa modifica a %r?"
 
 msgid ""
 "interactively select changes to commit\n"
@@ -4845,8 +4905,12 @@ msgid "%s: cannot copy - %s\n"
 msgstr "%s: impossibile copiare - %s\n"
 
 #, python-format
-msgid "%s %s to %s\n"
-msgstr "%s %s in %s\n"
+msgid "moving %s to %s\n"
+msgstr "sto spostando %s in %s\n"
+
+#, python-format
+msgid "copying %s to %s\n"
+msgstr "sto copiando %s in %s\n"
 
 #, python-format
 msgid "%s has not been committed yet, so no copy data will be stored for %s.\n"
@@ -4886,7 +4950,7 @@ msgstr "tag:         %s\n"
 
 #, python-format
 msgid "parent:      %d:%s\n"
-msgstr "genitore:      %d:%s\n"
+msgstr "genitore:    %d:%s\n"
 
 #, python-format
 msgid "manifest:    %d:%s\n"
@@ -5228,7 +5292,8 @@ msgid "reset working directory to branch %s\n"
 msgstr "resetto la directory di lavoro alla branch %s\n"
 
 msgid "a branch of the same name already exists (use --force to override)"
-msgstr "una branch con lo stesso nome esiste già (usare --force per sovrascrivere)"
+msgstr ""
+"una branch con lo stesso nome esiste già (usare --force per sovrascrivere)"
 
 #, python-format
 msgid "marked working directory as branch %s\n"
@@ -6096,6 +6161,11 @@ msgid ""
 "        parses the manifest if linkrev != changerev.\n"
 "        Returns rename info for fn at changerev rev."
 msgstr ""
+"cerca tutte le rinomine di un file (fino a endrev) la prima volta che\n"
+"        il file viene fornito. Indicizza su changerev e parsifica solo\n"
+"        il manifesto se linkrev != changerev.\n"
+"        Restituisce le informazioni sulle rinomine per fn alla\n"
+"        revisione changerev."
 
 msgid ""
 "output the current or given revision of the project manifest\n"
@@ -6130,23 +6200,25 @@ msgstr ""
 
 #, python-format
 msgid "branch '%s' has %d heads - please merge with an explicit rev"
-msgstr ""
+msgstr "la branch '%s' ha %d head - fare il merge con una revisione esplicita"
 
 #, python-format
 msgid "branch '%s' has one head - please merge with an explicit rev"
-msgstr ""
+msgstr "la branch '%s' ha una head - fare il merge con una revisione esplicita"
 
 msgid "there is nothing to merge"
-msgstr ""
+msgstr "non c'è nulla di cui fare il merge"
 
 #, python-format
 msgid "%s - use \"hg update\" instead"
-msgstr ""
+msgstr "%s - invece usare \"hg update\""
 
 msgid ""
 "working dir not at a head rev - use \"hg update\" or merge with an explicit "
 "rev"
 msgstr ""
+"la directory di lavoro non è una revisione head - usare \"hg update\"\n"
+"o fare il merge con una revisione esplicita"
 
 msgid ""
 "show changesets not found in destination\n"
@@ -6216,10 +6288,10 @@ msgid "not updating, since new heads added\n"
 msgstr ""
 
 msgid "(run 'hg heads' to see heads, 'hg merge' to merge)\n"
-msgstr ""
+msgstr "(esegui 'hg heads' per vedere le head, 'hg merge' per fare un merge)\n"
 
 msgid "(run 'hg update' to get a working copy)\n"
-msgstr ""
+msgstr "(esegui 'hg update' per ottenere una copia funzionante)\n"
 
 msgid ""
 "pull changes from the specified source\n"
@@ -6233,12 +6305,15 @@ msgid ""
 "    If SOURCE is omitted, the 'default' path will be used.\n"
 "    See 'hg help urls' for more information.\n"
 "    "
-msgstr "effettua il pull delle modifiche dalla sorgente specificata\n"
+msgstr ""
+"effettua il pull delle modifiche dalla sorgente specificata\n"
 "\n"
 "    Effettua il pull di modifiche da un repository remoto in uno locale.\n"
 "\n"
-"    Questo trova tutte le modifiche dal repository al percorso o URL specificato\n"
-"    e le aggiunge al repository locale. Di default non aggiorna la copia del\n"
+"    Questo trova tutte le modifiche dal repository al percorso o URL "
+"specificato\n"
+"    e le aggiunge al repository locale. Di default non aggiorna la copia "
+"del\n"
 "    progetto nella directory di lavoro.\n"
 "\n"
 "    Se SOURCE viene omesso, verrà usato il percorso 'default'.\n"
@@ -6287,7 +6362,8 @@ msgstr ""
 "    numerdo di head remote. Questo generalmente indica che il client ha\n"
 "    dimenticato di fare pull e merge prima del push.\n"
 "\n"
-"    Se si usa -r, si farà il push del changeset dato e tutti i suoi antenati\n"
+"    Se si usa -r, si farà il push del changeset dato e tutti i suoi "
+"antenati\n"
 "    verso il repository remoto.\n"
 "\n"
 "    Vedere il testo di aiuto per gli url per importanti dettagli sugli\n"
@@ -6860,15 +6936,15 @@ msgstr "Mercurial SCM Distribuito (versione %s)\n"
 
 msgid ""
 "\n"
-"Copyright (C) 2005-2008 Matt Mackall <mpm@selenic.com> and others\n"
+"Copyright (C) 2005-2009 Matt Mackall <mpm@selenic.com> and others\n"
 "This is free software; see the source for copying conditions. There is NO\n"
 "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n"
 msgstr ""
 "\n"
-"Copyright (C) 2005-2008 Matt Mackall <mpm@selenic.com> e altri\n"
-"Questo è software libero; vedere i sorgenti per le condizioni di copia. Non "
-"c'è alcuna garanzia;\n"
-"neppure di COMMERCIABILITÀ o IDONEITÀ AD UNO SCOPO PARTICOLARE.\n"
+"Copyright (C) 2005-2009 Matt Mackall <mpm@selenic.com> e altri\n"
+"Questo è software libero; vedere i sorgenti per le condizioni di copia.\n"
+"Non c'è alcuna garanzia; neppure di COMMERCIABILITÀ o IDONEITÀ AD UNO\n"
+"SCOPO PARTICOLARE.\n"
 
 msgid "repository root directory or symbolic path name"
 msgstr "directory radice del repository o nome del percorso simbolico"
@@ -7126,6 +7202,9 @@ msgstr "[OPZIONI]... [SORGENTE]... DEST"
 
 msgid "[INDEX] REV1 REV2"
 msgstr "[INDICE] REV1 REV2"
+
+msgid "[COMMAND]"
+msgstr "[COMANDO]"
 
 msgid "show the command options"
 msgstr "mostra le opzioni dei comandi"
@@ -7908,7 +7987,7 @@ msgid ""
 "HG::\n"
 "    Path to the 'hg' executable, automatically passed when running hooks,\n"
 "    extensions or external tools. If unset or empty, this is the hg\n"
-"    exutable's name if it's frozen, or an executable named 'hg'\n"
+"    executable's name if it's frozen, or an executable named 'hg'\n"
 "    (with %PATHEXT% [defaulting to COM/EXE/BAT/CMD] extensions on\n"
 "    Windows) is searched.\n"
 "\n"
@@ -7992,7 +8071,7 @@ msgid ""
 "    revisions.\n"
 "\n"
 "    A plain integer is treated as a revision number. Negative\n"
-"    integers are treated as toplogical offsets from the tip, with\n"
+"    integers are treated as topological offsets from the tip, with\n"
 "    -1 denoting the tip. As such, negative numbers are only useful\n"
 "    if you've memorized your local tree numbers and want to save\n"
 "    typing a single digit. This editor suggests copy and paste.\n"
@@ -8115,6 +8194,8 @@ msgid ""
 "          was committed. Will be empty if the branch name was default.\n"
 "    - date: Date information. The date when the changeset was committed.\n"
 "    - desc: String. The text of the changeset description.\n"
+"    - diffstat: String. Statistics of changes with the following format:\n"
+"          \"modified files: +added/-removed lines\"\n"
 "    - files: List of strings. All files modified, added, or removed by\n"
 "          this changeset.\n"
 "    - file_adds: List of strings. Files added by this changeset.\n"
@@ -8280,6 +8361,13 @@ msgstr "%d file %s"
 
 msgid "use 'hg resolve' to retry unresolved file merges\n"
 msgstr "usa 'hg resolve' per riprovare i merge sui file non risolti\n"
+
+msgid ""
+"use 'hg resolve' to retry unresolved file merges or 'hg up --clean' to "
+"abandon\n"
+msgstr ""
+"usa 'hg resolve' per riprovare i merge sui file non risolti o\n"
+"'hg up --clean' per abbandonare\n"
 
 msgid "(branch merge, don't forget to commit)\n"
 msgstr "(merge su branch, non dimenticare di effettuare il commit)\n"
@@ -8832,10 +8920,6 @@ msgid "getting %s\n"
 msgstr "sto ottenendo %s\n"
 
 #, python-format
-msgid "moving %s to %s\n"
-msgstr "sto spostando %s in %s\n"
-
-#, python-format
 msgid "getting %s to %s\n"
 msgstr "sto ottenendo %s in %s\n"
 
@@ -8943,6 +9027,21 @@ msgstr "comando patch fallito: %s"
 #, python-format
 msgid "no valid hunks found; trying with %r instead\n"
 msgstr ""
+
+#, python-format
+msgid "exited with status %d"
+msgstr "uscito con status %d"
+
+#, python-format
+msgid "killed by signal %d"
+msgstr "ucciso dal segnale %d"
+
+#, python-format
+msgid "stopped by signal %d"
+msgstr "terminato dal segnale %d"
+
+msgid "invalid exit code"
+msgstr "codice d'uscita non valido"
 
 #, python-format
 msgid "saving bundle to %s\n"
@@ -9196,25 +9295,6 @@ msgstr "il percorso %r attraversa il link simbolico %r"
 msgid "Hardlinks not supported"
 msgstr "Hardlink non supportati"
 
-msgid "user name not available - set USERNAME environment variable"
-msgstr ""
-"nome utente non disponibile - impostare la variabile d'ambiente USERNAME"
-
-#, python-format
-msgid "exited with status %d"
-msgstr "uscito con status %d"
-
-#, python-format
-msgid "killed by signal %d"
-msgstr "ucciso dal segnale %d"
-
-#, python-format
-msgid "stopped by signal %d"
-msgstr "terminato dal segnale %d"
-
-msgid "invalid exit code"
-msgstr "codice d'uscita non valido"
-
 #, python-format
 msgid "could not symlink to %r: %s"
 msgstr "impossibile creare un link simbolico a %r: %s"
@@ -9365,7 +9445,11 @@ msgstr "sto controllando i file\n"
 
 #, python-format
 msgid "cannot decode filename '%s'"
-msgstr ""
+msgstr "impossibile decodificare il nome del file '%s'"
+
+#, python-format
+msgid "broken revlog! (%s)"
+msgstr "revlog danneggiato! (%s)"
 
 msgid "missing revlog!"
 msgstr "revlog mancante!"
@@ -9417,3 +9501,10 @@ msgstr "%d errori di integrit incontrati!\n"
 #, python-format
 msgid "(first damaged changeset appears to be %d)\n"
 msgstr "(il primo changeset danneggiato sembra essere %d)\n"
+
+msgid "user name not available - set USERNAME environment variable"
+msgstr ""
+"nome utente non disponibile - impostare la variabile d'ambiente USERNAME"
+
+#~ msgid "%s %s to %s\n"
+#~ msgstr "%s %s in %s\n"
