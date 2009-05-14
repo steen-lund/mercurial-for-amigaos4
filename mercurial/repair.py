@@ -3,12 +3,13 @@
 # Copyright 2005, 2006 Chris Mason <mason@suse.com>
 # Copyright 2007 Matt Mackall
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-import changegroup, os
+import changegroup
 from node import nullrev, short
 from i18n import _
+import os
 
 def _bundle(repo, bases, heads, node, suffix, extranodes=None):
     """create a bundle with the specified revisions as a backup"""
@@ -118,11 +119,27 @@ def strip(ui, repo, node, backup="all"):
         chgrpfile = _bundle(repo, savebases, saveheads, node, 'temp',
                             extranodes)
 
-    cl.strip(striprev)
-    repo.manifest.strip(striprev)
-    for name in files:
-        f = repo.file(name)
-        f.strip(striprev)
+    fs = [repo.file(name) for name in files]
+    mfst = repo.manifest
+
+    tr = repo.transaction()
+    offset = len(tr.entries)
+
+    tr.startgroup()
+    cl.strip(striprev, tr)
+    mfst.strip(striprev, tr)
+    for f in fs:
+        f.strip(striprev, tr)
+    tr.endgroup()
+
+    try:
+        for i in xrange(offset, len(tr.entries)):
+            file, troffset, ignore = tr.entries[i]
+            repo.sopener(file, 'a').truncate(troffset)
+        tr.close()
+    except:
+        tr.abort()
+        raise
 
     if saveheads or extranodes:
         ui.status(_("adding branch\n"))

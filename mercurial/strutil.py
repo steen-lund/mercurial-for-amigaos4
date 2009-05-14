@@ -2,8 +2,8 @@
 #
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 def findall(haystack, needle, start=0, end=None):
     if end is None:
@@ -32,10 +32,3 @@ def rfindall(haystack, needle, start=0, end=None):
             break
         yield c
         end = c - 1
-
-def rsplit(s, sep=None, maxsplit=-1):
-    try:
-        return s.rsplit(sep, maxsplit)
-    except AttributeError:
-        return [chunk[::-1] for chunk in
-                s[::-1].split(sep, maxsplit)[::-1]]

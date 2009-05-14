@@ -2,12 +2,13 @@
 #
 # Copyright 2006, 2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import nullid, nullrev, hex, bin
 from i18n import _
-import errno, util, os, filemerge, copies, shutil
+import util, filemerge, copies
+import errno, os, shutil
 
 class mergestate(object):
     '''track 3-way merge state of individual files'''
@@ -147,8 +148,9 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
             if not a: # both differ from parent
                 r = repo.ui.prompt(
                     _(" conflicting flags for %s\n"
-                      "(n)one, e(x)ec or sym(l)ink?") % f, "[nxl]", "n")
-                return r != "n" and r or ''
+                      "(n)one, e(x)ec or sym(l)ink?") % f,
+                    (_("&None"), _("E&xec"), _("Sym&link")), _("n"))
+                return r != _("n") and r or ''
             if m == a:
                 return n # changed from m to n
             return m # changed from n to m
@@ -166,7 +168,7 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
         if repo.ui.configbool("merge", "followcopies", True):
             dirs = repo.ui.configbool("merge", "followdirs", True)
             copy, diverge = copies.copies(repo, p1, p2, pa, dirs)
-        copied = dict.fromkeys(copy.values())
+        copied = set(copy.values())
         for of, fl in diverge.iteritems():
             act("divergent renames", "dr", of, fl)
 
@@ -219,7 +221,7 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
                 if repo.ui.prompt(
                     _(" local changed %s which remote deleted\n"
                       "use (c)hanged version or (d)elete?") % f,
-                    _("[cd]"), _("c")) == _("d"):
+                    (_("&Changed"), _("&Delete")), _("c")) == _("d"):
                     act("prompt delete", "r", f)
                 act("prompt keep", "a", f)
             else:
@@ -254,23 +256,15 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
                 if repo.ui.prompt(
                     _("remote changed %s which local deleted\n"
                       "use (c)hanged version or leave (d)eleted?") % f,
-                    _("[cd]"), _("c")) == _("c"):
+                    (_("&Changed"), _("&Deleted")), _("c")) == _("c"):
                     act("prompt recreating", "g", f, m2.flags(f))
         else:
             act("remote created", "g", f, m2.flags(f))
 
     return action
 
-def actioncmp(a1, a2):
-    m1 = a1[1]
-    m2 = a2[1]
-    if m1 == m2:
-        return cmp(a1, a2)
-    if m1 == 'r':
-        return -1
-    if m2 == 'r':
-        return 1
-    return cmp(a1, a2)
+def actionkey(a):
+    return a[1] == 'r' and -1 or 0, a
 
 def applyupdates(repo, action, wctx, mctx):
     "apply the merge action list to the working directory"
@@ -279,7 +273,7 @@ def applyupdates(repo, action, wctx, mctx):
     ms = mergestate(repo)
     ms.reset(wctx.parents()[0].node())
     moves = []
-    action.sort(actioncmp)
+    action.sort(key=actionkey)
 
     # prescan for merges
     for a in action:
@@ -504,4 +498,4 @@ def update(repo, node, branchmerge, force, partial):
 
         return stats
     finally:
-        del wlock
+        wlock.release()

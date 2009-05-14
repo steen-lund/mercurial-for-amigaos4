@@ -1,3 +1,10 @@
+# fancyopts.py - better command line parsing
+#
+#  Copyright 2005-2009 Matt Mackall <mpm@selenic.com> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 import getopt
 
 def gnugetopt(args, options, longoptions):
@@ -63,7 +70,7 @@ def fancyopts(args, options, state, gnu=False):
         # copy defaults to state
         if isinstance(default, list):
             state[name] = default[:]
-        elif callable(default):
+        elif hasattr(default, '__call__'):
             state[name] = None
         else:
             state[name] = default

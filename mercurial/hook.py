@@ -2,11 +2,12 @@
 #
 # Copyright 2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
-import util, os, sys
+import os, sys
+import extensions, util
 
 def _pythonhook(ui, repo, name, hname, funcname, args, throw):
     '''call python hook. hook is callable object, looked up as
@@ -20,7 +21,7 @@ def _pythonhook(ui, repo, name, hname, funcname, args, throw):
 
     ui.note(_("calling hook %s: %s\n") % (hname, funcname))
     obj = funcname
-    if not callable(obj):
+    if not hasattr(obj, '__call__'):
         d = funcname.rfind('.')
         if d == -1:
             raise util.Abort(_('%s hook is invalid ("%s" not in '
@@ -43,7 +44,7 @@ def _pythonhook(ui, repo, name, hname, funcname, args, throw):
             raise util.Abort(_('%s hook is invalid '
                                '("%s" is not defined)') %
                              (hname, funcname))
-        if not callable(obj):
+        if not hasattr(obj, '__call__'):
             raise util.Abort(_('%s hook is invalid '
                                '("%s" is not callable)') %
                              (hname, funcname))
@@ -60,7 +61,7 @@ def _pythonhook(ui, repo, name, hname, funcname, args, throw):
                            '%s\n') % (hname, exc))
         if throw:
             raise
-        ui.print_exc()
+        ui.traceback()
         return True
     if r:
         if throw:
@@ -73,7 +74,7 @@ def _exthook(ui, repo, name, cmd, args, throw):
 
     env = {}
     for k, v in args.iteritems():
-        if callable(v):
+        if hasattr(v, '__call__'):
             v = v()
         env['HG_' + k.upper()] = v
 
@@ -103,14 +104,19 @@ def hook(ui, repo, name, throw=False, **args):
         os.dup2(sys.__stderr__.fileno(), sys.__stdout__.fileno())
 
     try:
-        for hname, cmd in util.sort(ui.configitems('hooks')):
+        for hname, cmd in ui.configitems('hooks'):
             if hname.split('.')[0] != name or not cmd:
                 continue
-            if callable(cmd):
+            if hasattr(cmd, '__call__'):
                 r = _pythonhook(ui, repo, name, hname, cmd, args, throw) or r
             elif cmd.startswith('python:'):
-                r = _pythonhook(ui, repo, name, hname, cmd[7:].strip(),
-                                args, throw) or r
+                if cmd.count(':') == 2:
+                    path, cmd = cmd[7:].split(':')
+                    mod = extensions.loadpath(path, 'hgkook.%s' % hname)
+                    hookfn = getattr(mod, cmd)
+                else:
+                    hookfn = cmd[7:].strip()
+                r = _pythonhook(ui, repo, name, hname, hookfn, args, throw) or r
             else:
                 r = _exthook(ui, repo, hname, cmd, args, throw) or r
     finally:

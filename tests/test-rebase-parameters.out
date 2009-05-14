@@ -2,25 +2,25 @@
 
 % Use continue and abort
 hg rebase: cannot use both abort and continue
-hg rebase [-s rev | -b rev] [-d rev] [--collapse] | [-c] | [-a] | [--keep]
+hg rebase [-s REV | -b REV] [-d REV] [--collapse] [--keep] [--keepbranches] | [-c] | [-a]
 
 move changeset (and descendants) to a different branch
 
-    Rebase uses repeated merging to graft changesets from one part of history
-    onto another. This can be useful for linearizing local changes relative to
-    a master development tree.
+    Rebase uses repeated merging to graft changesets from one part of
+    history onto another. This can be useful for linearizing local
+    changes relative to a master development tree.
 
-    If a rebase is interrupted to manually resolve a merge, it can be continued
-    with --continue or aborted with --abort.
+    If a rebase is interrupted to manually resolve a merge, it can be
+    continued with --continue/-c or aborted with --abort/-a.
 
 options:
 
-    --keep          keep original revisions
-    --keepbranches  keep original branches
  -s --source        rebase from a given revision
  -b --base          rebase from the base of a given revision
  -d --dest          rebase onto a given revision
     --collapse      collapse the rebased revisions
+    --keep          keep original revisions
+    --keepbranches  keep original branches
  -c --continue      continue an interrupted rebase
  -a --abort         abort an interrupted rebase
     --style         display using template map file
@@ -30,25 +30,25 @@ use "hg -v help rebase" to show global options
 
 % Use continue and collapse
 hg rebase: cannot use collapse with continue or abort
-hg rebase [-s rev | -b rev] [-d rev] [--collapse] | [-c] | [-a] | [--keep]
+hg rebase [-s REV | -b REV] [-d REV] [--collapse] [--keep] [--keepbranches] | [-c] | [-a]
 
 move changeset (and descendants) to a different branch
 
-    Rebase uses repeated merging to graft changesets from one part of history
-    onto another. This can be useful for linearizing local changes relative to
-    a master development tree.
+    Rebase uses repeated merging to graft changesets from one part of
+    history onto another. This can be useful for linearizing local
+    changes relative to a master development tree.
 
-    If a rebase is interrupted to manually resolve a merge, it can be continued
-    with --continue or aborted with --abort.
+    If a rebase is interrupted to manually resolve a merge, it can be
+    continued with --continue/-c or aborted with --abort/-a.
 
 options:
 
-    --keep          keep original revisions
-    --keepbranches  keep original branches
  -s --source        rebase from a given revision
  -b --base          rebase from the base of a given revision
  -d --dest          rebase onto a given revision
     --collapse      collapse the rebased revisions
+    --keep          keep original revisions
+    --keepbranches  keep original branches
  -c --continue      continue an interrupted rebase
  -a --abort         abort an interrupted rebase
     --style         display using template map file
@@ -58,25 +58,25 @@ use "hg -v help rebase" to show global options
 
 % Use continue/abort and dest/source
 hg rebase: abort and continue do not allow specifying revisions
-hg rebase [-s rev | -b rev] [-d rev] [--collapse] | [-c] | [-a] | [--keep]
+hg rebase [-s REV | -b REV] [-d REV] [--collapse] [--keep] [--keepbranches] | [-c] | [-a]
 
 move changeset (and descendants) to a different branch
 
-    Rebase uses repeated merging to graft changesets from one part of history
-    onto another. This can be useful for linearizing local changes relative to
-    a master development tree.
+    Rebase uses repeated merging to graft changesets from one part of
+    history onto another. This can be useful for linearizing local
+    changes relative to a master development tree.
 
-    If a rebase is interrupted to manually resolve a merge, it can be continued
-    with --continue or aborted with --abort.
+    If a rebase is interrupted to manually resolve a merge, it can be
+    continued with --continue/-c or aborted with --abort/-a.
 
 options:
 
-    --keep          keep original revisions
-    --keepbranches  keep original branches
  -s --source        rebase from a given revision
  -b --base          rebase from the base of a given revision
  -d --dest          rebase onto a given revision
     --collapse      collapse the rebased revisions
+    --keep          keep original revisions
+    --keepbranches  keep original branches
  -c --continue      continue an interrupted rebase
  -a --abort         abort an interrupted rebase
     --style         display using template map file
@@ -86,25 +86,25 @@ use "hg -v help rebase" to show global options
 
 % Use source and base
 hg rebase: cannot specify both a revision and a base
-hg rebase [-s rev | -b rev] [-d rev] [--collapse] | [-c] | [-a] | [--keep]
+hg rebase [-s REV | -b REV] [-d REV] [--collapse] [--keep] [--keepbranches] | [-c] | [-a]
 
 move changeset (and descendants) to a different branch
 
-    Rebase uses repeated merging to graft changesets from one part of history
-    onto another. This can be useful for linearizing local changes relative to
-    a master development tree.
+    Rebase uses repeated merging to graft changesets from one part of
+    history onto another. This can be useful for linearizing local
+    changes relative to a master development tree.
 
-    If a rebase is interrupted to manually resolve a merge, it can be continued
-    with --continue or aborted with --abort.
+    If a rebase is interrupted to manually resolve a merge, it can be
+    continued with --continue/-c or aborted with --abort/-a.
 
 options:
 
-    --keep          keep original revisions
-    --keepbranches  keep original branches
  -s --source        rebase from a given revision
  -b --base          rebase from the base of a given revision
  -d --dest          rebase onto a given revision
     --collapse      collapse the rebased revisions
+    --keep          keep original revisions
+    --keepbranches  keep original branches
  -c --continue      continue an interrupted rebase
  -a --abort         abort an interrupted rebase
     --style         display using template map file

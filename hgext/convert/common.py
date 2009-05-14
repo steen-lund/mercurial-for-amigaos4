@@ -1,4 +1,10 @@
-# common code for the convert extension
+# common.py - common code for the convert extension
+#
+#  Copyright 2005-2009 Matt Mackall <mpm@selenic.com> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 import base64, errno
 import os
 import cPickle as pickle
@@ -333,8 +339,12 @@ class mapfile(dict):
             if err.errno != errno.ENOENT:
                 raise
             return
-        for line in fp:
-            key, value = strutil.rsplit(line[:-1], ' ', 1)
+        for i, line in enumerate(fp):
+            try:
+                key, value = line[:-1].rsplit(' ', 1)
+            except ValueError:
+                raise util.Abort(_('syntax error in %s(%d): key/value pair expected')
+                                 % (self.path, i+1))
             if key not in self:
                 self.order.append(key)
             super(mapfile, self).__setitem__(key, value)

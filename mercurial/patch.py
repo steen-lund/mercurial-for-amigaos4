@@ -3,13 +3,13 @@
 # Copyright 2006 Brendan Cully <brendan@kublai.com>
 # Copyright 2007 Chris Mason <chris.mason@oracle.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 from node import hex, nullid, short
-import base85, cmdutil, mdiff, util, revlog, diffhelpers, copies
-import cStringIO, email.Parser, os, re, errno, math
+import base85, cmdutil, mdiff, util, diffhelpers, copies
+import cStringIO, email.Parser, os, re, math
 import sys, tempfile, zlib
 
 gitre = re.compile('diff --git a/(.*) b/(.*)')
@@ -421,11 +421,12 @@ class patchfile:
                             f = self.ui.note
                         offset = l - orig_start - fuzzlen
                         if offset == 1:
-                            linestr = "line"
+                            msg = _("Hunk #%d succeeded at %d %s"
+                                    "(offset %d line).\n")
                         else:
-                            linestr = "lines"
-                        f(_("Hunk #%d succeeded at %d %s(offset %d %s).\n") %
-                          (h.number, l+1, fuzzstr, offset, linestr))
+                            msg = _("Hunk #%d succeeded at %d %s"
+                                    "(offset %d lines).\n")
+                        f(msg % (h.number, l+1, fuzzstr, offset))
                         return fuzzlen
         self.printfile(True)
         self.ui.warn(_("Hunk #%d FAILED at %d\n") % (h.number, orig_start))
@@ -1052,7 +1053,7 @@ def updatedir(ui, repo, patches, similarity=0):
         repo.copy(src, dst)
     removes = removes.keys()
     if (not similarity) and removes:
-        repo.remove(util.sort(removes), True)
+        repo.remove(sorted(removes), True)
     for f in patches:
         gp = patches[f]
         if gp and gp.mode:
@@ -1067,7 +1068,7 @@ def updatedir(ui, repo, patches, similarity=0):
     cmdutil.addremove(repo, cfiles, similarity=similarity)
     files = patches.keys()
     files.extend([r for r in removes if r not in files])
-    return util.sort(files)
+    return sorted(files)
 
 def externalpatch(patcher, args, patchname, ui, strip, cwd, files):
     """use <patcher> to apply <patchname> to the working directory.
@@ -1235,13 +1236,14 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None):
 
     if opts.git:
         copy, diverge = copies.copies(repo, ctx1, ctx2, repo[nullid])
+        copy = copy.copy()
         for k, v in copy.items():
             copy[v] = k
 
     gone = {}
     gitmode = {'l': '120000', 'x': '100755', '': '100644'}
 
-    for f in util.sort(modified + added + removed):
+    for f in sorted(modified + added + removed):
         to = None
         tn = None
         dodiff = True

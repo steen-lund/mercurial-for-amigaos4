@@ -2,21 +2,15 @@
 #
 # Copyright 2006, 2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import nullid, nullrev, short, hex
 from i18n import _
-import ancestor, bdiff, error, util, os, errno
+import ancestor, bdiff, error, util
+import os, errno
 
-class propertycache(object):
-    def __init__(self, func):
-        self.func = func
-        self.name = func.__name__
-    def __get__(self, obj, type=None):
-        result = self.func(obj)
-        setattr(obj, self.name, result)
-        return result
+propertycache = util.propertycache
 
 class changectx(object):
     """A changecontext object makes access to data related to a particular
@@ -60,24 +54,24 @@ class changectx(object):
     def __nonzero__(self):
         return self._rev != nullrev
 
+    @propertycache
     def _changeset(self):
         return self._repo.changelog.read(self.node())
-    _changeset = propertycache(_changeset)
 
+    @propertycache
     def _manifest(self):
         return self._repo.manifest.read(self._changeset[0])
-    _manifest = propertycache(_manifest)
 
+    @propertycache
     def _manifestdelta(self):
         return self._repo.manifest.readdelta(self._changeset[0])
-    _manifestdelta = propertycache(_manifestdelta)
 
+    @propertycache
     def _parents(self):
         p = self._repo.changelog.parentrevs(self._rev)
         if p[1] == nullrev:
             p = p[:-1]
         return [changectx(self._repo, x) for x in p]
-    _parents = propertycache(_parents)
 
     def __contains__(self, key):
         return key in self._manifest
@@ -86,11 +80,12 @@ class changectx(object):
         return self.filectx(key)
 
     def __iter__(self):
-        for f in util.sort(self._manifest):
+        for f in sorted(self._manifest):
             yield f
 
     def changeset(self): return self._changeset
     def manifest(self): return self._manifest
+    def manifestnode(self): return self._changeset[0]
 
     def rev(self): return self._rev
     def node(self): return self._node
@@ -106,6 +101,14 @@ class changectx(object):
     def parents(self):
         """return contexts for each parent changeset"""
         return self._parents
+
+    def p1(self):
+        return self._parents[0]
+
+    def p2(self):
+        if len(self._parents) == 2:
+            return self._parents[1]
+        return changectx(self._repo, -1)
 
     def children(self):
         """return contexts for each child changeset"""
@@ -161,19 +164,19 @@ class changectx(object):
         return changectx(self._repo, n)
 
     def walk(self, match):
-        fdict = dict.fromkeys(match.files())
+        fset = set(match.files())
         # for dirstate.walk, files=['.'] means "walk the whole tree".
         # follow that here, too
-        fdict.pop('.', None)
+        fset.discard('.')
         for fn in self:
-            for ffn in fdict:
+            for ffn in fset:
                 # match if the file is the exact name or a directory
                 if ffn == fn or fn.startswith("%s/" % ffn):
-                    del fdict[ffn]
+                    fset.remove(ffn)
                     break
             if match(fn):
                 yield fn
-        for fn in util.sort(fdict):
+        for fn in sorted(fset):
             if match.bad(fn, 'No such file in rev ' + str(self)) and match(fn):
                 yield fn
 
@@ -201,39 +204,39 @@ class filectx(object):
         if fileid is not None:
             self._fileid = fileid
 
+    @propertycache
     def _changectx(self):
         return changectx(self._repo, self._changeid)
-    _changectx = propertycache(_changectx)
 
+    @propertycache
     def _filelog(self):
         return self._repo.file(self._path)
-    _filelog = propertycache(_filelog)
 
+    @propertycache
     def _changeid(self):
         if '_changectx' in self.__dict__:
             return self._changectx.rev()
         else:
             return self._filelog.linkrev(self._filerev)
-    _changeid = propertycache(_changeid)
 
+    @propertycache
     def _filenode(self):
         if '_fileid' in self.__dict__:
             return self._filelog.lookup(self._fileid)
         else:
             return self._changectx.filenode(self._path)
-    _filenode = propertycache(_filenode)
 
+    @propertycache
     def _filerev(self):
         return self._filelog.rev(self._filenode)
-    _filerev = propertycache(_filerev)
 
+    @propertycache
     def _repopath(self):
         return self._path
-    _repopath = propertycache(_repopath)
 
     def __nonzero__(self):
         try:
-            n = self._filenode
+            self._filenode
             return True
         except error.LookupError:
             # file is missing
@@ -419,7 +422,7 @@ class filectx(object):
             visit.extend(fn)
 
         hist = {}
-        for r, f in util.sort(visit):
+        for r, f in sorted(visit):
             curr = decorate(f.data(), f)
             for p in parents(f):
                 if p != nullid:
@@ -515,6 +518,7 @@ class workingctx(changectx):
     def __contains__(self, key):
         return self._repo.dirstate[key] not in "?r"
 
+    @propertycache
     def _manifest(self):
         """generate a manifest corresponding to the working directory"""
 
@@ -536,27 +540,26 @@ class workingctx(changectx):
                 del man[f]
 
         return man
-    _manifest = propertycache(_manifest)
 
+    @propertycache
     def _status(self):
         return self._repo.status(unknown=True)
-    _status = propertycache(_status)
 
+    @propertycache
     def _user(self):
         return self._repo.ui.username()
-    _user = propertycache(_user)
 
+    @propertycache
     def _date(self):
         return util.makedate()
-    _date = propertycache(_date)
 
+    @propertycache
     def _parents(self):
         p = self._repo.dirstate.parents()
         if p[1] == nullid:
             p = p[:-1]
         self._parents = [changectx(self._repo, x) for x in p]
         return self._parents
-    _parents = propertycache(_parents)
 
     def manifest(self): return self._manifest
 
@@ -564,7 +567,7 @@ class workingctx(changectx):
     def date(self): return self._date
     def description(self): return self._text
     def files(self):
-        return util.sort(self._status[0] + self._status[1] + self._status[2])
+        return sorted(self._status[0] + self._status[1] + self._status[2])
 
     def modified(self): return self._status[0]
     def added(self): return self._status[1]
@@ -613,7 +616,7 @@ class workingctx(changectx):
         return self._parents[0].ancestor(c2) # punt on two parents for now
 
     def walk(self, match):
-        return util.sort(self._repo.dirstate.walk(match, True, False).keys())
+        return sorted(self._repo.dirstate.walk(match, True, False))
 
 class workingfilectx(filectx):
     """A workingfilectx object makes access to data related to a particular
@@ -631,17 +634,17 @@ class workingfilectx(filectx):
         if workingctx:
             self._changectx = workingctx
 
+    @propertycache
     def _changectx(self):
         return workingctx(self._repo)
-    _changectx = propertycache(_changectx)
 
+    @propertycache
     def _repopath(self):
         return self._repo.dirstate.copied(self._path) or self._path
-    _repopath = propertycache(_repopath)
 
+    @propertycache
     def _filelog(self):
         return self._repo.file(self._repopath)
-    _filelog = propertycache(_filelog)
 
     def __nonzero__(self):
         return True
@@ -734,7 +737,7 @@ class memctx(object):
         parents = [(p or nullid) for p in parents]
         p1, p2 = parents
         self._parents = [changectx(self._repo, p) for p in (p1, p2)]
-        files = util.sort(util.unique(files))
+        files = sorted(set(files))
         self._status = [files, [], [], [], []]
         self._filectxfn = filectxfn
 
@@ -752,6 +755,12 @@ class memctx(object):
 
     def __nonzero__(self):
         return True
+
+    def __getitem__(self, key):
+        return self.filectx(key)
+
+    def p1(self): return self._parents[0]
+    def p2(self): return self._parents[1]
 
     def user(self): return self._user or self._repo.ui.username()
     def date(self): return self._date
@@ -803,4 +812,3 @@ class memfilectx(object):
     def isexec(self): return 'x' in self._flags
     def islink(self): return 'l' in self._flags
     def renamed(self): return self._copied
-
