@@ -3,8 +3,8 @@
 # Copyright 2006, 2007, 2008 Bryan O'Sullivan <bos@serpentine.com>
 # Copyright 2007, 2008 Brendan Cully <brendan@kublai.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from mercurial.i18n import _
 import common
@@ -23,7 +23,7 @@ def query(ui, repo, names, match, ignored, clean, unknown=True):
             raise
 
     def genquery():
-        for n in names or []:
+        for n in names:
             yield n
         states = 'almrx!'
         if ignored:
@@ -46,8 +46,12 @@ def query(ui, repo, names, match, ignored, clean, unknown=True):
                   'version %d)\n') % version)
         return None
 
+    # only one type of request is supported for now
+    type = 'STAT'
+    hdrfmt = common.resphdrfmts[type]
+    hdrsize = common.resphdrsizes[type]
     try:
-        resphdr = struct.unpack(common.resphdrfmt, cs.read(common.resphdrsize))
+        resphdr = struct.unpack(hdrfmt, cs.read(hdrsize))
     except struct.error:
         return None
 

@@ -7,7 +7,7 @@ cd repo
 hg init
 echo foo > bar
 hg add bar
-hg commit -m "test" -d "0 0"
+hg commit -m "test"
 hg tip
 
 cat > request.py <<EOF
@@ -30,9 +30,6 @@ class FileLike(object):
     def readline(self):
         print >> sys.__stdout__, 'READLINE'
         return self.real.readline()
-    def isatty(self):
-        print >> sys.__stdout__, 'ISATTY'
-        return False
 
 sys.stdin = FileLike(sys.stdin)
 errors = StringIO()

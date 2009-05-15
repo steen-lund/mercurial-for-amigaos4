@@ -2,25 +2,25 @@
 # Copyright 21 May 2005 - (c) 2005 Jake Edge <jake@edge2.net>
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os, mimetypes, re, cgi, copy
 import webutil
-from mercurial import error, archival, templatefilters
-from mercurial.node import short, hex, nullid
-from mercurial.util import binary, datestr
+from mercurial import error, archival, templater, templatefilters
+from mercurial.node import short, hex
+from mercurial.util import binary
 from common import paritygen, staticfile, get_contact, ErrorResponse
 from common import HTTP_OK, HTTP_FORBIDDEN, HTTP_NOT_FOUND
-from mercurial import graphmod, util
+from mercurial import graphmod
 
 # __all__ is populated with the allowed commands. Be sure to add to it if
 # you're adding a new command, or the new command won't work.
 
 __all__ = [
    'log', 'rawfile', 'file', 'changelog', 'shortlog', 'changeset', 'rev',
-   'manifest', 'tags', 'summary', 'filediff', 'diff', 'annotate', 'filelog',
-   'archive', 'static', 'graph',
+   'manifest', 'tags', 'branches', 'summary', 'filediff', 'diff', 'annotate',
+   'filelog', 'archive', 'static', 'graph',
 ]
 
 def log(web, req, tmpl):
@@ -172,7 +172,6 @@ def changelog(web, req, tmpl, shortlog = False):
             return _search(web, tmpl, hi) # XXX redirect to 404 page?
 
     def changelist(limit=0, **map):
-        cl = web.repo.changelog
         l = [] # build a list in forward order for efficiency
         for i in xrange(start, end):
             ctx = web.repo[i]
@@ -294,7 +293,7 @@ def manifest(web, req, tmpl):
         raise ErrorResponse(HTTP_NOT_FOUND, 'path not found: ' + path)
 
     def filelist(**map):
-        for f in util.sort(files):
+        for f in sorted(files):
             full = files[f]
 
             fctx = ctx.filectx(full)
@@ -306,7 +305,7 @@ def manifest(web, req, tmpl):
                    "permissions": mf.flags(full)}
 
     def dirlist(**map):
-        for d in util.sort(dirs):
+        for d in sorted(dirs):
 
             emptydirs = []
             h = dirs[d]
@@ -359,6 +358,26 @@ def tags(web, req, tmpl):
                 entriesnotip=lambda **x: entries(True,0, **x),
                 latestentry=lambda **x: entries(True,1, **x))
 
+def branches(web, req, tmpl):
+    b = web.repo.branchtags()
+    tips = (web.repo[n] for t, n in web.repo.branchtags().iteritems())
+    parity = paritygen(web.stripecount)
+
+    def entries(limit, **map):
+        count = 0
+        for ctx in sorted(tips, key=lambda x: x.rev(), reverse=True):
+            if limit > 0 and count >= limit:
+                return
+            count += 1
+            yield {'parity': parity.next(),
+                   'branch': ctx.branch(),
+                   'node': ctx.hex(),
+                   'date': ctx.date()}
+
+    return tmpl('branches', node=hex(web.repo.changelog.tip()),
+                entries=lambda **x: entries(0, **x),
+                latestentry=lambda **x: entries(1, **x))
+
 def summary(web, req, tmpl):
     i = web.repo.tagslist()
     i.reverse()
@@ -385,7 +404,7 @@ def summary(web, req, tmpl):
 
         b = web.repo.branchtags()
         l = [(-web.repo.changelog.rev(n), n, t) for t, n in b.iteritems()]
-        for r,n,t in util.sort(l):
+        for r,n,t in sorted(l):
             yield {'parity': parity.next(),
                    'branch': t,
                    'node': hex(n),
@@ -611,7 +630,7 @@ def static(web, req, tmpl):
     # readable by the user running the CGI script
     static = web.config("web", "static", None, untrusted=False)
     if not static:
-        tp = web.templatepath
+        tp = web.templatepath or templater.templatepath()
         if isinstance(tp, str):
             tp = [tp]
         static = [os.path.join(p, 'static') for p in tp]
@@ -643,11 +662,11 @@ def graph(web, req, tmpl):
     tree = list(graphmod.graph(web.repo, rev, downrev))
     canvasheight = (len(tree) + 1) * bg_height - 27;
     data = []
-    for i, (ctx, vtx, edges) in enumerate(tree):
+    for (ctx, vtx, edges) in tree:
         node = short(ctx.node())
         age = templatefilters.age(ctx.date())
         desc = templatefilters.firstline(ctx.description())
-        desc = cgi.escape(desc)
+        desc = cgi.escape(templatefilters.nonempty(desc))
         user = cgi.escape(templatefilters.person(ctx.user()))
         branch = ctx.branch()
         branch = branch, web.repo.branchtags().get(branch) == ctx.node()

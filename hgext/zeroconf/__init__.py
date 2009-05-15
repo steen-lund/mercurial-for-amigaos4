@@ -2,23 +2,23 @@
 #
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms of
-# the GNU General Public License (version 2), incorporated herein by
-# reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 '''zeroconf support for mercurial repositories
 
-Zeroconf enabled repositories will be announced in a network without the need
-to configure a server or a service. They can be discovered without knowing
-their actual IP address.
+Zeroconf enabled repositories will be announced in a network without
+the need to configure a server or a service. They can be discovered
+without knowing their actual IP address.
 
-To use the zeroconf extension add the following entry to your hgrc file:
+To use the zeroconf extension add the following entry to your hgrc
+file:
 
 [extensions]
 hgext.zeroconf =
 
-To allow other people to discover your repository using run "hg serve" in your
-repository.
+To allow other people to discover your repository using run "hg serve"
+in your repository.
 
  $ cd test
  $ hg serve
@@ -51,9 +51,12 @@ def getip():
         pass
 
     # Generic method, sometimes gives useless results
-    dumbip = socket.gethostbyaddr(socket.gethostname())[2][0]
-    if not dumbip.startswith('127.') and ':' not in dumbip:
-        return dumbip
+    try:
+        dumbip = socket.gethostbyaddr(socket.gethostname())[2][0]
+        if not dumbip.startswith('127.') and ':' not in dumbip:
+            return dumbip
+    except socket.gaierror:
+        dumbip = '127.0.0.1'
 
     # works elsewhere, but actually sends a packet
     try:
@@ -69,16 +72,16 @@ def getip():
 def publish(name, desc, path, port):
     global server, localip
     if not server:
-        try:
-            server = Zeroconf.Zeroconf()
-        except socket.gaierror:
+        ip = getip()
+        if ip.startswith('127.'):
             # if we have no internet connection, this can happen.
             return
-        ip = getip()
         localip = socket.inet_aton(ip)
+        server = Zeroconf.Zeroconf(ip)
 
-    parts = socket.gethostname().split('.')
-    host = parts[0] + ".local"
+    hostname = socket.gethostname().split('.')[0]
+    host = hostname + ".local"
+    name = "%s-%s" % (hostname, name)
 
     # advertise to browsers
     svc = Zeroconf.ServiceInfo('_http._tcp.local.',
@@ -110,7 +113,7 @@ class hgwebzc(hgweb_mod.hgweb):
 class hgwebdirzc(hgwebdir_mod.hgwebdir):
     def run(self):
         for r, p in self.repos:
-            u = ui.ui(parentui=self.parentui)
+            u = self.ui.copy()
             u.readconfig(os.path.join(p, '.hg', 'hgrc'))
             n = os.path.basename(r)
             publish(n, "hgweb", p, int(u.config("web", "port", 8000)))
@@ -128,9 +131,12 @@ class listener(object):
         self.found[repr(name)] = server.getServiceInfo(type, name)
 
 def getzcpaths():
-    server = Zeroconf.Zeroconf()
+    ip = getip()
+    if ip.startswith('127.'):
+        return
+    server = Zeroconf.Zeroconf(ip)
     l = listener()
-    browser = Zeroconf.ServiceBrowser(server, "_hg._tcp.local.", l)
+    Zeroconf.ServiceBrowser(server, "_hg._tcp.local.", l)
     time.sleep(1)
     server.close()
     for v in l.found.values():

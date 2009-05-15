@@ -1,3 +1,10 @@
+# match.py - file name matching
+#
+#  Copyright 2008, 2009 Matt Mackall <mpm@selenic.com> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 import util
 
 class _match(object):
@@ -5,7 +12,7 @@ class _match(object):
         self._root = root
         self._cwd = cwd
         self._files = files
-        self._fmap = dict.fromkeys(files)
+        self._fmap = set(files)
         self.matchfn = mf
         self._anypats = ap
     def __call__(self, fn):

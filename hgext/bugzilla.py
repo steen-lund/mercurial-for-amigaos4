@@ -2,75 +2,82 @@
 #
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 '''Bugzilla integration
 
 This hook extension adds comments on bugs in Bugzilla when changesets
-that refer to bugs by Bugzilla ID are seen. The hook does not change bug
-status.
+that refer to bugs by Bugzilla ID are seen. The hook does not change
+bug status.
 
-The hook updates the Bugzilla database directly. Only Bugzilla installations
-using MySQL are supported.
+The hook updates the Bugzilla database directly. Only Bugzilla
+installations using MySQL are supported.
 
-The hook relies on a Bugzilla script to send bug change notification emails.
-That script changes between Bugzilla versions; the 'processmail' script used
-prior to 2.18 is replaced in 2.18 and subsequent versions by
-'config/sendbugmail.pl'. Note that these will be run by Mercurial as the user
-pushing the change; you will need to ensure the Bugzilla install file
-permissions are set appropriately.
+The hook relies on a Bugzilla script to send bug change notification
+emails. That script changes between Bugzilla versions; the
+'processmail' script used prior to 2.18 is replaced in 2.18 and
+subsequent versions by 'config/sendbugmail.pl'. Note that these will
+be run by Mercurial as the user pushing the change; you will need to
+ensure the Bugzilla install file permissions are set appropriately.
 
 Configuring the extension:
 
     [bugzilla]
-    host       Hostname of the MySQL server holding the Bugzilla database.
+
+    host       Hostname of the MySQL server holding the Bugzilla
+               database.
     db         Name of the Bugzilla database in MySQL. Default 'bugs'.
     user       Username to use to access MySQL server. Default 'bugs'.
     password   Password to use to access MySQL server.
     timeout    Database connection timeout (seconds). Default 5.
-    version    Bugzilla version. Specify '3.0' for Bugzilla versions 3.0 and
-               later, '2.18' for Bugzilla versions from 2.18 and '2.16' for
-               versions prior to 2.18.
+    version    Bugzilla version. Specify '3.0' for Bugzilla versions
+               3.0 and later, '2.18' for Bugzilla versions from 2.18
+               and '2.16' for versions prior to 2.18.
     bzuser     Fallback Bugzilla user name to record comments with, if
                changeset committer cannot be found as a Bugzilla user.
     bzdir      Bugzilla install directory. Used by default notify.
                Default '/var/www/html/bugzilla'.
     notify     The command to run to get Bugzilla to send bug change
-               notification emails. Substitutes from a map with 3 keys,
-               'bzdir', 'id' (bug id) and 'user' (committer bugzilla email).
-               Default depends on version; from 2.18 it is
-               "cd %(bzdir)s && perl -T contrib/sendbugmail.pl %(id)s %(user)s".
-    regexp     Regular expression to match bug IDs in changeset commit message.
-               Must contain one "()" group. The default expression matches
-               'Bug 1234', 'Bug no. 1234', 'Bug number 1234',
-               'Bugs 1234,5678', 'Bug 1234 and 5678' and variations thereof.
-               Matching is case insensitive.
+               notification emails. Substitutes from a map with 3
+               keys, 'bzdir', 'id' (bug id) and 'user' (committer
+               bugzilla email). Default depends on version; from 2.18
+               it is "cd %(bzdir)s && perl -T contrib/sendbugmail.pl
+               %(id)s %(user)s".
+    regexp     Regular expression to match bug IDs in changeset commit
+               message. Must contain one "()" group. The default
+               expression matches 'Bug 1234', 'Bug no. 1234', 'Bug
+               number 1234', 'Bugs 1234,5678', 'Bug 1234 and 5678' and
+               variations thereof. Matching is case insensitive.
     style      The style file to use when formatting comments.
     template   Template to use when formatting comments. Overrides
                style if specified. In addition to the usual Mercurial
                keywords, the extension specifies:
                    {bug}       The Bugzilla bug ID.
-                   {root}      The full pathname of the Mercurial repository.
-                   {webroot}   Stripped pathname of the Mercurial repository.
-                   {hgweb}     Base URL for browsing Mercurial repositories.
+                   {root}      The full pathname of the Mercurial
+                               repository.
+                   {webroot}   Stripped pathname of the Mercurial
+                               repository.
+                   {hgweb}     Base URL for browsing Mercurial
+                               repositories.
                Default 'changeset {node|short} in repo {root} refers '
                        'to bug {bug}.\\ndetails:\\n\\t{desc|tabindent}'
     strip      The number of slashes to strip from the front of {root}
                to produce {webroot}. Default 0.
-    usermap    Path of file containing Mercurial committer ID to Bugzilla user
-               ID mappings. If specified, the file should contain one mapping
-               per line, "committer"="Bugzilla user". See also the
-               [usermap] section.
+    usermap    Path of file containing Mercurial committer ID to
+               Bugzilla user ID mappings. If specified, the file
+               should contain one mapping per line,
+               "committer"="Bugzilla user". See also the [usermap]
+               section.
 
     [usermap]
-    Any entries in this section specify mappings of Mercurial committer ID
-    to Bugzilla user ID. See also [bugzilla].usermap.
+    Any entries in this section specify mappings of Mercurial
+    committer ID to Bugzilla user ID. See also [bugzilla].usermap.
     "committer"="Bugzilla user"
 
     [web]
-    baseurl    Base URL for browsing Mercurial repositories. Reference from
-               templates as {hgweb}.
+    baseurl    Base URL for browsing Mercurial repositories. Reference
+               from templates as {hgweb}.
 
 Activating the extension:
 
@@ -83,9 +90,9 @@ Activating the extension:
 
 Example configuration:
 
-This example configuration is for a collection of Mercurial repositories
-in /var/local/hg/repos/ used with a local Bugzilla 3.2 installation in
-/opt/bugzilla-3.2.
+This example configuration is for a collection of Mercurial
+repositories in /var/local/hg/repos/ used with a local Bugzilla 3.2
+installation in /opt/bugzilla-3.2.
 
     [bugzilla]
     host=localhost
@@ -132,7 +139,7 @@ class bugzilla_2_16(object):
         timeout = int(self.ui.config('bugzilla', 'timeout', 5))
         usermap = self.ui.config('bugzilla', 'usermap')
         if usermap:
-            self.ui.readsections(usermap, 'usermap')
+            self.ui.readconfig(usermap, sections=['usermap'])
         self.ui.note(_('connecting to %s:%s as %s, password %s\n') %
                      (host, db, user, '*' * len(passwd)))
         self.conn = MySQLdb.connect(host=host, user=user, passwd=passwd,
@@ -162,7 +169,7 @@ class bugzilla_2_16(object):
     def filter_real_bug_ids(self, ids):
         '''filter not-existing bug ids from list.'''
         self.run('select bug_id from bugs where bug_id in %s' % buglist(ids))
-        return util.sort([c[0] for c in self.cursor.fetchall()])
+        return sorted([c[0] for c in self.cursor.fetchall()])
 
     def filter_unknown_bug_ids(self, node, ids):
         '''filter bug ids from list that already refer to this changeset.'''
@@ -170,12 +177,12 @@ class bugzilla_2_16(object):
         self.run('''select bug_id from longdescs where
                     bug_id in %s and thetext like "%%%s%%"''' %
                  (buglist(ids), short(node)))
-        unknown = dict.fromkeys(ids)
+        unknown = set(ids)
         for (id,) in self.cursor.fetchall():
             self.ui.status(_('bug %d already knows about changeset %s\n') %
                            (id, short(node)))
-            unknown.pop(id, None)
-        return util.sort(unknown.keys())
+            unknown.discard(id)
+        return sorted(unknown)
 
     def notify(self, ids, committer):
         '''tell bugzilla to send mail.'''

@@ -3,8 +3,8 @@
 # Copyright 21 May 2005 - (c) 2005 Jake Edge <jake@edge2.net>
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os, sys, errno, urllib, BaseHTTPServer, socket, SocketServer, traceback
 from mercurial import hg, util, error
@@ -275,13 +275,16 @@ def create_server(ui, repo):
 
         def __init__(self, *args, **kwargs):
             if self.address_family is None:
-                raise error.RepoError(_('IPv6 not available on this system'))
+                raise error.RepoError(_('IPv6 is not available on this system'))
             super(IPv6HTTPServer, self).__init__(*args, **kwargs)
 
     if ssl_cert:
         handler = _shgwebhandler
     else:
         handler = _hgwebhandler
+
+    # ugly hack due to python issue5853 (for threaded use)
+    import mimetypes; mimetypes.init()
 
     try:
         if use_ipv6:

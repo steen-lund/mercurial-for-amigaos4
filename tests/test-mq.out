@@ -2,11 +2,11 @@
 mq extension - patch management and development
 
 This extension lets you work with a stack of patches in a Mercurial
-repository.  It manages two stacks of patches - all known patches, and
+repository. It manages two stacks of patches - all known patches, and
 applied patches (subset of known patches).
 
 Known patches are represented as patch files in the .hg/patches
-directory.  Applied patches are both patch files and changesets.
+directory. Applied patches are both patch files and changesets.
 
 Common tasks (use "hg help command" for more details):
 
@@ -43,7 +43,7 @@ list of commands:
  qpush        push the next patch onto the stack
  qrefresh     update the current patch
  qrename      rename a patch
- qrestore     restore the queue state saved by a rev
+ qrestore     restore the queue state saved by a revision
  qsave        save current queue state
  qselect      set or print guarded patches to push
  qseries      print the entire series file
@@ -326,7 +326,7 @@ adding manifests
 adding file changes
 added 1 changesets with 1 changes to 1 files
 patch queue now empty
-(working directory not at tip)
+(working directory not at a head)
 applying bar
 now at: bar
 diff --git a/bar b/bar
@@ -360,7 +360,7 @@ adding manifests
 adding file changes
 added 1 changesets with 1 changes to 1 files
 patch queue now empty
-(working directory not at tip)
+(working directory not at a head)
 applying bar
 now at: bar
 diff --git a/foo b/bleh
