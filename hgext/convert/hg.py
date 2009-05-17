@@ -1,4 +1,9 @@
-# hg backend for convert extension
+# hg.py - hg backend for convert extension
+#
+#  Copyright 2005-2009 Matt Mackall <mpm@selenic.com> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 # Notes for hg->hg conversion:
 #
@@ -33,7 +38,7 @@ class mercurial_sink(converter_sink):
                 if not self.repo.local():
                     raise NoRepo(_('%s is not a local Mercurial repo') % path)
             except error.RepoError, err:
-                ui.print_exc()
+                ui.traceback()
                 raise NoRepo(err.args[0])
         else:
             try:
@@ -42,8 +47,8 @@ class mercurial_sink(converter_sink):
                 if not self.repo.local():
                     raise NoRepo(_('%s is not a local Mercurial repo') % path)
                 self.created.append(path)
-            except error.RepoError, err:
-                ui.print_exc()
+            except error.RepoError:
+                ui.traceback()
                 raise NoRepo("could not create hg repo %s as sink" % path)
         self.lock = None
         self.wlock = None
@@ -56,8 +61,8 @@ class mercurial_sink(converter_sink):
 
     def after(self):
         self.ui.debug(_('run hg sink post-conversion action\n'))
-        self.lock = None
-        self.wlock = None
+        self.lock.release()
+        self.wlock.release()
 
     def revmapfile(self):
         return os.path.join(self.path, ".hg", "shamap")
@@ -142,7 +147,7 @@ class mercurial_sink(converter_sink):
             p2 = parents.pop(0)
             ctx = context.memctx(self.repo, (p1, p2), text, files.keys(), getfilectx,
                                  commit.author, commit.date, extra)
-            a = self.repo.commitctx(ctx)
+            self.repo.commitctx(ctx)
             text = "(octopus merge fixup)\n"
             p2 = hex(self.repo.changelog.tip())
 
@@ -155,35 +160,33 @@ class mercurial_sink(converter_sink):
         return p2
 
     def puttags(self, tags):
-         try:
-             parentctx = self.repo[self.tagsbranch]
-             tagparent = parentctx.node()
-         except error.RepoError, inst:
-             parentctx = None
-             tagparent = nullid
+        try:
+            parentctx = self.repo[self.tagsbranch]
+            tagparent = parentctx.node()
+        except error.RepoError:
+            parentctx = None
+            tagparent = nullid
 
-         try:
-             oldlines = util.sort(parentctx['.hgtags'].data().splitlines(1))
-         except:
-             oldlines = []
+        try:
+            oldlines = sorted(parentctx['.hgtags'].data().splitlines(1))
+        except:
+            oldlines = []
 
-         newlines = util.sort([("%s %s\n" % (tags[tag], tag)) for tag in tags])
-
-         if newlines == oldlines:
-             return None
-         data = "".join(newlines)
-
-         def getfilectx(repo, memctx, f):
+        newlines = sorted([("%s %s\n" % (tags[tag], tag)) for tag in tags])
+        if newlines == oldlines:
+            return None
+        data = "".join(newlines)
+        def getfilectx(repo, memctx, f):
             return context.memfilectx(f, data, False, False, None)
 
-         self.ui.status(_("updating tags\n"))
-         date = "%s 0" % int(time.mktime(time.gmtime()))
-         extra = {'branch': self.tagsbranch}
-         ctx = context.memctx(self.repo, (tagparent, None), "update tags",
-                              [".hgtags"], getfilectx, "convert-repo", date,
-                              extra)
-         self.repo.commitctx(ctx)
-         return hex(self.repo.changelog.tip())
+        self.ui.status(_("updating tags\n"))
+        date = "%s 0" % int(time.mktime(time.gmtime()))
+        extra = {'branch': self.tagsbranch}
+        ctx = context.memctx(self.repo, (tagparent, None), "update tags",
+                             [".hgtags"], getfilectx, "convert-repo", date,
+                             extra)
+        self.repo.commitctx(ctx)
+        return hex(self.repo.changelog.tip())
 
     def setfilemapmode(self, active):
         self.filemapmode = active
@@ -192,7 +195,7 @@ class mercurial_source(converter_source):
     def __init__(self, ui, path, rev=None):
         converter_source.__init__(self, ui, path, rev)
         self.ignoreerrors = ui.configbool('convert', 'hg.ignoreerrors', False)
-        self.ignored = {}
+        self.ignored = set()
         self.saverev = ui.configbool('convert', 'hg.saverev', False)
         try:
             self.repo = hg.repository(self.ui, path)
@@ -201,7 +204,7 @@ class mercurial_source(converter_source):
             if not self.repo.local():
                 raise error.RepoError()
         except error.RepoError:
-            ui.print_exc()
+            ui.traceback()
             raise NoRepo("%s is not a local Mercurial repo" % path)
         self.lastrev = None
         self.lastctx = None
@@ -253,7 +256,7 @@ class mercurial_source(converter_source):
         ctx = self.changectx(rev)
         parents = self.parents(ctx)
         if not parents:
-            files = util.sort(ctx.manifest().keys())
+            files = sorted(ctx.manifest())
             if self.ignoreerrors:
                 # calling getcopies() is a simple way to detect missing
                 # revlogs and populate self.ignored
@@ -268,7 +271,7 @@ class mercurial_source(converter_source):
         copies = self.getcopies(ctx, m + a)
         changes = [(name, rev) for name in m + a + r
                    if name not in self.ignored]
-        return util.sort(changes), copies
+        return sorted(changes), copies
 
     def getcopies(self, ctx, files):
         copies = {}
@@ -285,7 +288,7 @@ class mercurial_source(converter_source):
             except error.LookupError, e:
                 if not self.ignoreerrors:
                     raise
-                self.ignored[name] = 1
+                self.ignored.add(name)
                 self.ui.warn(_('ignoring: %s\n') % e)
         return copies
 

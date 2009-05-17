@@ -18,15 +18,16 @@
 
 '''add color output to status, qseries, and diff-related commands
 
-This extension modifies the status command to add color to its output to
-reflect file status, the qseries command to add color to reflect patch status
-(applied, unapplied, missing), and to diff-related commands to highlight
-additions, removals, diff headers, and trailing whitespace.
+This extension modifies the status command to add color to its output
+to reflect file status, the qseries command to add color to reflect
+patch status (applied, unapplied, missing), and to diff-related
+commands to highlight additions, removals, diff headers, and trailing
+whitespace.
 
-Other effects in addition to color, like bold and underlined text, are also
-available.  Effects are rendered with the ECMA-48 SGR control function (aka
-ANSI escape codes).  This module also provides the render_text function,
-which can be used to add effects to any text.
+Other effects in addition to color, like bold and underlined text, are
+also available. Effects are rendered with the ECMA-48 SGR control
+function (aka ANSI escape codes). This module also provides the
+render_text function, which can be used to add effects to any text.
 
 To enable this extension, add this to your .hgrc file:
 [extensions]
@@ -231,11 +232,13 @@ def uisetup(ui):
     _setupcmd(ui, 'outgoing', commands.table, None, _diff_effects)
     _setupcmd(ui, 'tip', commands.table, None, _diff_effects)
     _setupcmd(ui, 'status', commands.table, colorstatus, _status_effects)
-    if ui.config('extensions', 'hgext.mq') is not None or \
-            ui.config('extensions', 'mq') is not None:
-        from hgext import mq
+    try:
+        mq = extensions.find('mq')
         _setupcmd(ui, 'qdiff', mq.cmdtable, colordiff, _diff_effects)
         _setupcmd(ui, 'qseries', mq.cmdtable, colorqseries, _patch_effects)
+    except KeyError:
+        # The mq extension is not enabled
+        pass
 
 def _setupcmd(ui, cmd, table, func, effectsmap):
     '''patch in command to command table and load effect map'''

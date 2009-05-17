@@ -2,13 +2,13 @@
 #
 # Copyright 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
-import os, smtplib, socket
+import util, encoding
+import os, smtplib, socket, quopri
 import email.Header, email.MIMEText, email.Utils
-import util
 
 def _smtp(ui):
     '''build an smtp connection and return a function to send mail'''
@@ -88,21 +88,38 @@ def validateconfig(ui):
 
 def mimetextpatch(s, subtype='plain', display=False):
     '''If patch in utf-8 transfer-encode it.'''
+
+    enc = None
+    for line in s.splitlines():
+        if len(line) > 950:
+            s = quopri.encodestring(s)
+            enc = "quoted-printable"
+            break
+
+    cs = 'us-ascii'
     if not display:
-        for cs in ('us-ascii', 'utf-8'):
+        try:
+            s.decode('us-ascii')
+        except UnicodeDecodeError:
             try:
-                s.decode(cs)
-                return email.MIMEText.MIMEText(s, subtype, cs)
+                s.decode('utf-8')
+                cs = 'utf-8'
             except UnicodeDecodeError:
+                # We'll go with us-ascii as a fallback.
                 pass
-    return email.MIMEText.MIMEText(s, subtype)
+
+    msg = email.MIMEText.MIMEText(s, subtype, cs)
+    if enc:
+        del msg['Content-Transfer-Encoding']
+        msg['Content-Transfer-Encoding'] = enc
+    return msg
 
 def _charsets(ui):
     '''Obtains charsets to send mail parts not containing patches.'''
     charsets = [cs.lower() for cs in ui.configlist('email', 'charsets')]
-    fallbacks = [util._fallbackencoding.lower(),
-                 util._encoding.lower(), 'utf-8']
-    for cs in fallbacks: # util.unique does not keep order
+    fallbacks = [encoding.fallbackencoding.lower(),
+                 encoding.encoding.lower(), 'utf-8']
+    for cs in fallbacks: # find unique charsets while keeping order
         if cs not in charsets:
             charsets.append(cs)
     return [cs for cs in charsets if not cs.endswith('ascii')]
@@ -110,14 +127,14 @@ def _charsets(ui):
 def _encode(ui, s, charsets):
     '''Returns (converted) string, charset tuple.
     Finds out best charset by cycling through sendcharsets in descending
-    order. Tries both _encoding and _fallbackencoding for input. Only as
+    order. Tries both encoding and fallbackencoding for input. Only as
     last resort send as is in fake ascii.
     Caveat: Do not use for mail parts containing patches!'''
     try:
         s.decode('ascii')
     except UnicodeDecodeError:
         sendcharsets = charsets or _charsets(ui)
-        for ics in (util._encoding, util._fallbackencoding):
+        for ics in (encoding.encoding, encoding.fallbackencoding):
             try:
                 u = s.decode(ics)
             except UnicodeDecodeError:

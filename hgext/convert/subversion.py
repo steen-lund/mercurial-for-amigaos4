@@ -43,6 +43,11 @@ try:
     import svn.ra
     import svn.delta
     import transport
+    import warnings
+    warnings.filterwarnings('ignore',
+            module='svn.core',
+            category=DeprecationWarning)
+
 except ImportError:
     pass
 
@@ -134,6 +139,39 @@ class logstream:
             self._stdout.close()
             self._stdout = None
 
+
+# Check to see if the given path is a local Subversion repo. Verify this by
+# looking for several svn-specific files and directories in the given
+# directory.
+def filecheck(path, proto):
+    for x in ('locks', 'hooks', 'format', 'db', ):
+        if not os.path.exists(os.path.join(path, x)):
+            return False
+    return True
+
+# Check to see if a given path is the root of an svn repo over http. We verify
+# this by requesting a version-controlled URL we know can't exist and looking
+# for the svn-specific "not found" XML.
+def httpcheck(path, proto):
+    return ('<m:human-readable errcode="160013">' in
+            urllib.urlopen('%s://%s/!svn/ver/0/.svn' % (proto, path)).read())
+
+protomap = {'http': httpcheck,
+            'https': httpcheck,
+            'file': filecheck,
+            }
+def issvnurl(url):
+    if not '://' in url:
+        return False
+    proto, path = url.split('://', 1)
+    path = urllib.url2pathname(path).replace(os.sep, '/')
+    check = protomap.get(proto, lambda p, p2: False)
+    while '/' in path:
+        if check(path, proto):
+            return True
+        path = path.rsplit('/', 1)[0]
+    return False
+
 # SVN conversion code stolen from bzr-svn and tailor
 #
 # Subversion looks like a versioned filesystem, branches structures
@@ -151,6 +189,12 @@ class logstream:
 class svn_source(converter_source):
     def __init__(self, ui, url, rev=None):
         super(svn_source, self).__init__(ui, url, rev=rev)
+
+        if not (url.startswith('svn://') or url.startswith('svn+ssh://') or
+                (os.path.exists(url) and
+                 os.path.exists(os.path.join(url, '.svn'))) or
+                issvnurl(url)):
+            raise NoRepo("%s does not look like a Subversion repo" % url)
 
         try:
             SubversionException
@@ -177,7 +221,7 @@ class svn_source(converter_source):
             if at >= 0:
                 latest = int(url[at+1:])
                 url = url[:at]
-        except ValueError, e:
+        except ValueError:
             pass
         self.url = geturl(url)
         self.encoding = 'UTF-8' # Subversion is always nominal UTF-8
@@ -194,8 +238,8 @@ class svn_source(converter_source):
             self.commits = {}
             self.paths = {}
             self.uuid = svn.ra.get_uuid(self.ra).decode(self.encoding)
-        except SubversionException, e:
-            ui.print_exc()
+        except SubversionException:
+            ui.traceback()
             raise NoRepo("%s does not look like a Subversion repo" % self.url)
 
         if rev:
@@ -215,7 +259,7 @@ class svn_source(converter_source):
 
         try:
             self.get_blacklist()
-        except IOError, e:
+        except IOError:
             pass
 
         self.head = self.latest(self.module, latest)
@@ -246,7 +290,7 @@ class svn_source(converter_source):
             svn.client.ls(self.url.rstrip('/') + '/' + urllib.quote(path),
                                  optrev, False, self.ctx)
             return True
-        except SubversionException, err:
+        except SubversionException:
             return False
 
     def getheads(self):
@@ -309,7 +353,7 @@ class svn_source(converter_source):
 
         if self.startrev and self.heads:
             if len(self.heads) > 1:
-                raise util.Abort(_('svn: start revision is not supported with '
+                raise util.Abort(_('svn: start revision is not supported '
                                    'with more than one branch'))
             revnum = self.revnum(self.heads[0])
             if revnum < self.startrev:
@@ -399,9 +443,8 @@ class svn_source(converter_source):
                 origpaths, revnum, author, date, message = entry
                 copies = [(e.copyfrom_path, e.copyfrom_rev, p) for p, e
                           in origpaths.iteritems() if e.copyfrom_path]
-                copies.sort()
                 # Apply moves/copies from more specific to general
-                copies.reverse()
+                copies.sort(reverse=True)
 
                 srctagspath = tagspath
                 if copies and copies[-1][2] == tagspath:
@@ -417,11 +460,34 @@ class svn_source(converter_source):
                             tag[:2] = [tagpath, sourcerev]
                             break
                     else:
-                        pendings.append([source, sourcerev, dest.split('/')[-1]])
+                        pendings.append([source, sourcerev, dest])
+
+                # Filter out tags with children coming from different
+                # parts of the repository like:
+                # /tags/tag.1 (from /trunk:10)
+                # /tags/tag.1/foo (from /branches/foo:12)
+                # Here/tags/tag.1 discarded as well as its children.
+                # It happens with tools like cvs2svn. Such tags cannot
+                # be represented in mercurial.
+                addeds = dict((p, e.copyfrom_path) for p,e 
+                              in origpaths.iteritems() if e.action == 'A')
+                badroots = set()
+                for destroot in addeds:
+                    for source, sourcerev, dest in pendings:
+                        if (not dest.startswith(destroot + '/')
+                            or source.startswith(addeds[destroot] + '/')):
+                            continue
+                        badroots.add(destroot)
+                        break
+
+                for badroot in badroots:
+                    pendings = [p for p in pendings if p[2] != badroot 
+                                and not p[2].startswith(badroot + '/')]
 
                 # Tell tag renamings from tag creations
                 remainings = []
-                for source, sourcerev, tagname in pendings:
+                for source, sourcerev, dest in pendings:
+                    tagname = dest.split('/')[-1]
                     if source.startswith(srctagspath):
                         remainings.append([source, sourcerev, tagname])
                         continue
@@ -441,7 +507,7 @@ class svn_source(converter_source):
                 pendings = remainings
                 tagspath = srctagspath
 
-        except SubversionException, (inst, num):
+        except SubversionException:
             self.ui.note(_('no tags found at revision %d\n') % start)
         return tags
 
@@ -466,7 +532,7 @@ class svn_source(converter_source):
         return int(rev.split('@')[-1])
 
     def revsplit(self, rev):
-        url, revnum = strutil.rsplit(rev.encode(self.encoding), '@', 1)
+        url, revnum = rev.encode(self.encoding).rsplit('@', 1)
         revnum = int(revnum)
         parts = url.split('/', 1)
         uuid = parts.pop(0)[4:]
@@ -529,14 +595,14 @@ class svn_source(converter_source):
         out, e.g. 'I copied trunk into a subdirectory of itself instead
         of making a branch'. The converted repository is significantly
         smaller if we ignore such revisions."""
-        self.blacklist = util.set()
+        self.blacklist = set()
         blacklist = self.blacklist
         for line in file("blacklist.txt", "r"):
             if not line.startswith("#"):
                 try:
                     svn_rev = int(line.strip())
                     blacklist.add(svn_rev)
-                except ValueError, e:
+                except ValueError:
                     pass # not an integer or a comment
 
     def is_blacklisted(self, svn_rev):
@@ -677,7 +743,7 @@ class svn_source(converter_source):
                 # This will fail if a directory was copied
                 # from another branch and then some of its files
                 # were deleted in the same transaction.
-                children = util.sort(self._find_children(path, revnum))
+                children = sorted(self._find_children(path, revnum))
                 for child in children:
                     # Can we move a child directory and its
                     # parent in the same commit? (probably can). Could
@@ -719,7 +785,7 @@ class svn_source(converter_source):
                     copytopath = self.getrelpath(copytopath)
                     copies[self.recode(copytopath)] = self.recode(entry, pmodule)
 
-        return (util.unique(entries), copies)
+        return (list(set(entries)), copies)
 
     def _fetch_revisions(self, from_revnum, to_revnum):
         if from_revnum < to_revnum:
@@ -738,13 +804,13 @@ class svn_source(converter_source):
             rev = self.revid(revnum)
             # branch log might return entries for a parent we already have
 
-            if (rev in self.commits or revnum < to_revnum):
+            if rev in self.commits or revnum < to_revnum:
                 return None, branched
 
             parents = []
             # check whether this revision is the start of a branch or part
             # of a branch renaming
-            orig_paths = util.sort(orig_paths.items())
+            orig_paths = sorted(orig_paths.iteritems())
             root_paths = [(p,e) for p,e in orig_paths if self.module.startswith(p)]
             if root_paths:
                 path, ent = root_paths[-1]
@@ -816,7 +882,7 @@ class svn_source(converter_source):
                         self.ui.note(_('skipping blacklisted revision %d\n')
                                      % revnum)
                         continue
-                    if paths is None:
+                    if not paths:
                         self.ui.debug(_('revision %d has no entries\n') % revnum)
                         continue
                     cset, lastonbranch = parselogentry(paths, revnum, author,
@@ -921,7 +987,7 @@ class svn_source(converter_source):
         arg = encodeargs(args)
         hgexe = util.hgexecutable()
         cmd = '%s debugsvnlog' % util.shellquote(hgexe)
-        stdin, stdout = util.popen2(cmd, 'b')
+        stdin, stdout = util.popen2(cmd)
         stdin.write(arg)
         stdin.close()
         return logstream(stdout)
@@ -1064,7 +1130,7 @@ class svn_sink(converter_sink, commandline):
                 os.rename(tempname, wdest)
 
     def dirs_of(self, files):
-        dirs = util.set()
+        dirs = set()
         for f in files:
             if os.path.isdir(self.wjoin(f)):
                 dirs.add(f)
@@ -1073,7 +1139,7 @@ class svn_sink(converter_sink, commandline):
         return dirs
 
     def add_dirs(self, files):
-        add_dirs = [d for d in util.sort(self.dirs_of(files))
+        add_dirs = [d for d in sorted(self.dirs_of(files))
                     if not os.path.exists(self.wjoin(d, '.svn', 'entries'))]
         if add_dirs:
             self.xargs(add_dirs, 'add', non_recursive=True, quiet=True)
@@ -1085,10 +1151,8 @@ class svn_sink(converter_sink, commandline):
         return files
 
     def tidy_dirs(self, names):
-        dirs = util.sort(self.dirs_of(names))
-        dirs.reverse()
         deleted = []
-        for d in dirs:
+        for d in sorted(self.dirs_of(names), reverse=True):
             wd = self.wjoin(d)
             if os.listdir(wd) == '.svn':
                 self.run0('delete', d)
@@ -1106,7 +1170,7 @@ class svn_sink(converter_sink, commandline):
         for f, v in files:
             try:
                 data = source.getfile(f, v)
-            except IOError, inst:
+            except IOError:
                 self.delete.append(f)
             else:
                 e = source.getmode(f, v)
@@ -1120,8 +1184,8 @@ class svn_sink(converter_sink, commandline):
                 return self.revid(self.childmap[parent])
             except KeyError:
                 pass
-        entries = util.set(self.delete)
-        files = util.frozenset(files)
+        entries = set(self.delete)
+        files = frozenset(files)
         entries.update(self.add_dirs(files.difference(entries)))
         if self.copies:
             for s, d in self.copies:

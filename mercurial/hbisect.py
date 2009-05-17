@@ -2,10 +2,11 @@
 #
 # Copyright 2007 Matt Mackall
 # Copyright 2005, 2006 Benoit Boissinot <benoit.boissinot@ens-lyon.org>
+#
 # Inspired by git bisect, extension skeleton taken from mq.py.
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os
 from i18n import _
@@ -24,7 +25,7 @@ def bisect(changelog, state):
     """
 
     clparents = changelog.parentrevs
-    skip = dict.fromkeys([changelog.rev(n) for n in state['skip']])
+    skip = set([changelog.rev(n) for n in state['skip']])
 
     def buildancestors(bad, good):
         # only the earliest bad revision matters
@@ -78,16 +79,16 @@ def bisect(changelog, state):
     unskipped = [c for c in candidates if (c not in skip) and (c != badrev)]
     if tot == 1 or not unskipped:
         return ([changelog.node(rev) for rev in candidates], 0, good)
-    perfect = tot / 2
+    perfect = tot // 2
 
     # find the best node to test
     best_rev = None
     best_len = -1
-    poison = {}
+    poison = set()
     for rev in candidates:
         if rev in poison:
-            for c in children.get(rev, []):
-                poison[c] = True # poison children
+            # poison children
+            poison.update(children.get(rev, []))
             continue
 
         a = ancestors[rev] or [rev]
@@ -103,13 +104,13 @@ def bisect(changelog, state):
                 break
 
         if y < perfect and rev not in skip: # all downhill from here?
-            for c in children.get(rev, []):
-                poison[c] = True # poison children
+            # poison children
+            poison.update(children.get(rev, []))
             continue
 
         for c in children.get(rev, []):
             if ancestors[c]:
-                ancestors[c] = dict.fromkeys(ancestors[c] + a).keys()
+                ancestors[c] = list(set(ancestors[c] + a))
             else:
                 ancestors[c] = a + [c]
 
@@ -140,5 +141,5 @@ def save_state(repo, state):
                 f.write("%s %s\n" % (kind, hex(node)))
         f.rename()
     finally:
-        del wlock
+        wlock.release()
 

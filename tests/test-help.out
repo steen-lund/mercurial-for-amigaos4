@@ -11,7 +11,7 @@ basic commands:
  init       create a new repository in the given directory
  log        show revision history of entire repository or files
  merge      merge working directory with another revision
- parents    show the parents of the working dir or revision
+ parents    show the parents of the working directory or revision
  pull       pull changes from the specified source
  push       push changes to the specified destination
  remove     remove the specified files on the next commit
@@ -29,7 +29,7 @@ use "hg help" for the full list of commands or "hg -v" for details
  init       create a new repository in the given directory
  log        show revision history of entire repository or files
  merge      merge working directory with another revision
- parents    show the parents of the working dir or revision
+ parents    show the parents of the working directory or revision
  pull       pull changes from the specified source
  push       push changes to the specified destination
  remove     remove the specified files on the next commit
@@ -67,7 +67,7 @@ list of commands:
  manifest     output the current or given revision of the project manifest
  merge        merge working directory with another revision
  outgoing     show changesets not found in destination
- parents      show the parents of the working dir or revision
+ parents      show the parents of the working directory or revision
  paths        show aliases for remote repositories
  pull         pull changes from the specified source
  push         push changes to the specified destination
@@ -75,9 +75,9 @@ list of commands:
  remove       remove the specified files on the next commit
  rename       rename files; equivalent of copy + remove
  resolve      retry file merges from a merge or update
- revert       restore individual files or dirs to an earlier state
+ revert       restore individual files or directories to an earlier state
  rollback     roll back the last transaction
- root         print the root (top) of the current working dir
+ root         print the root (top) of the current working directory
  serve        export the repository via HTTP
  showconfig   show combined config settings from all hgrc files
  status       show changed files in the working directory
@@ -98,7 +98,7 @@ additional help topics:
  multirevs    Specifying Multiple Revisions
  diffs        Diff Formats
  templating   Template Usage
- urls         Url Paths
+ urls         URL Paths
 
 use "hg -v help" to show aliases and global options
  add          add the specified files on the next commit
@@ -128,7 +128,7 @@ use "hg -v help" to show aliases and global options
  manifest     output the current or given revision of the project manifest
  merge        merge working directory with another revision
  outgoing     show changesets not found in destination
- parents      show the parents of the working dir or revision
+ parents      show the parents of the working directory or revision
  paths        show aliases for remote repositories
  pull         pull changes from the specified source
  push         push changes to the specified destination
@@ -136,9 +136,9 @@ use "hg -v help" to show aliases and global options
  remove       remove the specified files on the next commit
  rename       rename files; equivalent of copy + remove
  resolve      retry file merges from a merge or update
- revert       restore individual files or dirs to an earlier state
+ revert       restore individual files or directories to an earlier state
  rollback     roll back the last transaction
- root         print the root (top) of the current working dir
+ root         print the root (top) of the current working directory
  serve        export the repository via HTTP
  showconfig   show combined config settings from all hgrc files
  status       show changed files in the working directory
@@ -159,12 +159,13 @@ additional help topics:
  multirevs    Specifying Multiple Revisions
  diffs        Diff Formats
  templating   Template Usage
- urls         Url Paths
+ urls         URL Paths
 hg add [OPTION]... [FILE]...
 
 add the specified files on the next commit
 
-    Schedule files to be version controlled and added to the repository.
+    Schedule files to be version controlled and added to the
+    repository.
 
     The files will be added to the repository at the next commit. To
     undo an add before that, see hg revert.
@@ -183,7 +184,8 @@ hg add [OPTION]... [FILE]...
 
 add the specified files on the next commit
 
-    Schedule files to be version controlled and added to the repository.
+    Schedule files to be version controlled and added to the
+    repository.
 
     The files will be added to the repository at the next commit. To
     undo an add before that, see hg revert.
@@ -215,12 +217,12 @@ diff repository (or selected files)
     revisions are specified, the working directory files are compared
     to its parent.
 
-    Without the -a option, diff will avoid generating diffs of files
-    it detects as binary. With -a, diff will generate a diff anyway,
-    probably with undesirable results.
+    Without the -a/--text option, diff will avoid generating diffs of
+    files it detects as binary. With -a, diff will generate a diff
+    anyway, probably with undesirable results.
 
-    Use the --git option to generate diffs in the git extended diff
-    format. For more information, read hg help diffs.
+    Use the -g/--git option to generate diffs in the git extended diff
+    format. For more information, read 'hg help diffs'.
 
 options:
 
@@ -246,12 +248,13 @@ show changed files in the working directory
 
     Show status of files in the repository. If names are given, only
     files that match are shown. Files that are clean or ignored or
-    source of a copy/move operation, are not listed unless -c (clean),
-    -i (ignored), -C (copies) or -A is given. Unless options described
-    with "show only ..." are given, the options -mardu are used.
+    source of a copy/move operation, are not listed unless -c/--clean,
+    -i/--ignored, -C/--copies or -A/--all is given. Unless options
+    described with "show only ..." are given, the options -mardu are
+    used.
 
     Option -q/--quiet hides untracked (unknown and ignored) files
-    unless explicitly requested with -u/--unknown or -i/-ignored.
+    unless explicitly requested with -u/--unknown or -i/--ignored.
 
     NOTE: status may appear to disagree with diff if permissions have
     changed or a merge has occurred. The standard diff format does not
@@ -266,7 +269,7 @@ show changed files in the working directory
     A = added
     R = removed
     C = clean
-    ! = deleted, but still tracked
+    ! = missing (deleted by non-hg command, but still tracked)
     ? = not tracked
     I = ignored
       = the previous added file was copied from here
@@ -306,7 +309,7 @@ basic commands:
  init       create a new repository in the given directory
  log        show revision history of entire repository or files
  merge      merge working directory with another revision
- parents    show the parents of the working dir or revision
+ parents    show the parents of the working directory or revision
  pull       pull changes from the specified source
  push       push changes to the specified destination
  remove     remove the specified files on the next commit
@@ -329,7 +332,7 @@ basic commands:
  init       create a new repository in the given directory
  log        show revision history of entire repository or files
  merge      merge working directory with another revision
- parents    show the parents of the working dir or revision
+ parents    show the parents of the working directory or revision
  pull       pull changes from the specified source
  push       push changes to the specified destination
  remove     remove the specified files on the next commit

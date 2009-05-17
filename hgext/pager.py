@@ -2,8 +2,8 @@
 #
 # Copyright 2008 David Soria Parra <dsp@php.net>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 #
 # To load the extension, add it to your .hgrc file:
 #
@@ -19,12 +19,11 @@ To set the pager that should be used, set the application variable:
   [pager]
   pager = LESS='FSRX' less
 
-If no pager is set, the pager extensions uses the environment
-variable $PAGER. If neither pager.pager, nor $PAGER is set, no pager
-is used.
+If no pager is set, the pager extensions uses the environment variable
+$PAGER. If neither pager.pager, nor $PAGER is set, no pager is used.
 
-If you notice "BROKEN PIPE" error messages, you can disable them
-by setting:
+If you notice "BROKEN PIPE" error messages, you can disable them by
+setting:
 
   [pager]
   quiet = True
@@ -35,15 +34,16 @@ pager.ignore list:
   [pager]
   ignore = version, help, update
 
-You can also enable the pager only for certain commands using pager.attend:
+You can also enable the pager only for certain commands using
+pager.attend:
 
   [pager]
   attend = log
 
 If pager.attend is present, pager.ignore will be ignored.
 
-To ignore global commands like "hg version" or "hg help", you have to specify
-them in the global .hgrc
+To ignore global commands like "hg version" or "hg help", you have to
+specify them in the global .hgrc
 '''
 
 import sys, os, signal

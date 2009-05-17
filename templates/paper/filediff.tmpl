@@ -13,6 +13,7 @@
 <li><a href="{url}shortlog/{node|short}{sessionvars%urlparameter}">log</a></li>
 <li><a href="{url}graph/{node|short}{sessionvars%urlparameter}">graph</a></li>
 <li><a href="{url}tags{sessionvars%urlparameter}">tags</a></li>
+<li><a href="{url}branches{sessionvars%urlparameter}">branches</a></li>
 </ul>
 <ul>
 <li><a href="{url}rev/{node|short}{sessionvars%urlparameter}">changeset</a></li>
@@ -38,7 +39,7 @@
 files, or words in the commit message</div>
 </form>
 
-<div class="description">{desc|strip|escape|addbreaks}</div>
+<div class="description">{desc|strip|escape|addbreaks|nonempty}</div>
 
 <table id="changesetEntry">
 <tr>

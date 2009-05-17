@@ -1,8 +1,14 @@
-# monotone support for the convert extension
+# monotone.py - monotone support for the convert extension
+#
+#  Copyright 2008, 2009 Mikkel Fahnoe Jorgensen <mikkel@dvide.com> and
+#  others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-import os, re, time
+import os, re
 from mercurial import util
-from common import NoRepo, MissingTool, commit, converter_source, checktool
+from common import NoRepo, commit, converter_source, checktool
 from common import commandline
 from mercurial.i18n import _
 
@@ -13,6 +19,16 @@ class monotone_source(converter_source, commandline):
 
         self.ui = ui
         self.path = path
+
+        norepo = NoRepo (_("%s does not look like a monotone repo") % path)
+        if not os.path.exists(os.path.join(path, '_MTN')):
+            # Could be a monotone repository (SQLite db file)
+            try:
+                header = file(path, 'rb').read(16)
+            except:
+                header = ''
+            if header != 'SQLite format 3\x00':
+                raise norepo
 
         # regular expressions for parsing monotone output
         space    = r'\s*'
@@ -38,10 +54,6 @@ class monotone_source(converter_source, commandline):
         self.manifest = None
         self.files = None
         self.dirs  = None
-
-        norepo = NoRepo (_("%s does not look like a monotone repo") % path)
-        if not os.path.exists(path):
-            raise norepo
 
         checktool('mtn', abort=False)
 
@@ -81,19 +93,11 @@ class monotone_source(converter_source, commandline):
     def mtnisfile(self, name, rev):
         # a non-file could be a directory or a deleted or renamed file
         self.mtnloadmanifest(rev)
-        try:
-            self.files[name]
-            return True
-        except KeyError:
-            return False
+        return name in self.files
 
     def mtnisdir(self, name, rev):
         self.mtnloadmanifest(rev)
-        try:
-            self.dirs[name]
-            return True
-        except KeyError:
-            return False
+        return name in self.dirs
 
     def mtngetcerts(self, rev):
         certs = {"author":"<missing>", "date":"<missing>",
@@ -166,7 +170,8 @@ class monotone_source(converter_source, commandline):
                     # d2 => d3
                     ignoremove[tofile] = 1
             for tofile, fromfile in renamed.items():
-                self.ui.debug (_("copying file in renamed dir from '%s' to '%s'") 
+                self.ui.debug (_("copying file in renamed directory "
+                                 "from '%s' to '%s'")
                                % (fromfile, tofile), '\n')
                 files[tofile] = rev
                 copies[tofile] = fromfile
@@ -177,11 +182,8 @@ class monotone_source(converter_source, commandline):
 
     def getmode(self, name, rev):
         self.mtnloadmanifest(rev)
-        try:
-            node, attr = self.files[name]
-            return attr
-        except KeyError:
-            return ""
+        node, attr = self.files.get(name, (None, ""))
+        return attr
 
     def getfile(self, name, rev):
         if not self.mtnisfile(name, rev):

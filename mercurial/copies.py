@@ -2,16 +2,16 @@
 #
 # Copyright 2008 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-from node import nullid, nullrev
 from i18n import _
-import util, heapq
+import util
+import heapq
 
 def _nonoverlap(d1, d2, d3):
     "Return list of elements in d1 not in d2 or d3"
-    return util.sort([d for d in d1 if d not in d3 and d not in d2])
+    return sorted([d for d in d1 if d not in d3 and d not in d2])
 
 def _dirname(f):
     s = f.rfind("/")
@@ -20,18 +20,18 @@ def _dirname(f):
     return f[:s]
 
 def _dirs(files):
-    d = {}
+    d = set()
     for f in files:
         f = _dirname(f)
         while f not in d:
-            d[f] = True
+            d.add(f)
             f = _dirname(f)
     return d
 
 def _findoldnames(fctx, limit):
     "find files that path was copied from, back to linkrev limit"
     old = {}
-    seen = {}
+    seen = set()
     orig = fctx.path()
     visit = [(fctx, 0)]
     while visit:
@@ -39,7 +39,7 @@ def _findoldnames(fctx, limit):
         s = str(fc)
         if s in seen:
             continue
-        seen[s] = 1
+        seen.add(s)
         if fc.path() != orig and fc.path() not in old:
             old[fc.path()] = (depth, fc.path()) # remember depth
         if fc.rev() < limit and fc.rev() is not None:
@@ -47,7 +47,7 @@ def _findoldnames(fctx, limit):
         visit += [(p, depth - 1) for p in fc.parents()]
 
     # return old names sorted by depth
-    return [o[1] for o in util.sort(old.values())]
+    return [o[1] for o in sorted(old.values())]
 
 def _findlimit(repo, a, b):
     "find the earliest revision that's an ancestor of a or b but not both"
@@ -161,12 +161,12 @@ def copies(repo, c1, c2, ca, checkdirs=False):
     for f in u2:
         checkcopies(f, m2, m1)
 
-    diverge2 = {}
+    diverge2 = set()
     for of, fl in diverge.items():
         if len(fl) == 1:
             del diverge[of] # not actually divergent
         else:
-            diverge2.update(dict.fromkeys(fl)) # reverse map for below
+            diverge2.update(fl) # reverse map for below
 
     if fullcopy:
         repo.ui.debug(_("  all copies found (* = to merge, ! = divergent):\n"))
@@ -174,7 +174,7 @@ def copies(repo, c1, c2, ca, checkdirs=False):
             note = ""
             if f in copy: note += "*"
             if f in diverge2: note += "!"
-            repo.ui.debug(_("   %s -> %s %s\n") % (f, fullcopy[f], note))
+            repo.ui.debug("   %s -> %s %s\n" % (f, fullcopy[f], note))
     del diverge2
 
     if not fullcopy or not checkdirs:
@@ -184,7 +184,7 @@ def copies(repo, c1, c2, ca, checkdirs=False):
 
     # generate a directory move map
     d1, d2 = _dirs(m1), _dirs(m2)
-    invalid = {}
+    invalid = set()
     dirmove = {}
 
     # examine each file copy for a potential directory move, which is
@@ -196,13 +196,13 @@ def copies(repo, c1, c2, ca, checkdirs=False):
             continue
         elif dsrc in d1 and ddst in d1:
             # directory wasn't entirely moved locally
-            invalid[dsrc] = True
+            invalid.add(dsrc)
         elif dsrc in d2 and ddst in d2:
             # directory wasn't entirely moved remotely
-            invalid[dsrc] = True
+            invalid.add(dsrc)
         elif dsrc in dirmove and dirmove[dsrc] != ddst:
             # files from the same directory moved to two different places
-            invalid[dsrc] = True
+            invalid.add(dsrc)
         else:
             # looks good so far
             dirmove[dsrc + "/"] = ddst + "/"

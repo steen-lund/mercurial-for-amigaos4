@@ -1,13 +1,16 @@
-# highlight extension implementation file
+# highlight.py - highlight extension implementation file
+#
+#  Copyright 2007-2009 Adam Hupp <adam@hupp.org> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 #
 # The original module was split in an interface and an implementation
 # file to defer pygments loading and speedup extension setup.
 
 from mercurial import demandimport
 demandimport.ignore.extend(['pkgutil', 'pkg_resources', '__main__',])
-
-from mercurial import util
-from mercurial.templatefilters import filters
+from mercurial import util, encoding
 
 from pygments import highlight
 from pygments.util import ClassNotFound
@@ -30,19 +33,19 @@ def pygmentize(field, fctx, style, tmpl):
         return
 
     # avoid UnicodeDecodeError in pygments
-    text = util.tolocal(text)
+    text = encoding.tolocal(text)
 
     # To get multi-line strings right, we can't format line-by-line
     try:
         lexer = guess_lexer_for_filename(fctx.path(), text[:1024],
-                                         encoding=util._encoding)
+                                         encoding=encoding.encoding)
     except (ClassNotFound, ValueError):
         try:
-            lexer = guess_lexer(text[:1024], encoding=util._encoding)
+            lexer = guess_lexer(text[:1024], encoding=encoding.encoding)
         except (ClassNotFound, ValueError):
-            lexer = TextLexer(encoding=util._encoding)
+            lexer = TextLexer(encoding=encoding.encoding)
 
-    formatter = HtmlFormatter(style=style, encoding=util._encoding)
+    formatter = HtmlFormatter(style=style, encoding=encoding.encoding)
 
     colorized = highlight(text, lexer, formatter)
     # strip wrapping div
@@ -50,7 +53,7 @@ def pygmentize(field, fctx, style, tmpl):
     colorized = colorized[colorized.find('<pre>')+5:]
     coloriter = iter(colorized.splitlines())
 
-    filters['colorize'] = lambda x: coloriter.next()
+    tmpl.filters['colorize'] = lambda x: coloriter.next()
 
     oldl = tmpl.cache[field]
     newl = oldl.replace('line|escape', 'line|colorize')

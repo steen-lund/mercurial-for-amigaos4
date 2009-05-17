@@ -2,11 +2,12 @@
 #
 # Copyright 2008 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
-import os, stat, osutil, util
+import osutil, util
+import os, stat
 
 _sha = util.sha1
 
@@ -136,7 +137,7 @@ def _calcmode(path):
         # files in .hg/ will be created using this mode
         mode = os.stat(path).st_mode
             # avoid some useless chmods
-        if (0777 & ~util._umask) == (0777 & mode):
+        if (0777 & ~util.umask) == (0777 & mode):
             mode = None
     except OSError:
         mode = None
@@ -172,7 +173,7 @@ class basicstore:
                         l.append((n, n, st.st_size))
                     elif kind == stat.S_IFDIR and recurse:
                         visit.append(fp)
-        return util.sort(l)
+        return sorted(l)
 
     def datafiles(self):
         return self._walk('data', True)
@@ -183,9 +184,7 @@ class basicstore:
         for x in self.datafiles():
             yield x
         # yield manifest before changelog
-        meta = self._walk('', False)
-        meta.reverse()
-        for x in meta:
+        for x in reversed(self._walk('', False)):
             yield x
 
     def copylist(self):
@@ -235,9 +234,7 @@ class fncacheopener(object):
         self.entries = None
 
     def loadfncache(self):
-        self.entries = {}
-        for f in fncache(self.opener):
-            self.entries[f] = True
+        self.entries = set(fncache(self.opener))
 
     def __call__(self, path, mode='r', *args, **kw):
         if mode not in ('r', 'rb') and path.startswith('data/'):
@@ -246,7 +243,7 @@ class fncacheopener(object):
             if path not in self.entries:
                 self.opener('fncache', 'ab').write(path + '\n')
                 # fncache may contain non-existent files after rollback / strip
-                self.entries[path] = True
+                self.entries.add(path)
         return self.opener(hybridencode(path), mode, *args, **kw)
 
 class fncachestore(basicstore):
