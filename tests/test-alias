@@ -10,6 +10,14 @@ cleanstatus = status -c
 unknown = bargle
 ambiguous = s
 recursive = recursive
+mylog = log
+lognull = log -r null
+shortlog = log --template '{rev} {node|short} | {date|isodate}\n'
+
+[defaults]
+mylog = -q
+lognull = -q
+log = -v
 EOF
 
 echo '% basic'
@@ -30,3 +38,10 @@ hg ci -Amfoo
 
 echo '% with opts'
 hg cleanst
+
+echo '% with opts and whitespace'
+hg shortlog
+
+echo '% interaction with defaults'
+hg mylog
+hg lognull

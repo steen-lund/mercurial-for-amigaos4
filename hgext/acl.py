@@ -2,8 +2,8 @@
 #
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 #
 # this hook allows to allow or deny access to parts of a repo when
 # taking incoming changesets.
@@ -74,7 +74,7 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
     user = getpass.getuser()
     cfg = ui.config('acl', 'config')
     if cfg:
-        ui.readsections(cfg, 'acl.allow', 'acl.deny')
+        ui.readconfig(cfg, sections = ['acl.allow', 'acl.deny'])
     allow = buildmatch(ui, repo, user, 'acl.allow')
     deny = buildmatch(ui, repo, user, 'acl.deny')
 

@@ -3,13 +3,13 @@
 # Copyright 2006 Brendan Cully <brendan@kublai.com>
 # Copyright 2007 Chris Mason <chris.mason@oracle.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 from node import hex, nullid, short
-import base85, cmdutil, mdiff, util, revlog, diffhelpers, copies
-import cStringIO, email.Parser, os, re, errno, math
+import base85, cmdutil, mdiff, util, diffhelpers, copies
+import cStringIO, email.Parser, os, re, math
 import sys, tempfile, zlib
 
 gitre = re.compile('diff --git a/(.*) b/(.*)')
@@ -421,11 +421,12 @@ class patchfile:
                             f = self.ui.note
                         offset = l - orig_start - fuzzlen
                         if offset == 1:
-                            linestr = "line"
+                            msg = _("Hunk #%d succeeded at %d %s"
+                                    "(offset %d line).\n")
                         else:
-                            linestr = "lines"
-                        f(_("Hunk #%d succeeded at %d %s(offset %d %s).\n") %
-                          (h.number, l+1, fuzzstr, offset, linestr))
+                            msg = _("Hunk #%d succeeded at %d %s"
+                                    "(offset %d lines).\n")
+                        f(msg % (h.number, l+1, fuzzstr, offset))
                         return fuzzlen
         self.printfile(True)
         self.ui.warn(_("Hunk #%d FAILED at %d\n") % (h.number, orig_start))
@@ -451,11 +452,11 @@ class hunk:
         if not m:
             raise PatchError(_("bad hunk #%d") % self.number)
         self.starta, foo, self.lena, self.startb, foo2, self.lenb = m.groups()
-        if self.lena == None:
+        if self.lena is None:
             self.lena = 1
         else:
             self.lena = int(self.lena)
-        if self.lenb == None:
+        if self.lenb is None:
             self.lenb = 1
         else:
             self.lenb = int(self.lenb)
@@ -478,7 +479,7 @@ class hunk:
             raise PatchError(_("bad hunk #%d") % self.number)
         foo, self.starta, foo2, aend, foo3 = m.groups()
         self.starta = int(self.starta)
-        if aend == None:
+        if aend is None:
             aend = self.starta
         self.lena = int(aend) - self.starta
         if self.starta:
@@ -510,7 +511,7 @@ class hunk:
             raise PatchError(_("bad hunk #%d") % self.number)
         foo, self.startb, foo2, bend, foo3 = m.groups()
         self.startb = int(self.startb)
-        if bend == None:
+        if bend is None:
             bend = self.startb
         self.lenb = int(bend) - self.startb
         if self.startb:
@@ -869,9 +870,9 @@ def iterhunks(ui, fp, sourcefile=None):
             current_hunk = None
             gitworkdone = False
         if ((sourcefile or state == BFILE) and ((not context and x[0] == '@') or
-            ((context or context == None) and x.startswith('***************')))):
+            ((context is not False) and x.startswith('***************')))):
             try:
-                if context == None and x.startswith('***************'):
+                if context is None and x.startswith('***************'):
                     context = True
                 gpatch = changed.get(bfile)
                 create = afile == '/dev/null' or gpatch and gpatch.op == 'ADD'
@@ -1032,7 +1033,7 @@ def updatedir(ui, repo, patches, similarity=0):
     if not patches:
         return
     copies = []
-    removes = {}
+    removes = set()
     cfiles = patches.keys()
     cwd = repo.getcwd()
     if cwd:
@@ -1043,16 +1044,15 @@ def updatedir(ui, repo, patches, similarity=0):
             continue
         if gp.op == 'RENAME':
             copies.append((gp.oldpath, gp.path))
-            removes[gp.oldpath] = 1
+            removes.add(gp.oldpath)
         elif gp.op == 'COPY':
             copies.append((gp.oldpath, gp.path))
         elif gp.op == 'DELETE':
-            removes[gp.path] = 1
+            removes.add(gp.path)
     for src, dst in copies:
         repo.copy(src, dst)
-    removes = removes.keys()
     if (not similarity) and removes:
-        repo.remove(util.sort(removes), True)
+        repo.remove(sorted(removes), True)
     for f in patches:
         gp = patches[f]
         if gp and gp.mode:
@@ -1067,7 +1067,7 @@ def updatedir(ui, repo, patches, similarity=0):
     cmdutil.addremove(repo, cfiles, similarity=similarity)
     files = patches.keys()
     files.extend([r for r in removes if r not in files])
-    return util.sort(files)
+    return sorted(files)
 
 def externalpatch(patcher, args, patchname, ui, strip, cwd, files):
     """use <patcher> to apply <patchname> to the working directory.
@@ -1235,13 +1235,14 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None):
 
     if opts.git:
         copy, diverge = copies.copies(repo, ctx1, ctx2, repo[nullid])
+        copy = copy.copy()
         for k, v in copy.items():
             copy[v] = k
 
-    gone = {}
+    gone = set()
     gitmode = {'l': '120000', 'x': '100755', '': '100644'}
 
-    for f in util.sort(modified + added + removed):
+    for f in sorted(modified + added + removed):
         to = None
         tn = None
         dodiff = True
@@ -1260,7 +1261,7 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None):
                     _addmodehdr(header, omode, mode)
                     if a in removed and a not in gone:
                         op = 'rename'
-                        gone[a] = 1
+                        gone.add(a)
                     else:
                         op = 'copy'
                     header.append('%s from %s\n' % (op, a))

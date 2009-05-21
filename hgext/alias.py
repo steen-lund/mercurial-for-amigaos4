@@ -69,8 +69,12 @@ def uisetup(ui):
         if not target:
             ui.warn(_('*** [alias] %s: no definition\n') % cmd)
             continue
-        args = target.split(' ')
+        args = target.split(' ', 1)
         tcmd = args.pop(0)
         if args:
-            ui.setconfig('defaults', cmd, ' '.join(args))
+            args = args[0]
+            defaults = ui.config('defaults', cmd)
+            if defaults:
+                args = ' '.join((args, defaults))
+            ui.setconfig('defaults', cmd, args)
         cmdtable[cmd] = lazycommand(ui, cmd, tcmd)

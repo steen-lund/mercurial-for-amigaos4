@@ -1,21 +1,23 @@
-# util_win32.py - utility functions that use win32 API
+# win32.py - utility functions that use win32 API
 #
-# Copyright 2005 Matt Mackall <mpm@selenic.com>
-# Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
+# Copyright 2005-2009 Matt Mackall <mpm@selenic.com> and others
 #
-# This software may be used and distributed according to the terms of
-# the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-# Mark Hammond's win32all package allows better functionality on
-# Windows.  this module overrides definitions in util.py.  if not
-# available, import of this module will fail, and generic code will be
-# used.
+"""Utility functions that use win32 API.
+
+Mark Hammond's win32all package allows better functionality on
+Windows. This module overrides definitions in util.py. If not
+available, import of this module will fail, and generic code will be
+used.
+"""
 
 import win32api
 
 import errno, os, sys, pywintypes, win32con, win32file, win32process
 import cStringIO, winerror
-import osutil
+import osutil, encoding
 import util
 from win32com.shell import shell,shellcon
 
@@ -129,9 +131,15 @@ class WinError(Exception):
         }
 
     def __init__(self, err):
-        self.win_errno, self.win_function, self.win_strerror = err
-        if self.win_strerror.endswith('.'):
-            self.win_strerror = self.win_strerror[:-1]
+        try:
+            # unpack a pywintypes.error tuple
+            self.win_errno, self.win_function, self.win_strerror = err
+        except ValueError:
+            # get attributes from a WindowsError
+            self.win_errno = err.winerror
+            self.win_function = None
+            self.win_strerror = err.strerror
+        self.win_strerror = self.win_strerror.rstrip('.')
 
 class WinIOError(WinError, IOError):
     def __init__(self, err, filename=None):
@@ -212,7 +220,7 @@ def lookup_reg(key, valname=None, scope=None):
         try:
             val = QueryValueEx(OpenKey(s, key), valname)[0]
             # never let a Unicode string escape into the wild
-            return util.tolocal(val.encode('UTF-8'))
+            return encoding.tolocal(val.encode('UTF-8'))
         except EnvironmentError:
             pass
 
@@ -256,114 +264,9 @@ def user_rcpath_win32():
     return [os.path.join(userdir, 'mercurial.ini'),
             os.path.join(userdir, '.hgrc')]
 
-class posixfile_nt(object):
-    '''file object with posix-like semantics.  on windows, normal
-    files can not be deleted or renamed if they are open. must open
-    with win32file.FILE_SHARE_DELETE. this flag does not exist on
-    windows < nt, so do not use this class there.'''
-
-    # tried to use win32file._open_osfhandle to pass fd to os.fdopen,
-    # but does not work at all. wrap win32 file api instead.
-
-    def __init__(self, name, mode='rb'):
-        self.closed = False
-        self.name = name
-        self.mode = mode
-        access = 0
-        if 'r' in mode or '+' in mode:
-            access |= win32file.GENERIC_READ
-        if 'w' in mode or 'a' in mode or '+' in mode:
-            access |= win32file.GENERIC_WRITE
-        if 'r' in mode:
-            creation = win32file.OPEN_EXISTING
-        elif 'a' in mode:
-            creation = win32file.OPEN_ALWAYS
-        else:
-            creation = win32file.CREATE_ALWAYS
-        try:
-            self.handle = win32file.CreateFile(name,
-                                               access,
-                                               win32file.FILE_SHARE_READ |
-                                               win32file.FILE_SHARE_WRITE |
-                                               win32file.FILE_SHARE_DELETE,
-                                               None,
-                                               creation,
-                                               win32file.FILE_ATTRIBUTE_NORMAL,
-                                               0)
-        except pywintypes.error, err:
-            raise WinIOError(err, name)
-
-    def __iter__(self):
-        for line in self.readlines():
-            yield line
-
-    def read(self, count=-1):
-        try:
-            cs = cStringIO.StringIO()
-            while count:
-                wincount = int(count)
-                if wincount == -1:
-                    wincount = 1048576
-                val, data = win32file.ReadFile(self.handle, wincount)
-                if not data: break
-                cs.write(data)
-                if count != -1:
-                    count -= len(data)
-            return cs.getvalue()
-        except pywintypes.error, err:
-            raise WinIOError(err)
-
-    def readlines(self, sizehint=None):
-        # splitlines() splits on single '\r' while readlines()
-        # does not. cStringIO has a well behaving readlines() and is fast.
-        return cStringIO.StringIO(self.read()).readlines()
-
-    def write(self, data):
-        try:
-            if 'a' in self.mode:
-                win32file.SetFilePointer(self.handle, 0, win32file.FILE_END)
-            nwrit = 0
-            while nwrit < len(data):
-                val, nwrit = win32file.WriteFile(self.handle, data)
-                data = data[nwrit:]
-        except pywintypes.error, err:
-            raise WinIOError(err)
-
-    def writelines(self, sequence):
-        for s in sequence:
-            self.write(s)
-
-    def seek(self, pos, whence=0):
-        try:
-            win32file.SetFilePointer(self.handle, int(pos), whence)
-        except pywintypes.error, err:
-            raise WinIOError(err)
-
-    def tell(self):
-        try:
-            return win32file.SetFilePointer(self.handle, 0,
-                                            win32file.FILE_CURRENT)
-        except pywintypes.error, err:
-            raise WinIOError(err)
-
-    def close(self):
-        if not self.closed:
-            self.handle = None
-            self.closed = True
-
-    def flush(self):
-        # we have no application-level buffering
-        pass
-
-    def truncate(self, pos=0):
-        try:
-            win32file.SetFilePointer(self.handle, int(pos),
-                                     win32file.FILE_BEGIN)
-            win32file.SetEndOfFile(self.handle)
-        except pywintypes.error, err:
-            raise WinIOError(err)
-
-getuser_fallback = win32api.GetUserName
+def getuser():
+    '''return name of current user'''
+    return win32api.GetUserName()
 
 def set_signal_handler_win32():
     """Register a termination handler for console events including
@@ -373,3 +276,4 @@ def set_signal_handler_win32():
     def handler(event):
         win32process.ExitProcess(1)
     win32api.SetConsoleCtrlHandler(handler)
+

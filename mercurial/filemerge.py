@@ -2,12 +2,13 @@
 #
 # Copyright 2006, 2007, 2008 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-from node import nullrev, short
+from node import short
 from i18n import _
-import util, os, tempfile, simplemerge, re, filecmp
+import util, simplemerge
+import os, tempfile, re, filecmp
 
 def _toolstr(ui, tool, part, default=""):
     return ui.config("merge-tools", tool + "." + part, default)
@@ -66,7 +67,7 @@ def _picktool(repo, ui, path, binary, symlink):
         if t not in tools:
             tools[t] = int(_toolstr(ui, t, "priority", "0"))
     names = tools.keys()
-    tools = util.sort([(-p,t) for t,p in tools.items()])
+    tools = sorted([(-p,t) for t,p in tools.items()])
     uimerge = ui.config("ui", "merge")
     if uimerge:
         if uimerge not in names:
@@ -143,7 +144,7 @@ def filemerge(repo, mynode, orig, fcd, fco, fca):
         tool = "internal:local"
         if ui.prompt(_(" no tool found to merge %s\n"
                        "keep (l)ocal or take (o)ther?") % fd,
-                     _("[lo]"), _("l")) != _("l"):
+                     (_("&Local"), _("&Other")), _("l")) != _("l"):
             tool = "internal:other"
     if tool == "internal:local":
         return 0
@@ -170,7 +171,7 @@ def filemerge(repo, mynode, orig, fcd, fco, fca):
 
     # do we attempt to simplemerge first?
     if _toolbool(ui, tool, "premerge", not (binary or symlink)):
-        r = simplemerge.simplemerge(a, b, c, quiet=True)
+        r = simplemerge.simplemerge(ui, a, b, c, quiet=True)
         if not r:
             ui.debug(_(" premerge successful\n"))
             os.unlink(back)
@@ -187,7 +188,7 @@ def filemerge(repo, mynode, orig, fcd, fco, fca):
                HG_BASE_ISLINK='l' in fca.flags())
 
     if tool == "internal:merge":
-        r = simplemerge.simplemerge(a, b, c, label=['local', 'other'])
+        r = simplemerge.simplemerge(ui, a, b, c, label=['local', 'other'])
     else:
         args = _toolstr(ui, tool, "args", '$local $base $other')
         if "$output" in args:
@@ -205,7 +206,7 @@ def filemerge(repo, mynode, orig, fcd, fco, fca):
         if filecmp.cmp(repo.wjoin(fd), back):
             if ui.prompt(_(" output file %s appears unchanged\n"
                 "was merge successful (yn)?") % fd,
-                _("[yn]"), _("n")) != _("y"):
+                (_("&Yes"), _("&No")), _("n")) != _("y"):
                 r = 1
 
     if _toolbool(ui, tool, "fixeol"):

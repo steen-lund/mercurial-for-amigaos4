@@ -3,83 +3,92 @@
 # Copyright 21 May 2005 - (c) 2005 Jake Edge <jake@edge2.net>
 # Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-import os
+import os, time
 from mercurial.i18n import _
-from mercurial import ui, hg, util, templater, templatefilters, error
-from common import ErrorResponse, get_mtime, staticfile, style_map, paritygen,\
+from mercurial import ui, hg, util, templater
+from mercurial import error, encoding
+from common import ErrorResponse, get_mtime, staticfile, paritygen,\
                    get_contact, HTTP_OK, HTTP_NOT_FOUND, HTTP_SERVER_ERROR
 from hgweb_mod import hgweb
 from request import wsgirequest
+import webutil
 
-# This is a stopgap
+def cleannames(items):
+    return [(util.pconvert(name).strip('/'), path) for name, path in items]
+
+def findrepos(paths):
+    repos = {}
+    for prefix, root in cleannames(paths):
+        roothead, roottail = os.path.split(root)
+        # "foo = /bar/*" makes every subrepo of /bar/ to be
+        # mounted as foo/subrepo
+        # and "foo = /bar/**" also recurses into the subdirectories,
+        # remember to use it without working dir.
+        try:
+            recurse = {'*': False, '**': True}[roottail]
+        except KeyError:
+            repos[prefix] = root
+            continue
+        roothead = os.path.normpath(roothead)
+        for path in util.walkrepos(roothead, followsym=True, recurse=recurse):
+            path = os.path.normpath(path)
+            name = util.pconvert(path[len(roothead):]).strip('/')
+            if prefix:
+                name = prefix + '/' + name
+            repos[name] = path
+    return repos.items()
+
 class hgwebdir(object):
-    def __init__(self, config, parentui=None):
-        def cleannames(items):
-            return [(util.pconvert(name).strip('/'), path)
-                    for name, path in items]
+    refreshinterval = 20
 
-        self.parentui = parentui or ui.ui(report_untrusted=False,
-                                          interactive = False)
-        self.motd = None
-        self.style = 'paper'
-        self.stripecount = None
-        self.repos_sorted = ('name', False)
-        self._baseurl = None
-        if isinstance(config, (list, tuple)):
-            self.repos = cleannames(config)
-            self.repos_sorted = ('', False)
-        elif isinstance(config, dict):
-            self.repos = util.sort(cleannames(config.items()))
+    def __init__(self, conf, baseui=None):
+        self.conf = conf
+        self.baseui = baseui
+        self.lastrefresh = 0
+        self.refresh()
+
+    def refresh(self):
+        if self.lastrefresh + self.refreshinterval > time.time():
+            return
+
+        if self.baseui:
+            self.ui = self.baseui.copy()
         else:
-            if isinstance(config, util.configparser):
-                cp = config
-            else:
-                cp = util.configparser()
-                cp.read(config)
-            self.repos = []
-            if cp.has_section('web'):
-                if cp.has_option('web', 'motd'):
-                    self.motd = cp.get('web', 'motd')
-                if cp.has_option('web', 'style'):
-                    self.style = cp.get('web', 'style')
-                if cp.has_option('web', 'stripes'):
-                    self.stripecount = int(cp.get('web', 'stripes'))
-                if cp.has_option('web', 'baseurl'):
-                    self._baseurl = cp.get('web', 'baseurl')
-            if cp.has_section('paths'):
-                paths = cleannames(cp.items('paths'))
-                for prefix, root in paths:
-                    roothead, roottail = os.path.split(root)
-                    # "foo = /bar/*" makes every subrepo of /bar/ to be
-                    # mounted as foo/subrepo
-                    # and "foo = /bar/**" does even recurse inside the
-                    # subdirectories, remember to use it without working dir.
-                    try:
-                        recurse = {'*': False, '**': True}[roottail]
-                    except KeyError:
-                        self.repos.append((prefix, root))
-                        continue
-                    roothead = os.path.normpath(roothead)
-                    for path in util.walkrepos(roothead, followsym=True,
-                                               recurse=recurse):
-                        path = os.path.normpath(path)
-                        name = util.pconvert(path[len(roothead):]).strip('/')
-                        if prefix:
-                            name = prefix + '/' + name
-                        self.repos.append((name, path))
-            if cp.has_section('collections'):
-                for prefix, root in cp.items('collections'):
-                    prefix = util.pconvert(prefix)
-                    for path in util.walkrepos(root, followsym=True):
-                        repo = os.path.normpath(path)
-                        name = util.pconvert(repo)
-                        if name.startswith(prefix):
-                            name = name[len(prefix):]
-                        self.repos.append((name.lstrip('/'), repo))
-            self.repos.sort()
+            self.ui = ui.ui()
+            self.ui.setconfig('ui', 'report_untrusted', 'off')
+            self.ui.setconfig('ui', 'interactive', 'off')
+
+        self.motd = self.ui.config('web', 'motd')
+        self.style = self.ui.config('web', 'style', 'paper')
+        self.stripecount = self.ui.config('web', 'stripes', 1)
+        if self.stripecount:
+            self.stripecount = int(self.stripecount)
+        self._baseurl = self.ui.config('web', 'baseurl')
+
+        if not isinstance(self.conf, (dict, list, tuple)):
+            map = {'paths': 'hgweb-paths'}
+            self.ui.readconfig(self.conf, remap=map, trust=True)
+            paths = self.ui.configitems('hgweb-paths')
+        elif isinstance(self.conf, (list, tuple)):
+            paths = self.conf
+        elif isinstance(self.conf, dict):
+            paths = self.conf.items()
+
+        self.repos = findrepos(paths)
+        for prefix, root in self.ui.configitems('collections'):
+            prefix = util.pconvert(prefix)
+            for path in util.walkrepos(root, followsym=True):
+                repo = os.path.normpath(path)
+                name = util.pconvert(repo)
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                self.repos.append((name.lstrip('/'), repo))
+
+        self.repos.sort()
+        self.lastrefresh = time.time()
 
     def run(self):
         if not os.environ.get('GATEWAY_INTERFACE', '').startswith("CGI/1."):
@@ -114,13 +123,13 @@ class hgwebdir(object):
         return False
 
     def run_wsgi(self, req):
-
         try:
             try:
+                self.refresh()
 
                 virtual = req.env.get("PATH_INFO", "").strip('/')
                 tmpl = self.templater(req)
-                ctype = tmpl('mimetype', encoding=util._encoding)
+                ctype = tmpl('mimetype', encoding=encoding.encoding)
                 ctype = templater.stringify(ctype)
 
                 # a static file
@@ -145,7 +154,7 @@ class hgwebdir(object):
                     if real:
                         req.env['REPO_NAME'] = virtual
                         try:
-                            repo = hg.repository(self.parentui, real)
+                            repo = hg.repository(self.ui, real)
                             return hgweb(repo).run_wsgi(req)
                         except IOError, inst:
                             msg = inst.strerror
@@ -184,19 +193,8 @@ class hgwebdir(object):
                     yield {"type" : i[0], "extension": i[1],
                            "node": nodeid, "url": url}
 
+        sortdefault = 'name', False
         def entries(sortcolumn="", descending=False, subdir="", **map):
-            def sessionvars(**map):
-                fields = []
-                if 'style' in req.form:
-                    style = req.form['style'][0]
-                    if style != get('web', 'style', ''):
-                        fields.append(('style', style))
-
-                separator = url[-1] == '?' and ';' or '?'
-                for name, value in fields:
-                    yield dict(name=name, value=value, separator=separator)
-                    separator = ';'
-
             rows = []
             parity = paritygen(self.stripecount)
             for name, path in self.repos:
@@ -204,7 +202,7 @@ class hgwebdir(object):
                     continue
                 name = name[len(subdir):]
 
-                u = ui.ui(parentui=self.parentui)
+                u = self.ui.copy()
                 try:
                     u.readconfig(os.path.join(path, '.hg', 'hgrc'))
                 except Exception, e:
@@ -244,10 +242,8 @@ class hgwebdir(object):
                            description_sort=description.upper() or "unknown",
                            lastchange=d,
                            lastchange_sort=d[1]-d[0],
-                           sessionvars=sessionvars,
                            archives=archivelist(u, "tip", url))
-                if (not sortcolumn
-                    or (sortcolumn, descending) == self.repos_sorted):
+                if (not sortcolumn or (sortcolumn, descending) == sortdefault):
                     # fast path for unsorted output
                     row['parity'] = parity.next()
                     yield row
@@ -261,8 +257,9 @@ class hgwebdir(object):
                     row['parity'] = parity.next()
                     yield row
 
+        self.refresh()
         sortable = ["name", "description", "contact", "lastchange"]
-        sortcolumn, descending = self.repos_sorted
+        sortcolumn, descending = sortdefault
         if 'sort' in req.form:
             sortcolumn = req.form['sort'][0]
             descending = sortcolumn.startswith('-')
@@ -276,6 +273,7 @@ class hgwebdir(object):
                             and "-" or "", column))
                 for column in sortable]
 
+        self.refresh()
         if self._baseurl is not None:
             req.env['SCRIPT_NAME'] = self._baseurl
 
@@ -286,7 +284,7 @@ class hgwebdir(object):
     def templater(self, req):
 
         def header(**map):
-            yield tmpl('header', encoding=util._encoding, **map)
+            yield tmpl('header', encoding=encoding.encoding, **map)
 
         def footer(**map):
             yield tmpl("footer", **map)
@@ -298,7 +296,7 @@ class hgwebdir(object):
                 yield config('web', 'motd', '')
 
         def config(section, name, default=None, untrusted=True):
-            return self.parentui.config(section, name, default, untrusted)
+            return self.ui.config(section, name, default, untrusted)
 
         if self._baseurl is not None:
             req.env['SCRIPT_NAME'] = self._baseurl
@@ -307,22 +305,24 @@ class hgwebdir(object):
         if not url.endswith('/'):
             url += '/'
 
+        vars = {}
+        style = self.style
+        if 'style' in req.form:
+            vars['style'] = style = req.form['style'][0]
+        start = url[-1] == '?' and '&' or '?'
+        sessionvars = webutil.sessionvars(vars, start)
+
         staticurl = config('web', 'staticurl') or url + 'static/'
         if not staticurl.endswith('/'):
             staticurl += '/'
 
-        style = self.style
-        if style is None:
-            style = config('web', 'style', '')
-        if 'style' in req.form:
-            style = req.form['style'][0]
-        if self.stripecount is None:
-            self.stripecount = int(config('web', 'stripes', 1))
-        mapfile = style_map(templater.templatepath(), style)
-        tmpl = templater.templater(mapfile, templatefilters.filters,
+        style = 'style' in req.form and req.form['style'][0] or self.style
+        mapfile = templater.stylemap(style)
+        tmpl = templater.templater(mapfile,
                                    defaults={"header": header,
                                              "footer": footer,
                                              "motd": motd,
                                              "url": url,
-                                             "staticurl": staticurl})
+                                             "staticurl": staticurl,
+                                             "sessionvars": sessionvars})
         return tmpl

@@ -1,4 +1,10 @@
-# bzr support for the convert extension
+# bzr.py - bzr support for the convert extension
+#
+#  Copyright 2008, 2009 Marek Kubica <marek@xivilization.net> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 # This module is for handling 'bzr', that was formerly known as Bazaar-NG;
 # it cannot access 'bar' repositories, but they were never used very much
 
@@ -29,19 +35,40 @@ class bzr_source(converter_source):
     def __init__(self, ui, path, rev=None):
         super(bzr_source, self).__init__(ui, path, rev=rev)
 
+        if not os.path.exists(os.path.join(path, '.bzr')):
+            raise NoRepo('%s does not look like a Bazaar repo' % path)
+
         try:
             # access bzrlib stuff
             branch
         except NameError:
             raise NoRepo('Bazaar modules could not be loaded')
 
-        if not os.path.exists(os.path.join(path, '.bzr')):
-            raise NoRepo('%s does not look like a Bazaar repo' % path)
-
         path = os.path.abspath(path)
+        self._checkrepotype(path)
         self.branch = branch.Branch.open(path)
         self.sourcerepo = self.branch.repository
         self._parentids = {}
+
+    def _checkrepotype(self, path):
+        # Lightweight checkouts detection is informational but probably
+        # fragile at API level. It should not terminate the conversion.
+        try:
+            from bzrlib import bzrdir
+            dir = bzrdir.BzrDir.open_containing(path)[0]
+            try:
+                tree = dir.open_workingtree(recommend_upgrade=False)
+                branch = tree.branch
+            except (errors.NoWorkingTree, errors.NotLocalUrl), e:
+                tree = None
+                branch = dir.open_branch()
+            if (tree is not None and tree.bzrdir.root_transport.base !=
+                branch.bzrdir.root_transport.base):
+                self.ui.warn(_('warning: lightweight checkouts may cause '
+                               'conversion failures, try with a regular '
+                               'branch instead.\n'))
+        except:
+            self.ui.note(_('bzr source type could not be determined\n'))
 
     def before(self):
         """Before the conversion begins, acquire a read lock
@@ -114,8 +141,7 @@ class bzr_source(converter_source):
             self._parentids[version] = parents
 
         return commit(parents=parents,
-                # bzr uses 1 second timezone precision
-                date='%d %d' % (rev.timestamp, rev.timezone / 3600),
+                date='%d %d' % (rev.timestamp, -rev.timezone),
                 author=self.recode(rev.committer),
                 # bzr returns bytestrings or unicode, depending on the content
                 desc=self.recode(rev.message),

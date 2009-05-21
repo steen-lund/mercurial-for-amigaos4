@@ -3,12 +3,13 @@
 # Copyright 2005, 2006 Chris Mason <mason@suse.com>
 # Copyright 2007 Matt Mackall
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-import changegroup, os
+import changegroup
 from node import nullrev, short
 from i18n import _
+import os
 
 def _bundle(repo, bases, heads, node, suffix, extranodes=None):
     """create a bundle with the specified revisions as a backup"""
@@ -22,17 +23,12 @@ def _bundle(repo, bases, heads, node, suffix, extranodes=None):
 
 def _collectfiles(repo, striprev):
     """find out the filelogs affected by the strip"""
-    files = {}
+    files = set()
 
     for x in xrange(striprev, len(repo)):
-        for name in repo[x].files():
-            if name in files:
-                continue
-            files[name] = 1
+        files.update(repo[x].files())
 
-    files = files.keys()
-    files.sort()
-    return files
+    return sorted(files)
 
 def _collectextranodes(repo, files, link):
     """return the nodes that have to be saved before the strip"""
@@ -81,30 +77,28 @@ def strip(ui, repo, node, backup="all"):
     # the list of heads and bases of the set of interesting revisions.
     # (head = revision in the set that has no descendant in the set;
     #  base = revision in the set that has no ancestor in the set)
-    tostrip = {striprev: 1}
-    saveheads = {}
+    tostrip = set((striprev,))
+    saveheads = set()
     savebases = []
     for r in xrange(striprev + 1, len(cl)):
         parents = cl.parentrevs(r)
         if parents[0] in tostrip or parents[1] in tostrip:
             # r is a descendant of striprev
-            tostrip[r] = 1
+            tostrip.add(r)
             # if this is a merge and one of the parents does not descend
             # from striprev, mark that parent as a savehead.
             if parents[1] != nullrev:
                 for p in parents:
                     if p not in tostrip and p > striprev:
-                        saveheads[p] = 1
+                        saveheads.add(p)
         else:
             # if no parents of this revision will be stripped, mark it as
             # a savebase
             if parents[0] < striprev and parents[1] < striprev:
                 savebases.append(cl.node(r))
 
-            for p in parents:
-                if p in saveheads:
-                    del saveheads[p]
-            saveheads[r] = 1
+            saveheads.difference_update(parents)
+            saveheads.add(r)
 
     saveheads = [cl.node(r) for r in saveheads]
     files = _collectfiles(repo, striprev)
@@ -118,11 +112,27 @@ def strip(ui, repo, node, backup="all"):
         chgrpfile = _bundle(repo, savebases, saveheads, node, 'temp',
                             extranodes)
 
-    cl.strip(striprev)
-    repo.manifest.strip(striprev)
-    for name in files:
-        f = repo.file(name)
-        f.strip(striprev)
+    fs = [repo.file(name) for name in files]
+    mfst = repo.manifest
+
+    tr = repo.transaction()
+    offset = len(tr.entries)
+
+    tr.startgroup()
+    cl.strip(striprev, tr)
+    mfst.strip(striprev, tr)
+    for f in fs:
+        f.strip(striprev, tr)
+    tr.endgroup()
+
+    try:
+        for i in xrange(offset, len(tr.entries)):
+            file, troffset, ignore = tr.entries[i]
+            repo.sopener(file, 'a').truncate(troffset)
+        tr.close()
+    except:
+        tr.abort()
+        raise
 
     if saveheads or extranodes:
         ui.status(_("adding branch\n"))

@@ -1,19 +1,19 @@
-"""
-dirstate.py - working directory tracking for mercurial
-
-Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
-
-This software may be used and distributed according to the terms
-of the GNU General Public License, incorporated herein by reference.
-"""
+# dirstate.py - working directory tracking for mercurial
+#
+# Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import nullid
 from i18n import _
-import struct, os, stat, util, errno, ignore
-import cStringIO, osutil, sys, parsers
+import util, ignore, osutil, parsers
+import struct, os, stat, errno
+import cStringIO, sys
 
 _unknown = ('?', 0, 0, 0)
 _format = ">cllll"
+propertycache = util.propertycache
 
 def _finddirs(path):
     pos = path.rfind('/')
@@ -45,70 +45,77 @@ class dirstate(object):
         self._dirtypl = False
         self._ui = ui
 
-    def __getattr__(self, name):
-        if name == '_map':
-            self._read()
-            return self._map
-        elif name == '_copymap':
-            self._read()
-            return self._copymap
-        elif name == '_foldmap':
-            _foldmap = {}
-            for name in self._map:
-                norm = os.path.normcase(name)
-                _foldmap[norm] = name
-            self._foldmap = _foldmap
-            return self._foldmap
-        elif name == '_branch':
-            try:
-                self._branch = (self._opener("branch").read().strip()
-                                or "default")
-            except IOError:
-                self._branch = "default"
-            return self._branch
-        elif name == '_pl':
-            self._pl = [nullid, nullid]
-            try:
-                st = self._opener("dirstate").read(40)
-                if len(st) == 40:
-                    self._pl = st[:20], st[20:40]
-            except IOError, err:
-                if err.errno != errno.ENOENT: raise
-            return self._pl
-        elif name == '_dirs':
-            dirs = {}
-            for f,s in self._map.iteritems():
-                if s[0] != 'r':
-                    _incdirs(dirs, f)
-            self._dirs = dirs
-            return self._dirs
-        elif name == '_ignore':
-            files = [self._join('.hgignore')]
-            for name, path in self._ui.configitems("ui"):
-                if name == 'ignore' or name.startswith('ignore.'):
-                    files.append(os.path.expanduser(path))
-            self._ignore = ignore.ignore(self._root, files, self._ui.warn)
-            return self._ignore
-        elif name == '_slash':
-            self._slash = self._ui.configbool('ui', 'slash') and os.sep != '/'
-            return self._slash
-        elif name == '_checklink':
-            self._checklink = util.checklink(self._root)
-            return self._checklink
-        elif name == '_checkexec':
-            self._checkexec = util.checkexec(self._root)
-            return self._checkexec
-        elif name == '_checkcase':
-            self._checkcase = not util.checkcase(self._join('.hg'))
-            return self._checkcase
-        elif name == 'normalize':
-            if self._checkcase:
-                self.normalize = self._normalize
-            else:
-                self.normalize = lambda x, y=False: x
-            return self.normalize
-        else:
-            raise AttributeError(name)
+    @propertycache
+    def _map(self):
+        self._read()
+        return self._map
+
+    @propertycache
+    def _copymap(self):
+        self._read()
+        return self._copymap
+
+    @propertycache
+    def _foldmap(self):
+        f = {}
+        for name in self._map:
+            f[os.path.normcase(name)] = name
+        return f
+
+    @propertycache
+    def _branch(self):
+        try:
+            return self._opener("branch").read().strip() or "default"
+        except IOError:
+            return "default"
+
+    @propertycache
+    def _pl(self):
+        try:
+            st = self._opener("dirstate").read(40)
+            if len(st) == 40:
+                return st[:20], st[20:40]
+        except IOError, err:
+            if err.errno != errno.ENOENT: raise
+        return [nullid, nullid]
+
+    @propertycache
+    def _dirs(self):
+        dirs = {}
+        for f,s in self._map.iteritems():
+            if s[0] != 'r':
+                _incdirs(dirs, f)
+        return dirs
+
+    @propertycache
+    def _ignore(self):
+        files = [self._join('.hgignore')]
+        for name, path in self._ui.configitems("ui"):
+            if name == 'ignore' or name.startswith('ignore.'):
+                files.append(os.path.expanduser(path))
+        return ignore.ignore(self._root, files, self._ui.warn)
+
+    @propertycache
+    def _slash(self):
+        return self._ui.configbool('ui', 'slash') and os.sep != '/'
+
+    @propertycache
+    def _checklink(self):
+        return util.checklink(self._root)
+
+    @propertycache
+    def _checkexec(self):
+        return util.checkexec(self._root)
+
+    @propertycache
+    def _checkcase(self):
+        return not util.checkcase(self._join('.hg'))
+
+    @propertycache
+    def normalize(self):
+        if self._checkcase:
+            return self._normalize
+        return lambda x, y=False: x
 
     def _join(self, f):
         # much faster than os.path.join()
@@ -177,7 +184,7 @@ class dirstate(object):
         return key in self._map
 
     def __iter__(self):
-        for x in util.sort(self._map):
+        for x in sorted(self._map):
             yield x
 
     def parents(self):
@@ -421,7 +428,7 @@ class dirstate(object):
             badfn = match.bad
 
         def badtype(f, mode):
-            kind = 'unknown'
+            kind = _('unknown')
             if stat.S_ISCHR(mode): kind = _('character device')
             elif stat.S_ISBLK(mode): kind = _('block device')
             elif stat.S_ISFIFO(mode): kind = _('fifo')
@@ -454,13 +461,13 @@ class dirstate(object):
         work = []
         wadd = work.append
 
-        files = util.unique(match.files())
+        files = set(match.files())
         if not files or '.' in files:
             files = ['']
         results = {'.hg': None}
 
         # step 1: find all explicit files
-        for ff in util.sort(files):
+        for ff in sorted(files):
             nf = normalize(normpath(ff))
             if nf in results:
                 continue
@@ -526,7 +533,7 @@ class dirstate(object):
                         results[nf] = None
 
         # step 3: report unseen items in the dmap hash
-        visit = util.sort([f for f in dmap if f not in results and match(f)])
+        visit = sorted([f for f in dmap if f not in results and matchfn(f)])
         for nf, st in zip(visit, util.statfiles([join(i) for i in visit])):
             if not st is None and not getkind(st.st_mode) in (regkind, lnkkind):
                 st = None

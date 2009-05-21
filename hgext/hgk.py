@@ -2,22 +2,23 @@
 #
 # Copyright 2005, 2006 Chris Mason <mason@suse.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 '''browsing the repository in a graphical way
 
 The hgk extension allows browsing the history of a repository in a
-graphical way. It requires Tcl/Tk version 8.4 or later. (Tcl/Tk is
-not distributed with Mercurial.)
+graphical way. It requires Tcl/Tk version 8.4 or later. (Tcl/Tk is not
+distributed with Mercurial.)
 
 hgk consists of two parts: a Tcl script that does the displaying and
 querying of information, and an extension to mercurial named hgk.py,
 which provides hooks for hgk to get information. hgk can be found in
 the contrib directory, and hgk.py can be found in the hgext directory.
 
-To load the hgext.py extension, add it to your .hgrc file (you have
-to use your global $HOME/.hgrc file, not one in a repository). You
-can specify an absolute path:
+To load the hgext.py extension, add it to your .hgrc file (you have to
+use your global $HOME/.hgrc file, not one in a repository). You can
+specify an absolute path:
 
   [extensions]
   hgk=/usr/local/lib/hgk.py
@@ -29,8 +30,8 @@ named 'hgk.py' if you set hgk empty:
   hgk=
 
 The hg view command will launch the hgk Tcl script. For this command
-to work, hgk must be in your search path. Alternately, you can
-specify the path to hgk in your .hgrc file:
+to work, hgk must be in your search path. Alternately, you can specify
+the path to hgk in your .hgrc file:
 
   [hgk]
   path=/location/of/hgk
@@ -230,17 +231,17 @@ def revtree(ui, args, repo, full="tree", maxnr=0, parents=False):
 
     # calculate the graph for the supplied commits
     for i in xrange(len(want_sha1)):
-        reachable.append({});
+        reachable.append(set());
         n = want_sha1[i];
         visit = [n];
-        reachable[i][n] = 1
+        reachable[i].add(n)
         while visit:
             n = visit.pop(0)
             if n in stop_sha1:
                 continue
             for p in repo.changelog.parents(n):
                 if p not in reachable[i]:
-                    reachable[i][p] = 1
+                    reachable[i].add(p)
                     visit.append(p)
                 if p in stop_sha1:
                     continue

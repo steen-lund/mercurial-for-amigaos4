@@ -8,11 +8,37 @@
 #
 # Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 import os, errno
+import error
+
+def active(func):
+    def _active(self, *args, **kwds):
+        if self.count == 0:
+            raise error.Abort(_(
+                'cannot use transaction when it is already committed/aborted'))
+        return func(self, *args, **kwds)
+    return _active
+
+def _playback(journal, report, opener, entries, unlink=True):
+    for f, o, ignore in entries:
+        if o or not unlink:
+            try:
+                opener(f, 'a').truncate(o)
+            except:
+                report(_("failed to truncate %s\n") % f)
+                raise
+        else:
+            try:
+                fn = opener(f).name
+                os.unlink(fn)
+            except OSError, inst:
+                if inst.errno != errno.ENOENT:
+                    raise
+    os.unlink(journal)
 
 class transaction(object):
     def __init__(self, report, opener, journal, after=None, createmode=None):
@@ -25,6 +51,7 @@ class transaction(object):
         self.entries = []
         self.map = {}
         self.journal = journal
+        self._queue = []
 
         self.file = open(self.journal, "w")
         if createmode is not None:
@@ -32,25 +59,48 @@ class transaction(object):
 
     def __del__(self):
         if self.journal:
-            if self.entries: self.abort()
+            if self.entries: self._abort()
             self.file.close()
-            try: os.unlink(self.journal)
-            except: pass
 
+    @active
+    def startgroup(self):
+        self._queue.append([])
+
+    @active
+    def endgroup(self):
+        q = self._queue.pop()
+        d = ''.join(['%s\0%d\n' % (x[0], x[1]) for x in q])
+        self.entries.extend(q)
+        self.file.write(d)
+        self.file.flush()
+
+    @active
     def add(self, file, offset, data=None):
         if file in self.map: return
+
+        if self._queue:
+            self._queue[-1].append((file, offset, data))
+            return
+
         self.entries.append((file, offset, data))
         self.map[file] = len(self.entries) - 1
         # add enough data to the journal to do the truncate
         self.file.write("%s\0%d\n" % (file, offset))
         self.file.flush()
 
+    @active
     def find(self, file):
         if file in self.map:
             return self.entries[self.map[file]]
         return None
 
+    @active
     def replace(self, file, offset, data=None):
+        '''
+        replace can only replace already committed entries
+        that are not pending in the queue
+        '''
+
         if file not in self.map:
             raise KeyError(file)
         index = self.map[file]
@@ -58,6 +108,7 @@ class transaction(object):
         self.file.write("%s\0%d\n" % (file, offset))
         self.file.flush()
 
+    @active
     def nest(self):
         self.count += 1
         return self
@@ -65,6 +116,7 @@ class transaction(object):
     def running(self):
         return self.count > 0
 
+    @active
     def close(self):
         self.count -= 1
         if self.count != 0:
@@ -77,36 +129,33 @@ class transaction(object):
             os.unlink(self.journal)
         self.journal = None
 
+    @active
     def abort(self):
+        self._abort()
+
+    def _abort(self):
+        self.count = 0
+        self.file.close()
+
         if not self.entries: return
 
         self.report(_("transaction abort!\n"))
 
-        for f, o, ignore in self.entries:
+        try:
             try:
-                self.opener(f, "a").truncate(o)
+                _playback(self.journal, self.report, self.opener, self.entries, False)
+                self.report(_("rollback completed\n"))
             except:
-                self.report(_("failed to truncate %s\n") % f)
+                self.report(_("rollback failed - please run hg recover\n"))
+        finally:
+            self.journal = None
 
-        self.entries = []
 
-        self.report(_("rollback completed\n"))
+def rollback(opener, file, report):
+    entries = []
 
-def rollback(opener, file):
-    files = {}
     for l in open(file).readlines():
         f, o = l.split('\0')
-        files[f] = int(o)
-    for f in files:
-        o = files[f]
-        if o:
-            opener(f, "a").truncate(int(o))
-        else:
-            try:
-                fn = opener(f).name
-                os.unlink(fn)
-            except OSError, inst:
-                if inst.errno != errno.ENOENT:
-                    raise
-    os.unlink(file)
+        entries.append((f, int(o), None))
 
+    _playback(file, report, opener, entries)

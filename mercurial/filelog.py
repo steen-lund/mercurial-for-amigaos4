@@ -2,29 +2,15 @@
 #
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import revlog
 
 class filelog(revlog.revlog):
     def __init__(self, opener, path):
         revlog.revlog.__init__(self, opener,
-                        "/".join(("data", self.encodedir(path + ".i"))))
-
-    # This avoids a collision between a file named foo and a dir named
-    # foo.i or foo.d
-    def encodedir(self, path):
-        return (path
-                .replace(".hg/", ".hg.hg/")
-                .replace(".i/", ".i.hg/")
-                .replace(".d/", ".d.hg/"))
-
-    def decodedir(self, path):
-        return (path
-                .replace(".d.hg/", ".d/")
-                .replace(".i.hg/", ".i/")
-                .replace(".hg.hg/", ".hg/"))
+                        "/".join(("data", path + ".i")))
 
     def read(self, node):
         t = self.revision(node)
