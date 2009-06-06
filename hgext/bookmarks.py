@@ -2,8 +2,8 @@
 #
 # Copyright 2008 David Soria Parra <dsp@php.net>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 '''mercurial bookmarks
 
@@ -15,14 +15,15 @@ bookmark is forwarded to the new changeset.
 It is possible to use bookmark names in every revision lookup (e.g. hg
 merge, hg update).
 
-The bookmark extension offers the possiblity to have a more git-like experience
-by adding the following configuration option to your .hgrc:
+The bookmark extension offers the possiblity to have a more git-like
+experience by adding the following configuration option to your .hgrc:
 
 [bookmarks]
 track.current = True
 
-This will cause bookmarks to track the bookmark that you are currently on, and
-just updates it. This is similar to git's approach of branching.
+This will cause bookmarks to track the bookmark that you are currently
+on, and just updates it. This is similar to git's approach of
+branching.
 '''
 
 from mercurial.i18n import _
@@ -92,7 +93,7 @@ def setcurrent(repo, mark):
     '''Set the name of the bookmark that we are currently on
 
     Set the name of the bookmark that we are on (hg update <bookmark>).
-    The name is recoreded in .hg/bookmarks.current
+    The name is recorded in .hg/bookmarks.current
     '''
     if current(repo) == mark:
         return
@@ -115,8 +116,8 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False, rename=No
 
     Bookmarks are pointers to certain commits that move when
     commiting. Bookmarks are local. They can be renamed, copied and
-    deleted. It is possible to use bookmark names in 'hg merge' and 'hg
-    update' to update to a given bookmark.
+    deleted. It is possible to use bookmark names in 'hg merge' and
+    'hg update' to update to a given bookmark.
 
     You can use 'hg bookmark NAME' to set a bookmark on the current
     tip with the given name. If you specify a revision using -r REV
@@ -142,7 +143,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False, rename=No
         return
 
     if delete:
-        if mark == None:
+        if mark is None:
             raise util.Abort(_("bookmark name required"))
         if mark not in marks:
             raise util.Abort(_("a bookmark of this name does not exist"))
@@ -170,7 +171,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False, rename=No
         write(repo, marks)
         return
 
-    if mark == None:
+    if mark is None:
         if rev:
             raise util.Abort(_("bookmark name required"))
         if len(marks) == 0:
@@ -242,7 +243,7 @@ def reposetup(ui, repo):
             """Add a revision to the repository and
             move the bookmark"""
             node  = super(bookmark_repo, self).commit(*k, **kw)
-            if node == None:
+            if node is None:
                 return None
             parents = repo.changelog.parents(node)
             if parents[1] == nullid:

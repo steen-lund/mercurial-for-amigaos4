@@ -2,11 +2,11 @@
 #
 # Copyright 2005, 2006 Benoit Boissinot <benoit.boissinot@ens-lyon.org>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import os, tempfile, binascii
-from mercurial import util, commands
+from mercurial import util, commands, match
 from mercurial import node as hgnode
 from mercurial.i18n import _
 
@@ -90,11 +90,9 @@ def sigwalk(repo):
             yield (l.split(" ", 2), (context, ln))
             ln +=1
 
-    fl = repo.file(".hgsigs")
-    h = fl.heads()
-    h.reverse()
     # read the heads
-    for r in h:
+    fl = repo.file(".hgsigs")
+    for r in reversed(fl.heads()):
         fn = ".hgsigs|%s" % hgnode.short(r)
         for item in parsefile(fl.read(r).splitlines(), fn):
             yield item
@@ -154,9 +152,7 @@ def sigs(ui, repo):
             continue
         revs.setdefault(r, [])
         revs[r].extend(keys)
-    nodes = list(revs)
-    nodes.reverse()
-    for rev in nodes:
+    for rev in sorted(revs, reverse=True):
         for k in revs[rev]:
             r = "%5d:%s" % (rev, hgnode.hex(repo.changelog.node(rev)))
             ui.write("%-30s %s\n" % (keystr(ui, k), r))
@@ -259,7 +255,8 @@ def sign(ui, repo, *revs, **opts):
                              % hgnode.short(n)
                              for n in nodes])
     try:
-        repo.commit([".hgsigs"], message, opts['user'], opts['date'])
+        m = match.exact(['.hgsigs'])
+        repo.commit(message, opts['user'], opts['date'], match=m)
     except ValueError, inst:
         raise util.Abort(str(inst))
 

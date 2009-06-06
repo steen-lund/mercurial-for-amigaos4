@@ -2,8 +2,8 @@
 #
 # Copyright 2006, 2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import nullid, short
 from i18n import _
@@ -14,14 +14,14 @@ def verify(repo):
     try:
         return _verify(repo)
     finally:
-        del lock
+        lock.release()
 
 def _verify(repo):
     mflinkrevs = {}
     filelinkrevs = {}
     filenodes = {}
     revisions = 0
-    badrevs = {}
+    badrevs = set()
     errors = [0]
     warnings = [0]
     ui = repo.ui
@@ -33,7 +33,7 @@ def _verify(repo):
 
     def err(linkrev, msg, filename=None):
         if linkrev != None:
-            badrevs[linkrev] = True
+            badrevs.add(linkrev)
         else:
             linkrev = '?'
         msg = "%s: %s" % (linkrev, msg)
@@ -52,9 +52,9 @@ def _verify(repo):
         ui.warn(msg + "\n")
         warnings[0] += 1
 
-    def checklog(obj, name):
+    def checklog(obj, name, linkrev):
         if not len(obj) and (havecl or havemf):
-            err(0, _("empty or missing %s") % name)
+            err(linkrev, _("empty or missing %s") % name)
             return
 
         d = obj.checksize()
@@ -72,10 +72,11 @@ def _verify(repo):
     def checkentry(obj, i, node, seen, linkrevs, f):
         lr = obj.linkrev(obj.rev(node))
         if lr < 0 or (havecl and lr not in linkrevs):
-            t = "unexpected"
             if lr < 0 or lr >= len(cl):
-                t = "nonexistent"
-            err(None, _("rev %d point to %s changeset %d") % (i, t, lr), f)
+                msg = _("rev %d points to nonexistent changeset %d")
+            else:
+                msg = _("rev %d points to unexpected changeset %d")
+            err(None, msg % (i, lr), f)
             if linkrevs:
                 warn(_(" (expected %s)") % " ".join(map(str,linkrevs)))
             lr = None # can't be trusted
@@ -106,7 +107,7 @@ def _verify(repo):
 
     ui.status(_("checking changesets\n"))
     seen = {}
-    checklog(cl, "changelog")
+    checklog(cl, "changelog", 0)
     for i in repo:
         n = cl.node(i)
         checkentry(cl, i, n, seen, [i], "changelog")
@@ -121,12 +122,14 @@ def _verify(repo):
 
     ui.status(_("checking manifests\n"))
     seen = {}
-    checklog(mf, "manifest")
+    checklog(mf, "manifest", 0)
     for i in mf:
         n = mf.node(i)
         lr = checkentry(mf, i, n, seen, mflinkrevs.get(n, []), "manifest")
         if n in mflinkrevs:
             del mflinkrevs[n]
+        else:
+            err(lr, _("%s not in changesets") % short(n), "manifest")
 
         try:
             for f, fn in mf.readdelta(n).iteritems():
@@ -142,17 +145,17 @@ def _verify(repo):
     ui.status(_("crosschecking files in changesets and manifests\n"))
 
     if havemf:
-        for c, m in util.sort([(c, m) for m in mflinkrevs for c in mflinkrevs[m]]):
+        for c,m in sorted([(c, m) for m in mflinkrevs for c in mflinkrevs[m]]):
             err(c, _("changeset refers to unknown manifest %s") % short(m))
         del mflinkrevs
 
-        for f in util.sort(filelinkrevs):
+        for f in sorted(filelinkrevs):
             if f not in filenodes:
                 lr = filelinkrevs[f][0]
                 err(lr, _("in changeset but not in manifest"), f)
 
     if havecl:
-        for f in util.sort(filenodes):
+        for f in sorted(filenodes):
             if f not in filelinkrevs:
                 try:
                     fl = repo.file(f)
@@ -163,16 +166,26 @@ def _verify(repo):
 
     ui.status(_("checking files\n"))
 
-    storefiles = {}
+    storefiles = set()
     for f, f2, size in repo.store.datafiles():
         if not f:
             err(None, _("cannot decode filename '%s'") % f2)
         elif size > 0:
-            storefiles[f] = True
+            storefiles.add(f)
 
-    files = util.sort(util.unique(filenodes.keys() + filelinkrevs.keys()))
+    files = sorted(set(filenodes) | set(filelinkrevs))
     for f in files:
-        lr = filelinkrevs[f][0]
+        try:
+            linkrevs = filelinkrevs[f]
+        except KeyError:
+            # in manifest but not in changelog
+            linkrevs = []
+
+        if linkrevs:
+            lr = linkrevs[0]
+        else:
+            lr = None
+
         try:
             fl = repo.file(f)
         except error.RevlogError, e:
@@ -181,16 +194,16 @@ def _verify(repo):
 
         for ff in fl.files():
             try:
-                del storefiles[ff]
+                storefiles.remove(ff)
             except KeyError:
                 err(lr, _("missing revlog!"), ff)
 
-        checklog(fl, f)
+        checklog(fl, f, lr)
         seen = {}
         for i in fl:
             revisions += 1
             n = fl.node(i)
-            lr = checkentry(fl, i, n, seen, filelinkrevs.get(f, []), f)
+            lr = checkentry(fl, i, n, seen, linkrevs, f)
             if f in filenodes:
                 if havemf and n not in filenodes[f]:
                     err(lr, _("%s not in manifests") % (short(n)), f)
@@ -219,14 +232,14 @@ def _verify(repo):
                         warn(_("warning: %s@%s: copy source revision is nullid %s:%s")
                             % (f, lr, rp[0], short(rp[1])))
                     else:
-                        rev = fl2.rev(rp[1])
+                        fl2.rev(rp[1])
             except Exception, inst:
                 exc(lr, _("checking rename of %s") % short(n), inst, f)
 
         # cross-check
         if f in filenodes:
             fns = [(mf.linkrev(l), n) for n,l in filenodes[f].iteritems()]
-            for lr, node in util.sort(fns):
+            for lr, node in sorted(fns):
                 err(lr, _("%s in manifests not found") % short(node), f)
 
     for f in storefiles:

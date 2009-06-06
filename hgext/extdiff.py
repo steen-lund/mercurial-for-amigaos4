@@ -2,12 +2,12 @@
 #
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 '''
 The `extdiff' Mercurial extension allows you to use external programs
-to compare revisions, or revision with working dir.  The external diff
+to compare revisions, or revision with working directory. The external diff
 programs are called with a configurable set of options and two
 non-option arguments: paths to directories containing snapshots of
 files to compare.
@@ -34,15 +34,15 @@ you do not need to type "hg extdiff -p kdiff3" always.
   meld =
 
   # add new command called vimdiff, runs gvimdiff with DirDiff plugin
-  #(see http://www.vim.org/scripts/script.php?script_id=102)
-  # Non english user, be sure to put "let g:DirDiffDynamicDiffText = 1" in
+  # (see http://www.vim.org/scripts/script.php?script_id=102)
+  # Non English user, be sure to put "let g:DirDiffDynamicDiffText = 1" in
   # your .vimrc
   vimdiff = gvim -f '+next' '+execute "DirDiff" argv(0) argv(1)'
 
-You can use -I/-X and list of file or directory names like normal
-"hg diff" command.  The `extdiff' extension makes snapshots of only
-needed files, so running the external diff program will actually be
-pretty fast (at least faster than having to compare the entire tree).
+You can use -I/-X and list of file or directory names like normal "hg
+diff" command. The `extdiff' extension makes snapshots of only needed
+files, so running the external diff program will actually be pretty
+fast (at least faster than having to compare the entire tree).
 '''
 
 from mercurial.i18n import _
@@ -65,7 +65,7 @@ def snapshot(ui, repo, files, node, tmproot):
         ui.note(_('making snapshot of %d files from rev %s\n') %
                 (len(files), short(node)))
     else:
-        ui.note(_('making snapshot of %d files from working dir\n') %
+        ui.note(_('making snapshot of %d files from working directory\n') %
             (len(files)))
     wopener = util.opener(base)
     fns_and_mtime = []
@@ -164,19 +164,19 @@ def extdiff(ui, repo, *pats, **opts):
     '''use external program to diff repository (or selected files)
 
     Show differences between revisions for the specified files, using
-    an external program.  The default program used is diff, with
+    an external program. The default program used is diff, with
     default options "-Npru".
 
-    To select a different program, use the -p option.  The program
-    will be passed the names of two directories to compare.  To pass
-    additional options to the program, use the -o option.  These will
-    be passed before the names of the directories to compare.
+    To select a different program, use the -p/--program option. The
+    program will be passed the names of two directories to compare. To
+    pass additional options to the program, use -o/--option. These
+    will be passed before the names of the directories to compare.
 
-    When two revision arguments are given, then changes are
-    shown between those revisions. If only one revision is
-    specified then that revision is compared to the working
-    directory, and, when no revisions are specified, the
-    working directory files are compared to its parent.'''
+    When two revision arguments are given, then changes are shown
+    between those revisions. If only one revision is specified then
+    that revision is compared to the working directory, and, when no
+    revisions are specified, the working directory files are compared
+    to its parent.'''
     program = opts['program'] or 'diff'
     if opts['program']:
         option = opts['option']

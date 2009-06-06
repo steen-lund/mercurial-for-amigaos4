@@ -2,18 +2,19 @@
 #
 # Copyright (C) 2009 Brendan Cully <brendan@kublai.com>
 #
-# This software may be used and distributed according to the terms of
-# the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import struct
 
 _b85chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
             "abcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~"
+_b85chars2 = [(a + b) for a in _b85chars for b in _b85chars]
 _b85dec = {}
 
 def _mkb85dec():
-    for i in range(len(_b85chars)):
-        _b85dec[_b85chars[i]] = i
+    for i, c in enumerate(_b85chars):
+        _b85dec[c] = i
 
 def b85encode(text, pad=False):
     """encode text in base85 format"""
@@ -22,24 +23,13 @@ def b85encode(text, pad=False):
     if r:
         text += '\0' * (4 - r)
     longs = len(text) >> 2
-    out = []
     words = struct.unpack('>%dL' % (longs), text)
-    for word in words:
-        # unrolling improved speed by 33%
-        word, r = divmod(word, 85)
-        e = _b85chars[r]
-        word, r = divmod(word, 85)
-        d = _b85chars[r]
-        word, r = divmod(word, 85)
-        c = _b85chars[r]
-        word, r = divmod(word, 85)
-        b = _b85chars[r]
-        word, r = divmod(word, 85)
-        a = _b85chars[r]
 
-        out += (a, b, c, d, e)
+    out = ''.join(_b85chars[(word / 52200625) % 85] +
+                  _b85chars2[(word / 7225) % 7225] +
+                  _b85chars2[word % 7225]
+                  for word in words)
 
-    out = ''.join(out)
     if pad:
         return out
 
@@ -60,9 +50,9 @@ def b85decode(text):
     for i in range(0, len(text), 5):
         chunk = text[i:i+5]
         acc = 0
-        for j in range(len(chunk)):
+        for j, c in enumerate(chunk):
             try:
-                acc = acc * 85 + _b85dec[chunk[j]]
+                acc = acc * 85 + _b85dec[c]
             except KeyError:
                 raise TypeError('Bad base85 character at byte %d' % (i + j))
         if acc > 4294967295:

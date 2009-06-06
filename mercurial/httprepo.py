@@ -3,13 +3,14 @@
 # Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from node import bin, hex, nullid
 from i18n import _
-import repo, os, urllib, urllib2, urlparse, zlib, util, httplib
-import errno, socket, changegroup, statichttprepo, error, url
+import repo, changegroup, statichttprepo, error, url, util
+import os, urllib, urllib2, urlparse, zlib, httplib
+import errno, socket
 
 def zgenerator(f):
     zd = zlib.decompressobj()
@@ -52,9 +53,9 @@ class httprepository(repo.repository):
     def get_caps(self):
         if self.caps is None:
             try:
-                self.caps = util.set(self.do_read('capabilities').split())
+                self.caps = set(self.do_read('capabilities').split())
             except error.RepoError:
-                self.caps = util.set()
+                self.caps = set()
             self.ui.debug(_('capabilities: %s\n') %
                           (' '.join(self.caps or ['none'])))
         return self.caps
@@ -82,7 +83,7 @@ class httprepository(repo.repository):
             raise
         except httplib.HTTPException, inst:
             self.ui.debug(_('http error while sending %s command\n') % cmd)
-            self.ui.print_exc()
+            self.ui.traceback()
             raise IOError(None, inst)
         except IndexError:
             # this only happens with Python 2.3, later versions raise URLError
@@ -104,7 +105,7 @@ class httprepository(repo.repository):
         if not (proto.startswith('application/mercurial-') or
                 proto.startswith('text/plain') or
                 proto.startswith('application/hg-changegroup')):
-            self.ui.debug(_("Requested URL: '%s'\n") % url.hidepassword(cu))
+            self.ui.debug(_("requested URL: '%s'\n") % url.hidepassword(cu))
             raise error.RepoError(_("'%s' does not appear to be an hg repository")
                                   % safeurl)
 
@@ -141,6 +142,19 @@ class httprepository(repo.repository):
         d = self.do_read("heads")
         try:
             return map(bin, d[:-1].split(" "))
+        except:
+            raise error.ResponseError(_("unexpected response:"), d)
+
+    def branchmap(self):
+        d = self.do_read("branchmap")
+        try:
+            branchmap = {}
+            for branchpart in d.splitlines():
+                branchheads = branchpart.split(' ')
+                branchname = urllib.unquote(branchheads[0])
+                branchheads = [bin(x) for x in branchheads[1:]]
+                branchmap[branchname] = branchheads
+            return branchmap
         except:
             raise error.ResponseError(_("unexpected response:"), d)
 

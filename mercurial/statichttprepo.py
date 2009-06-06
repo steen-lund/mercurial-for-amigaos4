@@ -4,12 +4,12 @@
 #
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 import changelog, byterange, url, error
-import repo, localrepo, manifest, util, store
+import localrepo, manifest, util, store
 import urllib, urllib2, errno
 
 class httprangereader(object):
@@ -30,14 +30,31 @@ class httprangereader(object):
         try:
             f = self.opener.open(req)
             data = f.read()
+            if hasattr(f, 'getcode'):
+                # python 2.6+
+                code = f.getcode()
+            elif hasattr(f, 'code'):
+                # undocumented attribute, seems to be set in 2.4 and 2.5
+                code = f.code
+            else:
+                # Don't know how to check, hope for the best.
+                code = 206
         except urllib2.HTTPError, inst:
             num = inst.code == 404 and errno.ENOENT or None
             raise IOError(num, inst)
         except urllib2.URLError, inst:
             raise IOError(None, inst.reason[1])
 
-        if bytes:
+        if code == 200:
+            # HTTPRangeHandler does nothing if remote does not support
+            # Range headers and returns the full entity. Let's slice it.
+            if bytes:
+                data = data[self.pos:self.pos + bytes]
+            else:
+                data = data[self.pos:]
+        elif bytes:
             data = data[:bytes]
+        self.pos += len(data)
         return data
 
 def build_opener(ui, authinfo):

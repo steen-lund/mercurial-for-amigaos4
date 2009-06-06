@@ -2,13 +2,13 @@
 #
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
 import os, sys, atexit, signal, pdb, socket, errno, shlex, time
-import util, commands, hg, lock, fancyopts, extensions, hook, error
-import cmdutil
+import util, commands, hg, fancyopts, extensions, hook, error
+import cmdutil, encoding
 import ui as _ui
 
 def run():
@@ -18,7 +18,9 @@ def run():
 def dispatch(args):
     "run the command specified in args"
     try:
-        u = _ui.ui(traceback='--traceback' in args)
+        u = _ui.ui()
+        if '--traceback' in args:
+            u.setconfig('ui', 'traceback', 'on')
     except util.Abort, inst:
         sys.stderr.write(_("abort: %s\n") % inst)
         return -1
@@ -45,7 +47,7 @@ def _runcatch(ui, args):
             # enter the debugger when we hit an exception
             if '--debugger' in args:
                 pdb.post_mortem(sys.exc_info()[2])
-            ui.print_exc()
+            ui.traceback()
             raise
 
     # Global exception handling, alphabetically
@@ -53,6 +55,8 @@ def _runcatch(ui, args):
     except error.AmbiguousCommand, inst:
         ui.warn(_("hg: command '%s' is ambiguous:\n    %s\n") %
                 (inst.args[0], " ".join(inst.args[1])))
+    except error.ConfigError, inst:
+        ui.warn(_("hg: %s\n") % inst.args[0])
     except error.LockHeld, inst:
         if inst.errno == errno.ETIMEDOUT:
             reason = _('timed out waiting for lock held by %s') % inst.locker
@@ -157,6 +161,74 @@ def _findrepo(p):
 
     return p
 
+def aliasargs(fn):
+    if hasattr(fn, 'args'):
+        return fn.args
+    return []
+
+class cmdalias(object):
+    def __init__(self, name, definition, cmdtable):
+        self.name = name
+        self.definition = definition
+        self.args = []
+        self.opts = []
+        self.help = ''
+        self.norepo = True
+
+        try:
+            cmdutil.findcmd(self.name, cmdtable, True)
+            self.shadows = True
+        except error.UnknownCommand:
+            self.shadows = False
+
+        if not self.definition:
+            def fn(ui, *args):
+                ui.warn(_("no definition for alias '%s'\n") % self.name)
+                return 1
+            self.fn = fn
+
+            return
+
+        args = shlex.split(self.definition)
+        cmd = args.pop(0)
+        opts = []
+        help = ''
+
+        try:
+            self.fn, self.opts, self.help = cmdutil.findcmd(cmd, cmdtable, False)[1]
+            self.args = aliasargs(self.fn) + args
+            if cmd not in commands.norepo.split(' '):
+                self.norepo = False
+        except error.UnknownCommand:
+            def fn(ui, *args):
+                ui.warn(_("alias '%s' resolves to unknown command '%s'\n") \
+                            % (self.name, cmd))
+                return 1
+            self.fn = fn
+        except error.AmbiguousCommand:
+            def fn(ui, *args):
+                ui.warn(_("alias '%s' resolves to ambiguous command '%s'\n") \
+                            % (self.name, cmd))
+                return 1
+            self.fn = fn
+
+    def __call__(self, ui, *args, **opts):
+        if self.shadows:
+            ui.debug(_("alias '%s' shadows command\n") % self.name)
+
+        return self.fn(ui, *args, **opts)
+
+def addaliases(ui, cmdtable):
+    # aliases are processed after extensions have been loaded, so they
+    # may use extension commands. Aliases can also use other alias definitions,
+    # but only if they have been defined prior to the current definition.
+    for alias, definition in ui.configitems('alias'):
+        aliasdef = cmdalias(alias, definition, cmdtable)
+        
+        cmdtable[alias] = (aliasdef, aliasdef.opts, aliasdef.help)
+        if aliasdef.norepo:
+            commands.norepo += ' %s' % alias
+
 def _parse(ui, args):
     options = {}
     cmdoptions = {}
@@ -171,6 +243,7 @@ def _parse(ui, args):
         aliases, i = cmdutil.findcmd(cmd, commands.table,
                                      ui.config("ui", "strict"))
         cmd = aliases[0]
+        args = aliasargs(i[0]) + args
         defaults = ui.config("defaults", cmd)
         if defaults:
             args = shlex.split(defaults) + args
@@ -196,19 +269,17 @@ def _parse(ui, args):
 
     return (cmd, cmd and i[0] or None, args, options, cmdoptions)
 
-def _parseconfig(config):
+def _parseconfig(ui, config):
     """parse the --config options from the command line"""
-    parsed = []
     for cfg in config:
         try:
             name, value = cfg.split('=', 1)
             section, name = name.split('.', 1)
             if not section or not name:
                 raise IndexError
-            parsed.append((section, name, value))
+            ui.setconfig(section, name, value)
         except (IndexError, ValueError):
             raise util.Abort(_('malformed --config option: %s') % cfg)
-    return parsed
 
 def _earlygetopt(aliases, args):
     """Return list of values for an option (or aliases).
@@ -250,13 +321,11 @@ def runcommand(lui, repo, cmd, fullargs, ui, options, d):
               result = ret)
     return ret
 
-_loaded = {}
+_loaded = set()
 def _dispatch(ui, args):
     # read --config before doing anything else
     # (e.g. to change trust settings for reading .hg/hgrc)
-    config = _earlygetopt(['--config'], args)
-    if config:
-        ui.updateopts(config=_parseconfig(config))
+    _parseconfig(ui, _earlygetopt(['--config'], args))
 
     # check for cwd
     cwd = _earlygetopt(['--cwd'], args)
@@ -269,7 +338,7 @@ def _dispatch(ui, args):
         lui = ui
     if path:
         try:
-            lui = _ui.ui(parentui=ui)
+            lui = ui.copy()
             lui.readconfig(os.path.join(path, ".hg", "hgrc"))
         except IOError:
             pass
@@ -278,7 +347,7 @@ def _dispatch(ui, args):
     rpath = _earlygetopt(["-R", "--repository", "--repo"], args)
     if rpath:
         path = lui.expandpath(rpath[-1])
-        lui = _ui.ui(parentui=ui)
+        lui = ui.copy()
         lui.readconfig(os.path.join(path, ".hg", "hgrc"))
 
     extensions.loadall(lui)
@@ -300,11 +369,14 @@ def _dispatch(ui, args):
             ui.warn(_("extension '%s' overrides commands: %s\n")
                     % (name, " ".join(overrides)))
         commands.table.update(cmdtable)
-        _loaded[name] = 1
+        _loaded.add(name)
+
+    addaliases(lui, commands.table)
+
     # check for fallback encoding
     fallback = lui.config('ui', 'fallbackencoding')
     if fallback:
-        util._fallbackencoding = fallback
+        encoding.fallbackencoding = fallback
 
     fullargs = args
     cmd, func, args, options, cmdoptions = _parse(lui, args)
@@ -319,9 +391,9 @@ def _dispatch(ui, args):
             "and --repository may only be abbreviated as --repo!"))
 
     if options["encoding"]:
-        util._encoding = options["encoding"]
+        encoding.encoding = options["encoding"]
     if options["encodingmode"]:
-        util._encodingmode = options["encodingmode"]
+        encoding.encodingmode = options["encodingmode"]
     if options["time"]:
         def get_times():
             t = os.times()
@@ -335,8 +407,14 @@ def _dispatch(ui, args):
                 (t[4]-s[4], t[0]-s[0], t[2]-s[2], t[1]-s[1], t[3]-s[3]))
         atexit.register(print_time)
 
-    ui.updateopts(options["verbose"], options["debug"], options["quiet"],
-                 not options["noninteractive"], options["traceback"])
+    if options['verbose'] or options['debug'] or options['quiet']:
+        ui.setconfig('ui', 'verbose', str(bool(options['verbose'])))
+        ui.setconfig('ui', 'debug', str(bool(options['debug'])))
+        ui.setconfig('ui', 'quiet', str(bool(options['quiet'])))
+    if options['traceback']:
+        ui.setconfig('ui', 'traceback', 'on')
+    if options['noninteractive']:
+        ui.setconfig('ui', 'interactive', 'off')
 
     if options['help']:
         return commands.help_(ui, cmd, options['version'])
@@ -379,25 +457,22 @@ def _runcommand(ui, options, cmd, cmdfunc):
             raise error.ParseError(cmd, _("invalid arguments"))
 
     if options['profile']:
-        import hotshot, hotshot.stats
-        prof = hotshot.Profile("hg.prof")
-        try:
-            try:
-                return prof.runcall(checkargs)
-            except:
-                try:
-                    ui.warn(_('exception raised - generating '
-                             'profile anyway\n'))
-                except:
-                    pass
-                raise
-        finally:
-            prof.close()
-            stats = hotshot.stats.load("hg.prof")
-            stats.strip_dirs()
-            stats.sort_stats('time', 'calls')
-            stats.print_stats(40)
-    elif options['lsprof']:
+        format = ui.config('profiling', 'format', default='text')
+
+        if not format in ['text', 'kcachegrind']:
+            ui.warn(_("unrecognized profiling format '%s'"
+                        " - Ignored\n") % format)
+            format = 'text'
+
+        output = ui.config('profiling', 'output')
+
+        if output:
+            path = os.path.expanduser(output)
+            path = ui.expandpath(path)
+            ostream = open(path, 'wb')
+        else:
+            ostream = sys.stderr
+
         try:
             from mercurial import lsprof
         except ImportError:
@@ -410,8 +485,18 @@ def _runcommand(ui, options, cmd, cmdfunc):
             return checkargs()
         finally:
             p.disable()
-            stats = lsprof.Stats(p.getstats())
-            stats.sort()
-            stats.pprint(top=10, file=sys.stderr, climit=5)
+
+            if format == 'kcachegrind':
+                import lsprofcalltree
+                calltree = lsprofcalltree.KCacheGrind(p)
+                calltree.output(ostream)
+            else:
+                # format == 'text'
+                stats = lsprof.Stats(p.getstats())
+                stats.sort()
+                stats.pprint(top=10, file=ostream, climit=5)
+
+            if output:
+                ostream.close()
     else:
         return checkargs()

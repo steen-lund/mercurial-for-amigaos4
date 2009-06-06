@@ -2,10 +2,10 @@
 # Copyright 21 May 2005 - (c) 2005 Jake Edge <jake@edge2.net>
 # Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-import cStringIO, zlib, tempfile, errno, os, sys
+import cStringIO, zlib, tempfile, errno, os, sys, urllib
 from mercurial import util, streamclone
 from mercurial.node import bin, hex
 from mercurial import changegroup as changegroupmod
@@ -17,6 +17,7 @@ from common import ErrorResponse, HTTP_OK, HTTP_NOT_FOUND, HTTP_SERVER_ERROR
 __all__ = [
    'lookup', 'heads', 'branches', 'between', 'changegroup',
    'changegroupsubset', 'capabilities', 'unbundle', 'stream_out',
+   'branchmap',
 ]
 
 HGTYPE = 'application/mercurial-0.1'
@@ -34,6 +35,17 @@ def lookup(repo, req):
 
 def heads(repo, req):
     resp = " ".join(map(hex, repo.heads())) + "\n"
+    req.respond(HTTP_OK, HGTYPE, length=len(resp))
+    yield resp
+
+def branchmap(repo, req):
+    branches = repo.branchmap()
+    heads = []
+    for branch, nodes in branches.iteritems():
+        branchname = urllib.quote(branch)
+        branchnodes = [hex(node) for node in nodes]
+        heads.append('%s %s' % (branchname, ' '.join(branchnodes)))
+    resp = '\n'.join(heads)
     req.respond(HTTP_OK, HGTYPE, length=len(resp))
     yield resp
 
@@ -97,7 +109,7 @@ def changegroupsubset(repo, req):
     yield z.flush()
 
 def capabilities(repo, req):
-    caps = ['lookup', 'changegroupsubset']
+    caps = ['lookup', 'changegroupsubset', 'branchmap']
     if repo.ui.configbool('server', 'uncompressed', untrusted=True):
         caps.append('stream=%d' % repo.changelog.version)
     if changegroupmod.bundlepriority:
@@ -163,7 +175,7 @@ def unbundle(repo, req):
                 req.respond(HTTP_OK, HGTYPE)
                 return '%d\n%s' % (ret, val),
             finally:
-                del lock
+                lock.release()
         except ValueError, inst:
             raise ErrorResponse(HTTP_OK, inst)
         except (OSError, IOError), inst:

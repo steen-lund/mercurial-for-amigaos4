@@ -2,11 +2,17 @@
 #
 # Copyright 2005-2008 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import cgi, re, os, time, urllib, textwrap
-import util, templater
+import util, encoding
+
+def stringify(thing):
+    '''turn nested template iterator into string.'''
+    if hasattr(thing, '__iter__') and not isinstance(thing, str):
+        return "".join([stringify(t) for t in thing if t is not None])
+    return str(thing)
 
 agescales = [("second", 1),
              ("minute", 60),
@@ -76,7 +82,7 @@ def nl2br(text):
     return text.replace('\n', '<br/>\n')
 
 def obfuscate(text):
-    text = unicode(text, util._encoding, 'replace')
+    text = unicode(text, encoding.encoding, 'replace')
     return ''.join(['&#%d;' % ord(c) for c in text])
 
 def domain(author):
@@ -90,6 +96,7 @@ def domain(author):
 
 def person(author):
     '''get name of author, or else username.'''
+    if not '@' in author: return author
     f = author.find('<')
     if f == -1: return util.shortuser(author)
     return author[:f].rstrip()
@@ -129,15 +136,18 @@ _escapes = [
     ('\r', '\\r'), ('\f', '\\f'), ('\b', '\\b'),
 ]
 
+def jsonescape(s):
+    for k, v in _escapes:
+        s = s.replace(k, v)
+    return s
+
 def json(obj):
     if obj is None or obj is False or obj is True:
         return {None: 'null', False: 'false', True: 'true'}[obj]
     elif isinstance(obj, int) or isinstance(obj, float):
         return str(obj)
     elif isinstance(obj, str):
-        for k, v in _escapes:
-            obj = obj.replace(k, v)
-        return '"%s"' % obj
+        return '"%s"' % jsonescape(obj)
     elif isinstance(obj, unicode):
         return json(obj.encode('utf-8'))
     elif hasattr(obj, 'keys'):
@@ -154,9 +164,21 @@ def json(obj):
     else:
         raise TypeError('cannot encode type %s' % obj.__class__.__name__)
 
+def stripdir(text):
+    '''Treat the text as path and strip a directory level, if possible.'''
+    dir = os.path.dirname(text)
+    if dir == "":
+        return os.path.basename(text)
+    else:
+        return dir
+
+def nonempty(str):
+    return str or "(none)"
+
 filters = {
     "addbreaks": nl2br,
     "basename": os.path.basename,
+    "stripdir": stripdir,
     "age": age,
     "date": lambda x: util.datestr(x),
     "domain": domain,
@@ -169,6 +191,10 @@ filters = {
     "hgdate": lambda x: "%d %d" % x,
     "isodate": lambda x: util.datestr(x, '%Y-%m-%d %H:%M %1%2'),
     "isodatesec": lambda x: util.datestr(x, '%Y-%m-%d %H:%M:%S %1%2'),
+    "json": json,
+    "jsonescape": jsonescape,
+    "localdate": lambda x: (x[0], util.makedate()[1]),
+    "nonempty": nonempty,
     "obfuscate": obfuscate,
     "permissions": permissions,
     "person": person,
@@ -176,11 +202,10 @@ filters = {
     "rfc3339date": lambda x: util.datestr(x, "%Y-%m-%dT%H:%M:%S%1:%2"),
     "short": lambda x: x[:12],
     "shortdate": util.shortdate,
-    "stringify": templater.stringify,
+    "stringify": stringify,
     "strip": lambda x: x.strip(),
     "urlescape": lambda x: urllib.quote(x),
     "user": lambda x: util.shortuser(x),
     "stringescape": lambda x: x.encode('string_escape'),
     "xmlescape": xmlescape,
-    "json": json,
 }

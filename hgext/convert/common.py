@@ -1,8 +1,14 @@
-# common code for the convert extension
+# common.py - common code for the convert extension
+#
+#  Copyright 2005-2009 Matt Mackall <mpm@selenic.com> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 import base64, errno
 import os
 import cPickle as pickle
-from mercurial import util, strutil
+from mercurial import util
 from mercurial.i18n import _
 
 def encodeargs(args):
@@ -32,7 +38,7 @@ SKIPREV = 'SKIP'
 
 class commit(object):
     def __init__(self, author, date, desc, parents, branch=None, rev=None,
-                 extra={}):
+                 extra={}, sortkey=None):
         self.author = author or 'unknown'
         self.date = date or '0 0'
         self.desc = desc
@@ -40,6 +46,7 @@ class commit(object):
         self.branch = branch
         self.rev = rev
         self.extra = extra
+        self.sortkey = sortkey
 
 class converter_source(object):
     """Conversion source interface"""
@@ -69,7 +76,8 @@ class converter_source(object):
 
     def getfile(self, name, rev):
         """Return file contents as a string. rev is the identifier returned
-        by a previous call to getchanges().
+        by a previous call to getchanges(). Raise IOError to indicate that
+        name was deleted in rev.
         """
         raise NotImplementedError()
 
@@ -83,7 +91,7 @@ class converter_source(object):
         """Returns a tuple of (files, copies).
 
         files is a sorted list of (filename, id) tuples for all files
-        changed between version and it's first parent returned by
+        changed between version and its first parent returned by
         getcommit(). id is the source revision id of the file.
 
         copies is a dictionary of dest: source
@@ -129,6 +137,19 @@ class converter_source(object):
         '''Notify the source that a revision has been converted.'''
         pass
 
+    def hasnativeorder(self):
+        """Return true if this source has a meaningful, native revision
+        order. For instance, Mercurial revisions are store sequentially
+        while there is no such global ordering with Darcs.
+        """
+        return False
+
+    def lookuprev(self, rev):
+        """If rev is a meaningful revision reference in source, return
+        the referenced identifier in the same format used by getcommit().
+        return None otherwise.
+        """
+        return None
 
 class converter_sink(object):
     """Conversion sink (target) interface"""
@@ -159,13 +180,15 @@ class converter_sink(object):
         mapping equivalent authors identifiers for each system."""
         return None
 
-    def putcommit(self, files, copies, parents, commit, source):
+    def putcommit(self, files, copies, parents, commit, source, revmap):
         """Create a revision with all changed files listed in 'files'
-        and having listed parents. 'commit' is a commit object containing
-        at a minimum the author, date, and message for this changeset.
-        'files' is a list of (path, version) tuples, 'copies'is a dictionary
-        mapping destinations to sources, and 'source' is the source repository.
-        Only getfile() and getmode() should be called on 'source'.
+        and having listed parents. 'commit' is a commit object
+        containing at a minimum the author, date, and message for this
+        changeset.  'files' is a list of (path, version) tuples,
+        'copies' is a dictionary mapping destinations to sources,
+        'source' is the source repository, and 'revmap' is a mapfile
+        of source revisions to converted revisions. Only getfile(),
+        getmode(), and lookuprev() should be called on 'source'.
 
         Note that the sink repository is not told to update itself to
         a particular revision (or even what that revision would be)
@@ -333,8 +356,12 @@ class mapfile(dict):
             if err.errno != errno.ENOENT:
                 raise
             return
-        for line in fp:
-            key, value = strutil.rsplit(line[:-1], ' ', 1)
+        for i, line in enumerate(fp):
+            try:
+                key, value = line[:-1].rsplit(' ', 1)
+            except ValueError:
+                raise util.Abort(_('syntax error in %s(%d): key/value pair expected')
+                                 % (self.path, i+1))
             if key not in self:
                 self.order.append(key)
             super(mapfile, self).__setitem__(key, value)

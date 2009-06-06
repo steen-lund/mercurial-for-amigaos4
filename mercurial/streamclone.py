@@ -2,11 +2,13 @@
 #
 # Copyright 2006 Vadim Gelfer <vadim.gelfer@gmail.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import util, error
 from i18n import _
+
+from mercurial import store
 
 class StreamException(Exception):
     def __init__(self, code):
@@ -41,16 +43,16 @@ def stream_out(repo, untrusted=False):
     entries = []
     total_bytes = 0
     try:
-        l = None
+        # get consistent snapshot of repo, lock during scan
+        lock = repo.lock()
         try:
             repo.ui.debug(_('scanning\n'))
-            # get consistent snapshot of repo, lock during scan
-            l = repo.lock()
             for name, ename, size in repo.store.walk():
-                entries.append((name, size))
+                # for backwards compat, name was partially encoded
+                entries.append((store.encodedir(name), size))
                 total_bytes += size
         finally:
-            del l
+            lock.release()
     except error.LockError:
         raise StreamException(2)
 

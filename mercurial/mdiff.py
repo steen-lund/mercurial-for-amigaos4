@@ -2,11 +2,12 @@
 #
 # Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from i18n import _
-import bdiff, mpatch, re, struct, util
+import bdiff, mpatch, util
+import re, struct
 
 def splitnewlines(text):
     '''like str.splitlines, but only split on newlines.'''
@@ -184,7 +185,7 @@ def bunidiff(t1, t2, l1, l2, header1, header2, opts=defaultopts):
     #
     diff = bdiff.blocks(t1, t2)
     hunk = None
-    for i in xrange(len(diff)):
+    for i, s1 in enumerate(diff):
         # The first match is special.
         # we've either found a match starting at line 0 or a match later
         # in the file.  If it starts later, old and new below will both be
@@ -194,7 +195,6 @@ def bunidiff(t1, t2, l1, l2, header1, header2, opts=defaultopts):
         else:
             s = [0, 0, 0, 0]
         delta = []
-        s1 = diff[i]
         a1 = s[1]
         a2 = s1[0]
         b1 = s[3]

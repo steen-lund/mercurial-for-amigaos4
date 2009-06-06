@@ -1,12 +1,11 @@
-"""
-i18n.py - internationalization support for mercurial
+# i18n.py - internationalization support for mercurial
+#
+# Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
-Copyright 2005, 2006 Matt Mackall <mpm@selenic.com>
-
-This software may be used and distributed according to the terms
-of the GNU General Public License, incorporated herein by reference.
-"""
-
+import encoding
 import gettext, sys, os
 
 # modelled after templater.templatepath:
@@ -37,15 +36,13 @@ def gettext(message):
     if message is None:
         return message
 
-    # We cannot just run the text through util.tolocal since that
-    # leads to infinite recursion when util._encoding is invalid.
+    # We cannot just run the text through encoding.tolocal since that
+    # leads to infinite recursion when encoding._encoding is invalid.
     try:
         u = t.ugettext(message)
-        return u.encode(util._encoding, "replace")
+        return u.encode(encoding.encoding, "replace")
     except LookupError:
         return message
 
 _ = gettext
 
-# Moved after _ because of circular import.
-import util

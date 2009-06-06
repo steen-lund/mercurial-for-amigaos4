@@ -2,8 +2,8 @@
 #
 # Copyright 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 import heapq
 
@@ -19,11 +19,13 @@ def ancestor(a, b, pfunc):
         return a
 
     # find depth from root of all ancestors
+    parentcache = {}
     visit = [a, b]
     depth = {}
     while visit:
         vertex = visit[-1]
         pl = pfunc(vertex)
+        parentcache[vertex] = pl
         if not pl:
             depth[vertex] = 0
             visit.pop()
@@ -40,24 +42,24 @@ def ancestor(a, b, pfunc):
     # traverse ancestors in order of decreasing distance from root
     def ancestors(vertex):
         h = [(depth[vertex], vertex)]
-        seen = {}
+        seen = set()
         while h:
             d, n = heapq.heappop(h)
             if n not in seen:
-                seen[n] = 1
+                seen.add(n)
                 yield (d, n)
-                for p in pfunc(n):
+                for p in parentcache[n]:
                     heapq.heappush(h, (depth[p], p))
 
     def generations(vertex):
-        sg, s = None, {}
+        sg, s = None, set()
         for g, v in ancestors(vertex):
             if g != sg:
                 if sg:
                     yield sg, s
-                sg, s = g, {v:1}
+                sg, s = g, set((v,))
             else:
-                s[v] = 1
+                s.add(v)
         yield sg, s
 
     x = generations(a)

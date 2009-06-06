@@ -1,4 +1,10 @@
-# GNU Arch support for the convert extension
+# gnuarch.py - GNU Arch support for the convert extension
+#
+#  Copyright 2008, 2009 Aleix Conchillo Flaque <aleix@member.fsf.org>
+#  and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
 
 from common import NoRepo, commandline, commit, converter_source
 from mercurial.i18n import _
@@ -77,7 +83,8 @@ class gnuarch_source(converter_source, commandline):
 
             archive = treeversion.split('/')[0]
             if archive not in self.archives:
-                self.ui.status(_('tree analysis stopped because it points to an unregistered archive %s...\n') % archive)
+                self.ui.status(_('tree analysis stopped because it points to '
+                                 'an unregistered archive %s...\n') % archive)
                 break
 
             # Get the complete list of revisions for that tree version
@@ -168,12 +175,12 @@ class gnuarch_source(converter_source, commandline):
             copies.update(cps)
 
         self.lastrev = rev
-        return util.sort(util.unique(changes)), copies
+        return sorted(set(changes)), copies
 
     def getcommit(self, rev):
         changes = self.changes[rev]
-        return commit(author = changes.author, date = changes.date,
-                      desc = changes.summary, parents = self.parents[rev], rev=rev)
+        return commit(author=changes.author, date=changes.date,
+                      desc=changes.summary, parents=self.parents[rev], rev=rev)
 
     def gettags(self):
         return self.tags
@@ -250,7 +257,7 @@ class gnuarch_source(converter_source, commandline):
         self.ui.debug(_('obtaining revision %s...\n') % rev)
         output = self._execute('get', rev, self.tmppath)
         self.checkexit(output)
-        self.ui.debug(_('analysing revision %s...\n') % rev)
+        self.ui.debug(_('analyzing revision %s...\n') % rev)
         files = self._readcontents(self.tmppath)
         self.changes[rev].add_files += files
 
@@ -279,7 +286,7 @@ class gnuarch_source(converter_source, commandline):
             # Commit revision origin when dealing with a branch or tag
             if catlog.has_key('Continuation-of'):
                 self.changes[rev].continuationof = self.recode(catlog['Continuation-of'])
-        except Exception, err:
+        except Exception:
             raise util.Abort(_('could not parse cat-log of %s') % rev)
 
     def _parsechangeset(self, data, rev):

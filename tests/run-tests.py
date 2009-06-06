@@ -4,40 +4,70 @@
 #
 # Copyright 2006 Matt Mackall <mpm@selenic.com>
 #
-# This software may be used and distributed according to the terms
-# of the GNU General Public License, incorporated herein by reference.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
+# Modifying this script is tricky because it has many modes:
+#   - serial (default) vs parallel (-jN, N > 1)
+#   - no coverage (default) vs coverage (-c, -C, -s)
+#   - temp install (default) vs specific hg script (--with-hg, --local)
+#   - tests are a mix of shell scripts and Python scripts
+#
+# If you change this script, it is recommended that you ensure you
+# haven't broken it by running it in various modes with a representative
+# sample of test scripts.  For example:
+# 
+#  1) serial, no coverage, temp install:
+#      ./run-tests.py test-s*
+#  2) serial, no coverage, local hg:
+#      ./run-tests.py --local test-s*
+#  3) serial, coverage, temp install:
+#      ./run-tests.py -c test-s*
+#  4) serial, coverage, local hg:
+#      ./run-tests.py -c --local test-s*      # unsupported
+#  5) parallel, no coverage, temp install:
+#      ./run-tests.py -j2 test-s*
+#  6) parallel, no coverage, local hg:
+#      ./run-tests.py -j2 --local test-s*
+#  7) parallel, coverage, temp install:
+#      ./run-tests.py -j2 -c test-s*          # currently broken
+#  8) parallel, coverage, local install
+#      ./run-tests.py -j2 -c --local test-s*  # unsupported (and broken)
+#
+# (You could use any subset of the tests: test-s* happens to match
+# enough that it's worth doing parallel runs, few enough that it
+# completes fairly quickly, includes both shell and Python scripts, and
+# includes some scripts that run daemon processes.)
 
 import difflib
 import errno
 import optparse
 import os
-try:
-    import subprocess
-    subprocess.Popen  # trigger ImportError early
-    closefds = os.name == 'posix'
-    def Popen4(cmd, bufsize=-1):
-        p = subprocess.Popen(cmd, shell=True, bufsize=bufsize,
-                             close_fds=closefds,
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
-        p.fromchild = p.stdout
-        p.tochild = p.stdin
-        p.childerr = p.stderr
-        return p
-except ImportError:
-    subprocess = None
-    from popen2 import Popen4
+import subprocess
 import shutil
 import signal
 import sys
 import tempfile
 import time
 
+closefds = os.name == 'posix'
+def Popen4(cmd, bufsize=-1):
+    p = subprocess.Popen(cmd, shell=True, bufsize=bufsize,
+                         close_fds=closefds,
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+    p.fromchild = p.stdout
+    p.tochild = p.stdin
+    p.childerr = p.stderr
+    return p
+
 # reserved exit code to skip test (used by hghave)
 SKIPPED_STATUS = 80
 SKIPPED_PREFIX = 'skipped: '
+FAILED_PREFIX  = 'hghave check failed: '
+PYTHON = sys.executable
 
-required_tools = ["python", "diff", "grep", "unzip", "gunzip", "bunzip2", "sed"]
+requiredtools = ["python", "diff", "grep", "unzip", "gunzip", "bunzip2", "sed"]
 
 defaults = {
     'jobs': ('HGTEST_JOBS', 1),
@@ -45,61 +75,104 @@ defaults = {
     'port': ('HGTEST_PORT', 20059),
 }
 
-parser = optparse.OptionParser("%prog [options] [tests]")
-parser.add_option("-C", "--annotate", action="store_true",
-    help="output files annotated with coverage")
-parser.add_option("--child", type="int",
-    help="run as child process, summary to given fd")
-parser.add_option("-c", "--cover", action="store_true",
-    help="print a test coverage report")
-parser.add_option("-f", "--first", action="store_true",
-    help="exit on the first test failure")
-parser.add_option("-i", "--interactive", action="store_true",
-    help="prompt to accept changed output")
-parser.add_option("-j", "--jobs", type="int",
-    help="number of jobs to run in parallel"
-         " (default: $%s or %d)" % defaults['jobs'])
-parser.add_option("--keep-tmpdir", action="store_true",
-    help="keep temporary directory after running tests"
-         " (best used with --tmpdir)")
-parser.add_option("-R", "--restart", action="store_true",
-    help="restart at last error")
-parser.add_option("-p", "--port", type="int",
-    help="port on which servers should listen"
-         " (default: $%s or %d)" % defaults['port'])
-parser.add_option("-r", "--retest", action="store_true",
-    help="retest failed tests")
-parser.add_option("-s", "--cover_stdlib", action="store_true",
-    help="print a test coverage report inc. standard libraries")
-parser.add_option("-t", "--timeout", type="int",
-    help="kill errant tests after TIMEOUT seconds"
-         " (default: $%s or %d)" % defaults['timeout'])
-parser.add_option("--tmpdir", type="string",
-    help="run tests in the given temporary directory")
-parser.add_option("-v", "--verbose", action="store_true",
-    help="output verbose messages")
-parser.add_option("-n", "--nodiff", action="store_true",
-    help="skip showing test changes")
-parser.add_option("--with-hg", type="string",
-    help="test existing install at given location")
-parser.add_option("--pure", action="store_true",
-    help="use pure Python code instead of C extensions")
+def parseargs():
+    parser = optparse.OptionParser("%prog [options] [tests]")
+    parser.add_option("-C", "--annotate", action="store_true",
+        help="output files annotated with coverage")
+    parser.add_option("--child", type="int",
+        help="run as child process, summary to given fd")
+    parser.add_option("-c", "--cover", action="store_true",
+        help="print a test coverage report")
+    parser.add_option("-f", "--first", action="store_true",
+        help="exit on the first test failure")
+    parser.add_option("-i", "--interactive", action="store_true",
+        help="prompt to accept changed output")
+    parser.add_option("-j", "--jobs", type="int",
+        help="number of jobs to run in parallel"
+             " (default: $%s or %d)" % defaults['jobs'])
+    parser.add_option("--keep-tmpdir", action="store_true",
+        help="keep temporary directory after running tests"
+             " (best used with --tmpdir)")
+    parser.add_option("-R", "--restart", action="store_true",
+        help="restart at last error")
+    parser.add_option("-p", "--port", type="int",
+        help="port on which servers should listen"
+             " (default: $%s or %d)" % defaults['port'])
+    parser.add_option("-r", "--retest", action="store_true",
+        help="retest failed tests")
+    parser.add_option("-s", "--cover_stdlib", action="store_true",
+        help="print a test coverage report inc. standard libraries")
+    parser.add_option("-t", "--timeout", type="int",
+        help="kill errant tests after TIMEOUT seconds"
+             " (default: $%s or %d)" % defaults['timeout'])
+    parser.add_option("--tmpdir", type="string",
+        help="run tests in the given temporary directory")
+    parser.add_option("-v", "--verbose", action="store_true",
+        help="output verbose messages")
+    parser.add_option("-n", "--nodiff", action="store_true",
+        help="skip showing test changes")
+    parser.add_option("--with-hg", type="string",
+        metavar="HG",
+        help="test using specified hg script rather than a "
+             "temporary installation")
+    parser.add_option("--local", action="store_true",
+        help="shortcut for --with-hg=<testdir>/../hg")
+    parser.add_option("--pure", action="store_true",
+        help="use pure Python code instead of C extensions")
 
-for option, default in defaults.items():
-    defaults[option] = int(os.environ.get(*default))
-parser.set_defaults(**defaults)
-(options, args) = parser.parse_args()
-verbose = options.verbose
-nodiff = options.nodiff
-coverage = options.cover or options.cover_stdlib or options.annotate
-python = sys.executable
+    for option, default in defaults.items():
+        defaults[option] = int(os.environ.get(*default))
+    parser.set_defaults(**defaults)
+    (options, args) = parser.parse_args()
 
-if options.jobs < 1:
-    print >> sys.stderr, 'ERROR: -j/--jobs must be positive'
-    sys.exit(1)
-if options.interactive and options.jobs > 1:
-    print '(--interactive overrides --jobs)'
-    options.jobs = 1
+    if options.with_hg:
+        if not (os.path.isfile(options.with_hg) and
+                os.access(options.with_hg, os.X_OK)):
+            parser.error('--with-hg must specify an executable hg script')
+        if not os.path.basename(options.with_hg) == 'hg':
+            sys.stderr.write('warning: --with-hg should specify an hg script')
+    if options.local:
+        testdir = os.path.dirname(os.path.realpath(sys.argv[0]))
+        hgbin = os.path.join(os.path.dirname(testdir), 'hg')
+        if not os.access(hgbin, os.X_OK):
+            parser.error('--local specified, but %r not found or not executable'
+                         % hgbin)
+        options.with_hg = hgbin
+
+    options.anycoverage = (options.cover or
+                           options.cover_stdlib or
+                           options.annotate)
+
+    if options.anycoverage and options.with_hg:
+        # I'm not sure if this is a fundamental limitation or just a
+        # bug.  But I don't want to waste people's time and energy doing
+        # test runs that don't give the results they want.
+        parser.error("sorry, coverage options do not work when --with-hg "
+                     "or --local specified")
+
+    global vlog
+    if options.verbose:
+        if options.jobs > 1 or options.child is not None:
+            pid = "[%d]" % os.getpid()
+        else:
+            pid = None
+        def vlog(*msg):
+            if pid:
+                print pid,
+            for m in msg:
+                print m,
+            print
+    else:
+        vlog = lambda *msg: None
+
+    if options.jobs < 1:
+        print >> sys.stderr, 'ERROR: -j/--jobs must be positive'
+        sys.exit(1)
+    if options.interactive and options.jobs > 1:
+        print '(--interactive overrides --jobs)'
+        options.jobs = 1
+
+    return (options, args)
 
 def rename(src, dst):
     """Like os.rename(), trade atomicity and opened files friendliness
@@ -107,12 +180,6 @@ def rename(src, dst):
     """
     shutil.copy(src, dst)
     os.remove(src)
-
-def vlog(*msg):
-    if verbose:
-        for m in msg:
-            print m,
-        print
 
 def splitnewlines(text):
     '''like str.splitlines, but only split on newlines.
@@ -129,23 +196,29 @@ def splitnewlines(text):
         lines.append(text[i:n+1])
         i = n + 1
 
-def extract_missing_features(lines):
-    '''Extract missing/unknown features log lines as a list'''
+def parsehghaveoutput(lines):
+    '''Parse hghave log lines.
+    Return tuple of lists (missing, failed):
+      * the missing/unknown features
+      * the features for which existence check failed'''
     missing = []
+    failed = []
     for line in lines:
-        if not line.startswith(SKIPPED_PREFIX):
-            continue
-        line = line.splitlines()[0]
-        missing.append(line[len(SKIPPED_PREFIX):])
+        if line.startswith(SKIPPED_PREFIX):
+            line = line.splitlines()[0]
+            missing.append(line[len(SKIPPED_PREFIX):])
+        elif line.startswith(FAILED_PREFIX):
+            line = line.splitlines()[0]
+            failed.append(line[len(FAILED_PREFIX):])
 
-    return missing
+    return missing, failed
 
-def show_diff(expected, output):
+def showdiff(expected, output):
     for line in difflib.unified_diff(expected, output,
             "Expected output", "Test output"):
         sys.stdout.write(line)
 
-def find_program(program):
+def findprogram(program):
     """Search PATH for a executable program"""
     for p in os.environ.get('PATH', os.defpath).split(os.pathsep):
         name = os.path.join(p, program)
@@ -153,43 +226,41 @@ def find_program(program):
             return name
     return None
 
-def check_required_tools():
+def checktools():
     # Before we go any further, check for pre-requisite tools
     # stuff from coreutils (cat, rm, etc) are not tested
-    for p in required_tools:
+    for p in requiredtools:
         if os.name == 'nt':
             p += '.exe'
-        found = find_program(p)
+        found = findprogram(p)
         if found:
             vlog("# Found prerequisite", p, "at", found)
         else:
             print "WARNING: Did not find prerequisite tool: "+p
 
-def cleanup_exit():
+def cleanup(options):
     if not options.keep_tmpdir:
-        if verbose:
-            print "# Cleaning up HGTMP", HGTMP
+        vlog("# Cleaning up HGTMP", HGTMP)
         shutil.rmtree(HGTMP, True)
 
-def use_correct_python():
+def usecorrectpython():
     # some tests run python interpreter. they must use same
     # interpreter we use or bad things will happen.
     exedir, exename = os.path.split(sys.executable)
     if exename == 'python':
-        path = find_program('python')
+        path = findprogram('python')
         if os.path.dirname(path) == exedir:
             return
     vlog('# Making python executable in test path use correct Python')
-    my_python = os.path.join(BINDIR, 'python')
+    mypython = os.path.join(BINDIR, 'python')
     try:
-        os.symlink(sys.executable, my_python)
+        os.symlink(sys.executable, mypython)
     except AttributeError:
         # windows fallback
-        shutil.copyfile(sys.executable, my_python)
-        shutil.copymode(sys.executable, my_python)
+        shutil.copyfile(sys.executable, mypython)
+        shutil.copymode(sys.executable, mypython)
 
-def install_hg():
-    global python
+def installhg(options):
     vlog("# Performing temporary installation of HG")
     installerrs = os.path.join("tests", "install.err")
     pure = options.pure and "--pure" or ""
@@ -202,7 +273,7 @@ def install_hg():
            % (sys.executable, pure, INST, PYTHONDIR, BINDIR, installerrs))
     vlog("# Running", cmd)
     if os.system(cmd) == 0:
-        if not verbose:
+        if not options.verbose:
             os.remove(installerrs)
     else:
         f = open(installerrs)
@@ -212,19 +283,7 @@ def install_hg():
         sys.exit(1)
     os.chdir(TESTDIR)
 
-    os.environ["PATH"] = "%s%s%s" % (BINDIR, os.pathsep, os.environ["PATH"])
-
-    pydir = os.pathsep.join([PYTHONDIR, TESTDIR])
-    pythonpath = os.environ.get("PYTHONPATH")
-    if pythonpath:
-        pythonpath = pydir + os.pathsep + pythonpath
-    else:
-        pythonpath = pydir
-    os.environ["PYTHONPATH"] = pythonpath
-
-    use_correct_python()
-    global hgpkg
-    hgpkg = _hgpath()
+    usecorrectpython()
 
     vlog("# Installing dummy diffstat")
     f = open(os.path.join(BINDIR, 'diffstat'), 'w')
@@ -238,7 +297,7 @@ def install_hg():
     f.close()
     os.chmod(os.path.join(BINDIR, 'diffstat'), 0700)
 
-    if coverage:
+    if options.anycoverage:
         vlog("# Installing coverage wrapper")
         os.environ['COVERAGE_FILE'] = COVERAGE_FILE
         if os.path.exists(COVERAGE_FILE):
@@ -248,35 +307,40 @@ def install_hg():
         f = open(os.path.join(BINDIR, 'hg'), 'w')
         f.write('#!' + sys.executable + '\n')
         f.write('import sys, os; os.execv(sys.executable, [sys.executable, '
-                '"%s", "-x", "%s"] + sys.argv[1:])\n' %
+                '"%s", "-x", "-p", "%s"] + sys.argv[1:])\n' %
                 (os.path.join(TESTDIR, 'coverage.py'),
                  os.path.join(BINDIR, '_hg.py')))
         f.close()
         os.chmod(os.path.join(BINDIR, 'hg'), 0700)
-        python = '"%s" "%s" -x' % (sys.executable,
-                                   os.path.join(TESTDIR,'coverage.py'))
 
-def output_coverage():
-    vlog("# Producing coverage report")
+def outputcoverage(options):
+
+    vlog('# Producing coverage report')
+    os.chdir(PYTHONDIR)
+
+    def covrun(*args):
+        start = sys.executable, os.path.join(TESTDIR, 'coverage.py')
+        cmd = '"%s" "%s" %s' % (start[0], start[1], ' '.join(args))
+        vlog('# Running: %s' % cmd)
+        os.system(cmd)
+
     omit = [BINDIR, TESTDIR, PYTHONDIR]
     if not options.cover_stdlib:
         # Exclude as system paths (ignoring empty strings seen on win)
         omit += [x for x in sys.path if x != '']
     omit = ','.join(omit)
-    os.chdir(PYTHONDIR)
-    cmd = '"%s" "%s" -i -r "--omit=%s"' % (
-        sys.executable, os.path.join(TESTDIR, 'coverage.py'), omit)
-    vlog("# Running: "+cmd)
-    os.system(cmd)
+
+    covrun('-c') # combine from parallel processes
+    for fn in os.listdir(TESTDIR):
+        if fn.startswith('.coverage.'):
+            os.unlink(os.path.join(TESTDIR, fn))
+
+    covrun('-i', '-r', '"--omit=%s"' % omit) # report
     if options.annotate:
         adir = os.path.join(TESTDIR, 'annotated')
         if not os.path.isdir(adir):
             os.mkdir(adir)
-        cmd = '"%s" "%s" -i -a "--directory=%s" "--omit=%s"' % (
-            sys.executable, os.path.join(TESTDIR, 'coverage.py'),
-            adir, omit)
-        vlog("# Running: "+cmd)
-        os.system(cmd)
+        covrun('-i', '-a', '"--directory=%s"' % adir, '"--omit=%s"' % omit)
 
 class Timeout(Exception):
     pass
@@ -284,7 +348,7 @@ class Timeout(Exception):
 def alarmed(signum, frame):
     raise Timeout
 
-def run(cmd):
+def run(cmd, options):
     """Run command in a sub-process, capturing the output (stdout and stderr).
     Return the exist code, and output."""
     # TODO: Use subprocess.Popen if we're running on Python 2.4
@@ -314,14 +378,14 @@ def run(cmd):
                        % options.timeout)
     return ret, splitnewlines(output)
 
-def run_one(test, skips, fails):
+def runone(options, test, skips, fails):
     '''tristate output:
     None -> skipped
     True -> passed
     False -> failed'''
 
     def skip(msg):
-        if not verbose:
+        if not options.verbose:
             skips.append((test, msg))
         else:
             print "\nSkipping %s: %s" % (test, msg)
@@ -329,7 +393,7 @@ def run_one(test, skips, fails):
 
     def fail(msg):
         fails.append((test, msg))
-        if not nodiff:
+        if not options.nodiff:
             print "\nERROR: %s %s" % (test, msg)
         return None
 
@@ -342,7 +406,6 @@ def run_one(test, skips, fails):
     hgrc.write('[defaults]\n')
     hgrc.write('backout = -d "0 0"\n')
     hgrc.write('commit = -d "0 0"\n')
-    hgrc.write('debugrawcommit = -d "0 0"\n')
     hgrc.write('tag = -d "0 0"\n')
     hgrc.close()
 
@@ -367,7 +430,7 @@ def run_one(test, skips, fails):
     lctest = test.lower()
 
     if lctest.endswith('.py') or firstline == '#!/usr/bin/env python':
-        cmd = '%s "%s"' % (python, testpath)
+        cmd = '%s "%s"' % (PYTHON, testpath)
     elif lctest.endswith('.bat'):
         # do not run batch scripts on non-windows
         if os.name != 'nt':
@@ -390,7 +453,7 @@ def run_one(test, skips, fails):
         signal.alarm(options.timeout)
 
     vlog("# Running", cmd)
-    ret, out = run(cmd)
+    ret, out = run(cmd, options)
     vlog("# Ret was:", ret)
 
     if options.timeout > 0:
@@ -402,30 +465,34 @@ def run_one(test, skips, fails):
     # If reference output file exists, check test output against it
     if os.path.exists(ref):
         f = open(ref, "r")
-        ref_out = splitnewlines(f.read())
+        refout = splitnewlines(f.read())
         f.close()
     else:
-        ref_out = []
+        refout = []
     if skipped:
         mark = 's'
-        missing = extract_missing_features(out)
+        missing, failed = parsehghaveoutput(out)
         if not missing:
             missing = ['irrelevant']
-        skip(missing[-1])
-    elif out != ref_out:
+        if failed:
+            fail("hghave failed checking for %s" % failed[-1])
+            skipped = False
+        else:
+            skip(missing[-1])
+    elif out != refout:
         mark = '!'
         if ret:
             fail("output changed and returned error code %d" % ret)
         else:
             fail("output changed")
-        if not nodiff:
-            show_diff(ref_out, out)
+        if not options.nodiff:
+            showdiff(refout, out)
         ret = 1
     elif ret:
         mark = '!'
         fail("returned error code %d" % ret)
 
-    if not verbose:
+    if not options.verbose:
         sys.stdout.write(mark)
         sys.stdout.flush()
 
@@ -467,60 +534,42 @@ def run_one(test, skips, fails):
         return None
     return ret == 0
 
-if not options.child:
-    os.umask(022)
+_hgpath = None
 
-    check_required_tools()
+def _gethgpath():
+    """Return the path to the mercurial package that is actually found by
+    the current Python interpreter."""
+    global _hgpath
+    if _hgpath is not None:
+        return _hgpath
 
-# Reset some environment variables to well-known values so that
-# the tests produce repeatable output.
-os.environ['LANG'] = os.environ['LC_ALL'] = 'C'
-os.environ['TZ'] = 'GMT'
-os.environ["EMAIL"] = "Foo Bar <foo.bar@example.com>"
-os.environ['CDPATH'] = ''
-
-TESTDIR = os.environ["TESTDIR"] = os.getcwd()
-HGTMP = os.environ['HGTMP'] = os.path.realpath(tempfile.mkdtemp('', 'hgtests.',
-                                               options.tmpdir))
-DAEMON_PIDS = None
-HGRCPATH = None
-
-os.environ["HGEDITOR"] = sys.executable + ' -c "import sys; sys.exit(0)"'
-os.environ["HGMERGE"] = "internal:merge"
-os.environ["HGUSER"]   = "test"
-os.environ["HGENCODING"] = "ascii"
-os.environ["HGENCODINGMODE"] = "strict"
-os.environ["HGPORT"] = str(options.port)
-os.environ["HGPORT1"] = str(options.port + 1)
-os.environ["HGPORT2"] = str(options.port + 2)
-
-if options.with_hg:
-    INST = options.with_hg
-else:
-    INST = os.path.join(HGTMP, "install")
-BINDIR = os.environ["BINDIR"] = os.path.join(INST, "bin")
-PYTHONDIR = os.path.join(INST, "lib", "python")
-COVERAGE_FILE = os.path.join(TESTDIR, ".coverage")
-
-def _hgpath():
     cmd = '%s -c "import mercurial; print mercurial.__path__[0]"'
-    hgpath = os.popen(cmd % python)
-    path = hgpath.read().strip()
-    hgpath.close()
-    return path
+    pipe = os.popen(cmd % PYTHON)
+    try:
+        _hgpath = pipe.read().strip()
+    finally:
+        pipe.close()
+    return _hgpath
 
-expecthg = os.path.join(HGTMP, 'install', 'lib', 'python', 'mercurial')
-hgpkg = None
+def _checkhglib(verb):
+    """Ensure that the 'mercurial' package imported by python is
+    the one we expect it to be.  If not, print a warning to stderr."""
+    expecthg = os.path.join(PYTHONDIR, 'mercurial')
+    actualhg = _gethgpath()
+    if actualhg != expecthg:
+        sys.stderr.write('warning: %s with unexpected mercurial lib: %s\n'
+                         '         (expected %s)\n'
+                         % (verb, actualhg, expecthg))
 
-def run_children(tests):
-    if not options.with_hg:
-        install_hg()
-        if hgpkg != expecthg:
-            print '# Testing unexpected mercurial: %s' % hgpkg
+def runchildren(options, tests):
+    if INST:
+        installhg(options)
+        _checkhglib("Testing")
 
     optcopy = dict(options.__dict__)
     optcopy['jobs'] = 1
-    optcopy['with_hg'] = INST
+    if optcopy['with_hg'] is None:
+        optcopy['with_hg'] = os.path.join(BINDIR, "hg")
     opts = []
     for opt, value in optcopy.iteritems():
         name = '--' + opt.replace('_', '-')
@@ -532,17 +581,16 @@ def run_children(tests):
     tests.reverse()
     jobs = [[] for j in xrange(options.jobs)]
     while tests:
-        for j in xrange(options.jobs):
+        for job in jobs:
             if not tests: break
-            jobs[j].append(tests.pop())
+            job.append(tests.pop())
     fps = {}
-    for j in xrange(len(jobs)):
-        job = jobs[j]
+    for j, job in enumerate(jobs):
         if not job:
             continue
         rfd, wfd = os.pipe()
         childopts = ['--child=%d' % wfd, '--port=%d' % (options.port + j * 3)]
-        cmdline = [python, sys.argv[0]] + opts + childopts + job
+        cmdline = [PYTHON, sys.argv[0]] + opts + childopts + job
         vlog(' '.join(cmdline))
         fps[os.spawnvp(os.P_NOWAIT, cmdline[0], cmdline)] = os.fdopen(rfd, 'r')
         os.close(wfd)
@@ -571,28 +619,25 @@ def run_children(tests):
     for s in fails:
         print "Failed %s: %s" % (s[0], s[1])
 
-    if hgpkg != expecthg:
-        print '# Tested unexpected mercurial: %s' % hgpkg
+    _checkhglib("Tested")
     print "# Ran %d tests, %d skipped, %d failed." % (
         tested, skipped, failed)
     sys.exit(failures != 0)
 
-def run_tests(tests):
+def runtests(options, tests):
     global DAEMON_PIDS, HGRCPATH
     DAEMON_PIDS = os.environ["DAEMON_PIDS"] = os.path.join(HGTMP, 'daemon.pids')
     HGRCPATH = os.environ["HGRCPATH"] = os.path.join(HGTMP, '.hgrc')
 
     try:
-        if not options.with_hg:
-            install_hg()
-
-            if hgpkg != expecthg:
-                print '# Testing unexpected mercurial: %s' % hgpkg
+        if INST:
+            installhg(options)
+            _checkhglib("Testing")
 
         if options.timeout > 0:
             try:
                 signal.signal(signal.SIGALRM, alarmed)
-                vlog('# Running tests with %d-second timeout' %
+                vlog('# Running each test with %d second timeout' %
                      options.timeout)
             except AttributeError:
                 print 'WARNING: cannot run tests with timeouts'
@@ -618,7 +663,7 @@ def run_tests(tests):
             if options.retest and not os.path.exists(test + ".err"):
                 skipped += 1
                 continue
-            ret = run_one(test, skips, fails)
+            ret = runone(options, test, skips, fails)
             if ret is None:
                 skipped += 1
             elif not ret:
@@ -649,13 +694,12 @@ def run_tests(tests):
                 print "Skipped %s: %s" % s
             for s in fails:
                 print "Failed %s: %s" % s
-            if hgpkg != expecthg:
-                print '# Tested unexpected mercurial: %s' % hgpkg
+            _checkhglib("Tested")
             print "# Ran %d tests, %d skipped, %d failed." % (
                 tested, skipped, failed)
 
-        if coverage:
-            output_coverage()
+        if options.anycoverage:
+            outputcoverage(options)
     except KeyboardInterrupt:
         failed = True
         print "\ninterrupted!"
@@ -663,24 +707,92 @@ def run_tests(tests):
     if failed:
         sys.exit(1)
 
-if len(args) == 0:
-    args = os.listdir(".")
-    args.sort()
+def main():
+    (options, args) = parseargs()
+    if not options.child:
+        os.umask(022)
 
-tests = []
-for test in args:
-    if (test.startswith("test-") and '~' not in test and
-        ('.' not in test or test.endswith('.py') or
-         test.endswith('.bat'))):
-        tests.append(test)
+        checktools()
 
-vlog("# Using TESTDIR", TESTDIR)
-vlog("# Using HGTMP", HGTMP)
+    # Reset some environment variables to well-known values so that
+    # the tests produce repeatable output.
+    os.environ['LANG'] = os.environ['LC_ALL'] = 'C'
+    os.environ['TZ'] = 'GMT'
+    os.environ["EMAIL"] = "Foo Bar <foo.bar@example.com>"
+    os.environ['CDPATH'] = ''
 
-try:
-    if len(tests) > 1 and options.jobs > 1:
-        run_children(tests)
+    global TESTDIR, HGTMP, INST, BINDIR, PYTHONDIR, COVERAGE_FILE
+    TESTDIR = os.environ["TESTDIR"] = os.getcwd()
+    HGTMP = os.environ['HGTMP'] = os.path.realpath(tempfile.mkdtemp('', 'hgtests.',
+                                                   options.tmpdir))
+    DAEMON_PIDS = None
+    HGRCPATH = None
+
+    os.environ["HGEDITOR"] = sys.executable + ' -c "import sys; sys.exit(0)"'
+    os.environ["HGMERGE"] = "internal:merge"
+    os.environ["HGUSER"]   = "test"
+    os.environ["HGENCODING"] = "ascii"
+    os.environ["HGENCODINGMODE"] = "strict"
+    os.environ["HGPORT"] = str(options.port)
+    os.environ["HGPORT1"] = str(options.port + 1)
+    os.environ["HGPORT2"] = str(options.port + 2)
+
+    if options.with_hg:
+        INST = None
+        BINDIR = os.path.dirname(os.path.realpath(options.with_hg))
+
+        # This looks redundant with how Python initializes sys.path from
+        # the location of the script being executed.  Needed because the
+        # "hg" specified by --with-hg is not the only Python script
+        # executed in the test suite that needs to import 'mercurial'
+        # ... which means it's not really redundant at all.
+        PYTHONDIR = BINDIR
     else:
-        run_tests(tests)
-finally:
-    cleanup_exit()
+        INST = os.path.join(HGTMP, "install")
+        BINDIR = os.environ["BINDIR"] = os.path.join(INST, "bin")
+        PYTHONDIR = os.path.join(INST, "lib", "python")
+
+    os.environ["BINDIR"] = BINDIR
+    os.environ["PYTHON"] = PYTHON
+
+    if not options.child:
+        path = [BINDIR] + os.environ["PATH"].split(os.pathsep)
+        os.environ["PATH"] = os.pathsep.join(path)
+
+        # We have to augment PYTHONPATH, rather than simply replacing
+        # it, in case external libraries are only available via current
+        # PYTHONPATH.  (In particular, the Subversion bindings on OS X
+        # are in /opt/subversion.)
+        os.environ["PYTHONPATH"] = (PYTHONDIR + os.pathsep +
+                                    os.environ.get("PYTHONPATH", ""))
+
+    COVERAGE_FILE = os.path.join(TESTDIR, ".coverage")
+
+    if len(args) == 0:
+        args = os.listdir(".")
+        args.sort()
+
+    tests = []
+    for test in args:
+        if (test.startswith("test-") and '~' not in test and
+            ('.' not in test or test.endswith('.py') or
+             test.endswith('.bat'))):
+            tests.append(test)
+    if not tests:
+        print "# Ran 0 tests, 0 skipped, 0 failed."
+        return
+
+    vlog("# Using TESTDIR", TESTDIR)
+    vlog("# Using HGTMP", HGTMP)
+    vlog("# Using PATH", os.environ["PATH"])
+    vlog("# Using PYTHONPATH", os.environ["PYTHONPATH"])
+
+    try:
+        if len(tests) > 1 and options.jobs > 1:
+            runchildren(options, tests)
+        else:
+            runtests(options, tests)
+    finally:
+        cleanup(options)
+
+main()

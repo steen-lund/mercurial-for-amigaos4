@@ -5,7 +5,7 @@ mkdir a/d1
 mkdir a/d1/d2
 echo line 1 > a/a
 echo line 1 > a/d1/d2/a
-hg --cwd a ci -d '0 0' -Ama
+hg --cwd a ci -Ama
 
 echo line 2 >> a/a
 hg --cwd a ci -u someone -d '1 0' -m'second change'
@@ -144,10 +144,10 @@ echo line 3 >> a/a
 hg --cwd a ci -m'third change'
 hg --cwd a export -o '../patch%R' 1 2
 hg clone -qr0 a b
-hg --cwd b parents --template 'parent: #rev#\n'
+hg --cwd b parents --template 'parent: {rev}\n'
 hg --cwd b import ../patch1 ../patch2
 hg --cwd b rollback
-hg --cwd b parents --template 'parent: #rev#\n'
+hg --cwd b parents --template 'parent: {rev}\n'
 rm -r b
 
 # bug non regression test

@@ -1,5 +1,14 @@
+# osutil.py - pure Python version of osutil.c
+#
+#  Copyright 2009 Matt Mackall <mpm@selenic.com> and others
+#
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2, incorporated herein by reference.
+
 import os
 import stat as _stat
+
+posixfile = file
 
 def _mode_to_kind(mode):
     if _stat.S_ISREG(mode): return _stat.S_IFREG
@@ -40,3 +49,4 @@ def listdir(path, stat=False, skip=None):
         else:
             result.append((fn, _mode_to_kind(st.st_mode)))
     return result
+
