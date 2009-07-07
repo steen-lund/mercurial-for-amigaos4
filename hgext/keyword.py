@@ -78,7 +78,7 @@ from mercurial import commands, cmdutil, dispatch, filelog, revlog, extensions
 from mercurial import patch, localrepo, templater, templatefilters, util, match
 from mercurial.hgweb import webcommands
 from mercurial.lock import release
-from mercurial.node import nullid, hex
+from mercurial.node import nullid
 from mercurial.i18n import _
 import re, shutil, tempfile, time
 
@@ -495,7 +495,8 @@ def reposetup(ui, repo):
                 release(lock, wlock)
 
     # monkeypatches
-    def kwpatchfile_init(orig, self, ui, fname, opener, missing=False, eol=None):
+    def kwpatchfile_init(orig, self, ui, fname, opener,
+                         missing=False, eol=None):
         '''Monkeypatch/wrap patch.patchfile.__init__ to avoid
         rejects or conflicts due to expanded keywords in working dir.'''
         orig(self, ui, fname, opener, missing, eol)

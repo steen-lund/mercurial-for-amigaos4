@@ -1343,19 +1343,24 @@ class queue(object):
 
     def qseries(self, repo, missing=None, start=0, length=None, status=None,
                 summary=False):
-        def displayname(patchname):
+        def displayname(pfx, patchname):
             if summary:
                 ph = patchheader(self.join(patchname))
                 msg = ph.message
                 msg = msg and ': ' + msg[0] or ': '
             else:
                 msg = ''
-            return '%s%s' % (patchname, msg)
+            msg = "%s%s%s" % (pfx, patchname, msg)
+            if self.ui.interactive():
+                msg = util.ellipsis(msg, util.termwidth())
+            self.ui.write(msg + '\n')
 
         applied = set([p.name for p in self.applied])
         if length is None:
             length = len(self.series) - start
         if not missing:
+            if self.ui.verbose:
+                idxwidth = len(str(start+length - 1))
             for i in xrange(start, start+length):
                 patch = self.series[i]
                 if patch in applied:
@@ -1366,10 +1371,10 @@ class queue(object):
                     stat = 'G'
                 pfx = ''
                 if self.ui.verbose:
-                    pfx = '%d %s ' % (i, stat)
+                    pfx = '%*d %s ' % (idxwidth, i, stat)
                 elif status and status != stat:
                     continue
-                self.ui.write('%s%s\n' % (pfx, displayname(patch)))
+                displayname(pfx, patch)
         else:
             msng_list = []
             for root, dirs, files in os.walk(self.path):
@@ -1383,7 +1388,7 @@ class queue(object):
                         msng_list.append(fl)
             for x in sorted(msng_list):
                 pfx = self.ui.verbose and ('D ') or ''
-                self.ui.write("%s%s\n" % (pfx, displayname(x)))
+                displayname(pfx, x)
 
     def issaveline(self, l):
         if l.name == '.hg.patches.save.line':
@@ -1536,7 +1541,7 @@ class queue(object):
                 raise util.Abort(_('option "-r" not valid when importing '
                                    'files'))
             rev = cmdutil.revrange(repo, rev)
-            rev.sort(lambda x, y: cmp(y, x))
+            rev.sort(reverse=True)
         if (len(files) > 1 or len(rev) > 1) and patchname:
             raise util.Abort(_('option "-n" not valid when importing multiple '
                                'patches'))
@@ -2329,7 +2334,7 @@ def select(ui, repo, *args, **opts):
         if ui.verbose:
             guards['NONE'] = noguards
         guards = guards.items()
-        guards.sort(lambda a, b: cmp(a[0][1:], b[0][1:]))
+        guards.sort(key=lambda x: x[0][1:])
         if guards:
             ui.note(_('guards in series file:\n'))
             for guard, count in guards:

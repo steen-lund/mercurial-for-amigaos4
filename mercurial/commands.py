@@ -8,9 +8,9 @@
 from node import hex, nullid, nullrev, short
 from lock import release
 from i18n import _, gettext
-import os, re, sys, subprocess, difflib, time
+import os, re, sys, subprocess, difflib, time, tempfile
 import hg, util, revlog, bundlerepo, extensions, copies, context, error
-import patch, help, mdiff, tempfile, url, encoding
+import patch, help, mdiff, url, encoding
 import archival, changegroup, cmdutil, sshserver, hbisect
 from hgweb import server
 import merge as merge_
@@ -396,8 +396,8 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
         while size <= changesets:
             tests, size = tests + 1, size * 2
         rev = repo.changelog.rev(node)
-        ui.write(_("Testing changeset %s:%s "
-                   "(%s changesets remaining, ~%s tests)\n")
+        ui.write(_("Testing changeset %d:%s "
+                   "(%d changesets remaining, ~%d tests)\n")
                  % (rev, short(node), changesets, tests))
         if not noupdate:
             cmdutil.bail_if_changed(repo)
@@ -750,7 +750,7 @@ def debugcomplete(ui, cmd='', **opts):
     ui.write("%s\n" % "\n".join(sorted(cmdlist)))
 
 def debugfsinfo(ui, path = "."):
-    file('.debugfsinfo', 'w').write('')
+    open('.debugfsinfo', 'w').write('')
     ui.write('exec: %s\n' % (util.checkexec(path) and 'yes' or 'no'))
     ui.write('symlink: %s\n' % (util.checklink(path) and 'yes' or 'no'))
     ui.write('case-sensitive: %s\n' % (util.checkcase('.debugfsinfo')
@@ -983,7 +983,7 @@ def debuginstall(ui):
         if list(files) != [os.path.basename(fa)]:
             ui.write(_(" unexpected patch output!\n"))
             patchproblems += 1
-        a = file(fa).read()
+        a = open(fa).read()
         if a != b:
             ui.write(_(" patch test failed!\n"))
             patchproblems += 1
@@ -1457,7 +1457,10 @@ def help_(ui, name=None, with_version=False):
         try:
             aliases, i = cmdutil.findcmd(name, table, False)
         except error.AmbiguousCommand, inst:
-            select = lambda c: c.lstrip('^').startswith(inst.args[0])
+            # py3k fix: except vars can't be used outside the scope of the
+            # except block, nor can be used inside a lambda. python issue4617
+            prefix = inst.args[0]
+            select = lambda c: c.lstrip('^').startswith(prefix)
             helplist(_('list of commands:\n\n'), select)
             return
 
