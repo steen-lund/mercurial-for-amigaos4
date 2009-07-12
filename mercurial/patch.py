@@ -325,10 +325,6 @@ class patchfile(object):
         # looks through the hash and finds candidate lines.  The
         # result is a list of line numbers sorted based on distance
         # from linenum
-        def sorter(a, b):
-            vala = abs(a - linenum)
-            valb = abs(b - linenum)
-            return cmp(vala, valb)
 
         try:
             cand = self.hash[l]
@@ -337,7 +333,7 @@ class patchfile(object):
 
         if len(cand) > 1:
             # resort our list of potentials forward then back.
-            cand.sort(sorter)
+            cand.sort(key=lambda x: abs(x - linenum))
         return cand
 
     def hashlines(self):
@@ -1139,7 +1135,7 @@ def internalpatch(patchobj, ui, strip, cwd, files={}, eolmode='strict'):
         raise util.Abort(_('Unsupported line endings type: %s') % eolmode)
 
     try:
-        fp = file(patchobj, 'rb')
+        fp = open(patchobj, 'rb')
     except TypeError:
         fp = patchobj
     if cwd:
@@ -1422,8 +1418,8 @@ def diffstat(lines, width=80):
         # If diffstat runs out of room it doesn't print anything, which
         # isn't very useful, so always print at least one + or - if there
         # were at least some changes
-        pluses = '+' * max(adds/factor, int(bool(adds)))
-        minuses = '-' * max(removes/factor, int(bool(removes)))
+        pluses = '+' * max(adds // factor, int(bool(adds)))
+        minuses = '-' * max(removes // factor, int(bool(removes)))
         output.append(' %-*s |  %*.d %s%s\n' % (maxname, filename, countwidth,
                                                 adds+removes, pluses, minuses))
 
