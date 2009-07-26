@@ -38,15 +38,15 @@ current user or for archive distribution.
 Configuration is done in the [keyword] and [keywordmaps] sections of
 hgrc files.
 
-Example:
+Example::
 
     [keyword]
     # expand keywords in every python file except those matching "x*"
     **.py =
     x*    = ignore
 
-Note: the more specific you are in your filename patterns
-      the less you lose speed in huge repositories.
+NOTE: the more specific you are in your filename patterns the less you
+lose speed in huge repositories.
 
 For [keywordmaps] template mapping and expansion demonstration and
 control run "hg kwdemo".
@@ -70,15 +70,15 @@ the files in question to update keyword expansions after all changes
 have been checked in.
 
 Expansions spanning more than one line and incremental expansions,
-like CVS' $Log$, are not supported. A keyword template map
-"Log = {desc}" expands to the first line of the changeset description.
+like CVS' $Log$, are not supported. A keyword template map "Log =
+{desc}" expands to the first line of the changeset description.
 '''
 
 from mercurial import commands, cmdutil, dispatch, filelog, revlog, extensions
 from mercurial import patch, localrepo, templater, templatefilters, util, match
 from mercurial.hgweb import webcommands
 from mercurial.lock import release
-from mercurial.node import nullid, hex
+from mercurial.node import nullid
 from mercurial.i18n import _
 import re, shutil, tempfile, time
 
@@ -125,9 +125,8 @@ class kwtemplater(object):
 
         kwmaps = self.ui.configitems('keywordmaps')
         if kwmaps: # override default templates
-            kwmaps = [(k, templater.parsestring(v, False))
-                      for (k, v) in kwmaps]
-            self.templates = dict(kwmaps)
+            self.templates = dict((k, templater.parsestring(v, False))
+                                  for k, v in kwmaps)
         escaped = map(re.escape, self.templates.keys())
         kwpat = r'\$(%s)(: [^$\n\r]*? )??\$' % '|'.join(escaped)
         self.re_kw = re.compile(kwpat)
@@ -366,8 +365,8 @@ def files(ui, repo, *pats, **opts):
     [keyword] configuration patterns.
 
     Useful to prevent inadvertent keyword expansion and to speed up
-    execution by including only files that are actual candidates
-    for expansion.
+    execution by including only files that are actual candidates for
+    expansion.
 
     See "hg help keyword" on how to construct patterns both for
     inclusion and exclusion of files.
@@ -375,11 +374,12 @@ def files(ui, repo, *pats, **opts):
     Use -u/--untracked to list untracked files as well.
 
     With -a/--all and -v/--verbose the codes used to show the status
-    of files are:
-    K = keyword expansion candidate
-    k = keyword expansion candidate (untracked)
-    I = ignored
-    i = ignored (untracked)
+    of files are::
+
+      K = keyword expansion candidate
+      k = keyword expansion candidate (untracked)
+      I = ignored
+      i = ignored (untracked)
     '''
     kwt = kwtools['templater']
     status = _status(ui, repo, kwt, opts.get('untracked'), *pats, **opts)
@@ -496,7 +496,8 @@ def reposetup(ui, repo):
                 release(lock, wlock)
 
     # monkeypatches
-    def kwpatchfile_init(orig, self, ui, fname, opener, missing=False, eol=None):
+    def kwpatchfile_init(orig, self, ui, fname, opener,
+                         missing=False, eol=None):
         '''Monkeypatch/wrap patch.patchfile.__init__ to avoid
         rejects or conflicts due to expanded keywords in working dir.'''
         orig(self, ui, fname, opener, missing, eol)
