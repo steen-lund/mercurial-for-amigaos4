@@ -9,16 +9,16 @@
 
 Bookmarks are local movable markers to changesets. Every bookmark
 points to a changeset identified by its hash. If you commit a
-changeset that is based on a changeset that has a bookmark on it,
-the bookmark shifts to the new changeset.
+changeset that is based on a changeset that has a bookmark on it, the
+bookmark shifts to the new changeset.
 
-It is possible to use bookmark names in every revision lookup
-(e.g. hg merge, hg update).
+It is possible to use bookmark names in every revision lookup (e.g. hg
+merge, hg update).
 
 By default, when several bookmarks point to the same changeset, they
 will all move forward together. It is possible to obtain a more
 git-like experience by adding the following configuration option to
-your .hgrc:
+your .hgrc::
 
   [bookmarks]
   track.current = True
@@ -296,14 +296,11 @@ def reposetup(ui, repo):
                 write(self, marks)
             return result
 
-        def tags(self):
+        def _findtags(self):
             """Merge bookmarks with normal tags"""
-            if self.tagscache:
-                return self.tagscache
-
-            tagscache = super(bookmark_repo, self).tags()
-            tagscache.update(parse(self))
-            return tagscache
+            (tags, tagtypes) = super(bookmark_repo, self)._findtags()
+            tags.update(parse(self))
+            return (tags, tagtypes)
 
     repo.__class__ = bookmark_repo
 

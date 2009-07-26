@@ -29,7 +29,7 @@ with a diffstat summary and the changeset summary, so you can be sure
 you are sending the right changes.
 
 To configure other defaults, add a section like this to your hgrc
-file:
+file::
 
   [email]
   from = My Name <my@email>
@@ -52,13 +52,13 @@ The -m/--mbox option is also very useful. Instead of previewing each
 patchbomb message in a pager or sending the messages directly, it will
 create a UNIX mailbox file with the patch emails. This mailbox file
 can be previewed with any mail user agent which supports UNIX mbox
-files, e.g. with mutt:
+files, e.g. with mutt::
 
   % mutt -R -f mbox
 
 When you are previewing the patchbomb messages, you can use `formail'
 (a utility that is commonly installed as part of the procmail
-package), to send each message out:
+package), to send each message out::
 
   % formail -s sendmail -bm -t < mbox
 
@@ -68,9 +68,10 @@ You can also either configure the method option in the email section
 to be a sendmail compatible mailer or fill out the [smtp] section so
 that the patchbomb extension can automatically send patchbombs
 directly from the commandline. See the [email] and [smtp] sections in
-hgrc(5) for details.'''
+hgrc(5) for details.
+'''
 
-import os, errno, socket, tempfile, cStringIO
+import os, errno, socket, tempfile, cStringIO, time
 import email.MIMEMultipart, email.MIMEBase
 import email.Utils, email.Encoders, email.Generator
 from mercurial import cmdutil, commands, hg, mail, patch, util
@@ -417,7 +418,7 @@ def patchbomb(ui, repo, *revs, **opts):
             first = False
 
         m['User-Agent'] = 'Mercurial-patchbomb/%s' % util.version()
-        m['Date'] = email.Utils.formatdate(start_time[0])
+        m['Date'] = email.Utils.formatdate(start_time[0], localtime=True)
 
         start_time = (start_time[0] + 1, start_time[1])
         m['From'] = sender
@@ -446,7 +447,7 @@ def patchbomb(ui, repo, *revs, **opts):
             ui.status(_('Writing '), subj, ' ...\n')
             fp = open(opts.get('mbox'), 'In-Reply-To' in m and 'ab+' or 'wb+')
             generator = email.Generator.Generator(fp, mangle_from_=True)
-            date = util.datestr(start_time, '%a %b %d %H:%M:%S %Y')
+            date = time.ctime(start_time[0])
             fp.write('From %s %s\n' % (sender_addr, date))
             generator.flatten(m, 0)
             fp.write('\n\n')
