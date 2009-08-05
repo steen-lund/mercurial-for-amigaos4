@@ -7,6 +7,7 @@ from mercurial import demandimport; demandimport.enable()
 from mercurial.commands import table, globalopts
 from mercurial.i18n import _
 from mercurial.help import helptable
+from mercurial import extensions
 
 def get_desc(docstr):
     if not docstr:
@@ -54,18 +55,18 @@ def get_cmd(cmd):
     return d
 
 def show_doc(ui):
-    def bold(s, text=""):
-        ui.write("%s\n%s\n%s\n" % (s, "="*len(s), text))
-    def underlined(s, text=""):
-        ui.write("%s\n%s\n%s\n" % (s, "-"*len(s), text))
+    def section(s):
+        ui.write("%s\n%s\n\n" % (s, "-" * len(s)))
+    def subsection(s):
+        ui.write("%s\n%s\n\n" % (s, '"' * len(s)))
 
     # print options
-    underlined(_("OPTIONS"))
+    section(_("OPTIONS"))
     for optstr, desc in get_opts(globalopts):
-        ui.write("%s::\n    %s\n\n" % (optstr, desc))
+        ui.write("%s\n    %s\n\n" % (optstr, desc))
 
     # print cmds
-    underlined(_("COMMANDS"))
+    section(_("COMMANDS"))
     h = {}
     for c, attr in table.items():
         f = c.split("|")[0]
@@ -78,15 +79,15 @@ def show_doc(ui):
         if f.startswith("debug"): continue
         d = get_cmd(h[f])
         # synopsis
-        ui.write("[[%s]]\n" % d['cmd'])
-        ui.write("%s::\n" % d['synopsis'].replace("hg ","", 1))
+        ui.write(".. _%s:\n\n" % d['cmd'])
+        ui.write("``%s``\n" % d['synopsis'].replace("hg ","", 1))
         # description
         ui.write("%s\n\n" % d['desc'][1])
         # options
         opt_output = list(d['opts'])
         if opt_output:
             opts_len = max([len(line[0]) for line in opt_output])
-            ui.write(_("    options:\n"))
+            ui.write(_("    options:\n\n"))
             for optstr, desc in opt_output:
                 if desc:
                     s = "%-*s  %s" % (opts_len, optstr, desc)
@@ -101,12 +102,25 @@ def show_doc(ui):
             ui.write(_("    aliases: %s\n\n") % " ".join(d['aliases']))
 
     # print topics
-    for names, section, doc in helptable:
-        underlined(section.upper())
+    for names, sec, doc in helptable:
+        for name in names:
+            ui.write(".. _%s:\n" % name)
+        ui.write("\n")
+        section(sec.upper())
         if callable(doc):
             doc = doc()
         ui.write(doc)
         ui.write("\n")
+
+    # print extensions
+    underlined(_("EXTENSIONS"))
+    ui.write('\n')
+    for name in sorted(extensions.listexts('../hgext')):
+        ui.write('.. _%s:\n\n' % name)
+        doc = extensions.doc(name).splitlines()
+        synopsis, rest = doc[0], doc[1:]
+        ui.write("``%s: %s``" % (name, synopsis))
+        ui.write('%s\n\n' % '\n    '.join(rest))
 
 if __name__ == "__main__":
     show_doc(sys.stdout)
