@@ -24,7 +24,7 @@ def maketemplater(ui, repo, tmpl):
 
 def changedlines(ui, repo, ctx1, ctx2, fns):
     lines = 0
-    fmatch = cmdutil.match(repo, pats=fns)
+    fmatch = cmdutil.matchfiles(repo, fns)
     diff = ''.join(patch.diff(repo, ctx1.node(), ctx2.node(), fmatch))
     for l in diff.split('\n'):
         if (l.startswith("+") and not l.startswith("+++ ") or
@@ -104,7 +104,7 @@ def churn(ui, repo, *pats, **opts):
     alternatively the number of matching revisions if the
     --changesets option is specified.
 
-    Examples:
+    Examples::
 
       # display count of changed lines for every committer
       hg churn -t '{author|email}'
@@ -119,12 +119,12 @@ def churn(ui, repo, *pats, **opts):
       hg churn -f '%Y' -s
 
     It is possible to map alternate email addresses to a main address
-    by providing a file using the following format:
+    by providing a file using the following format::
 
-    <alias email> <actual email>
+      <alias email> <actual email>
 
-    Such a file may be specified with the --aliases option, otherwise a
-    .hgchurn file will be looked for in the working directory root.
+    Such a file may be specified with the --aliases option, otherwise
+    a .hgchurn file will be looked for in the working directory root.
     '''
     def pad(s, l):
         return (s + " " * l)[:l]
@@ -143,8 +143,8 @@ def churn(ui, repo, *pats, **opts):
     if not rate:
         return
 
-    sortfn = ((not opts.get('sort')) and (lambda a, b: cmp(b[1], a[1])) or None)
-    rate.sort(sortfn)
+    sortkey = ((not opts.get('sort')) and (lambda x: -x[1]) or None)
+    rate.sort(key=sortkey)
 
     maxcount = float(max([v for k, v in rate]))
     maxname = max([len(k) for k, v in rate])

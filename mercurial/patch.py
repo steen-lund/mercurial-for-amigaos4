@@ -9,7 +9,7 @@
 from i18n import _
 from node import hex, nullid, short
 import base85, cmdutil, mdiff, util, diffhelpers, copies
-import cStringIO, email.Parser, os, re, math
+import cStringIO, email.Parser, os, re
 import sys, tempfile, zlib
 
 gitre = re.compile('diff --git a/(.*) b/(.*)')
@@ -326,10 +326,6 @@ class patchfile(object):
         # looks through the hash and finds candidate lines.  The
         # result is a list of line numbers sorted based on distance
         # from linenum
-        def sorter(a, b):
-            vala = abs(a - linenum)
-            valb = abs(b - linenum)
-            return cmp(vala, valb)
 
         try:
             cand = self.hash[l]
@@ -338,7 +334,7 @@ class patchfile(object):
 
         if len(cand) > 1:
             # resort our list of potentials forward then back.
-            cand.sort(sorter)
+            cand.sort(key=lambda x: abs(x - linenum))
         return cand
 
     def hashlines(self):
@@ -797,6 +793,17 @@ def selectfile(afile_orig, bfile_orig, hunk, strip, reverse):
     if reverse:
         createfunc = hunk.rmfile
     missing = not goodb and not gooda and not createfunc()
+
+    # some diff programs apparently produce create patches where the
+    # afile is not /dev/null, but rather the same name as the bfile
+    if missing and afile == bfile:
+        # this isn't very pretty
+        hunk.create = True
+        if createfunc():
+            missing = False
+        else:
+            hunk.create = False
+
     # If afile is "a/b/foo" and bfile is "a/b/foo.orig" we assume the
     # diff is between a file and its backup. In this case, the original
     # file should be patched (see original mpatch code).
@@ -1140,7 +1147,7 @@ def internalpatch(patchobj, ui, strip, cwd, files={}, eolmode='strict'):
         raise util.Abort(_('Unsupported line endings type: %s') % eolmode)
 
     try:
-        fp = file(patchobj, 'rb')
+        fp = open(patchobj, 'rb')
     except TypeError:
         fp = patchobj
     if cwd:
@@ -1422,23 +1429,26 @@ def diffstat(lines, width=80):
         maxtotal = max(maxtotal, adds+removes)
 
     countwidth = len(str(maxtotal))
-    graphwidth = width - countwidth - maxname
+    graphwidth = width - countwidth - maxname - 6
     if graphwidth < 10:
         graphwidth = 10
 
-    factor = max(int(math.ceil(float(maxtotal) / graphwidth)), 1)
+    def scale(i):
+        if maxtotal <= graphwidth:
+            return i
+        # If diffstat runs out of room it doesn't print anything,
+        # which isn't very useful, so always print at least one + or -
+        # if there were at least some changes.
+        return max(i * graphwidth // maxtotal, int(bool(i)))
 
     for filename, adds, removes in stats:
-        # If diffstat runs out of room it doesn't print anything, which
-        # isn't very useful, so always print at least one + or - if there
-        # were at least some changes
-        pluses = '+' * max(adds/factor, int(bool(adds)))
-        minuses = '-' * max(removes/factor, int(bool(removes)))
+        pluses = '+' * scale(adds)
+        minuses = '-' * scale(removes)
         output.append(' %-*s |  %*.d %s%s\n' % (maxname, filename, countwidth,
                                                 adds+removes, pluses, minuses))
 
     if stats:
-        output.append(' %d files changed, %d insertions(+), %d deletions(-)\n'
+        output.append(_(' %d files changed, %d insertions(+), %d deletions(-)\n')
                       % (len(stats), totaladds, totalremoves))
 
     return ''.join(output)
