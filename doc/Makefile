@@ -5,7 +5,8 @@ PREFIX=/usr/local
 MANDIR=$(PREFIX)/share/man
 INSTALL=install -c -m 644
 PYTHON=python
-ASCIIDOC=asciidoc
+RST2HTML=rst2html
+RST2MAN=rst2man
 
 all: man html
 
@@ -16,22 +17,23 @@ html: $(HTML)
 hg.1.txt: hg.1.gendoc.txt
 	touch hg.1.txt
 
-hg.1.gendoc.txt: ../mercurial/commands.py ../mercurial/help.py
+hg.1.gendoc.txt: gendoc.py ../mercurial/commands.py ../mercurial/help.py
 	${PYTHON} gendoc.py > $@
 
-%: %.xml
-	xmlto man $*.xml && \
-	sed -e 's/^\.hg/\\\&.hg/' $* > $*~ && \
-	mv $*~ $*
+%: %.txt common.txt
+	$(RST2MAN) $*.txt > $*.tmp
+# add newline after all literal blocks and fix backslash escape
+	sed \
+	  -e 's/^\.fi$$/.fi\n/' \
+	  -e 's/\\fB\\\\fP/\\fB\\e\\fP/' \
+	  $*.tmp > $*
+	rm $*.tmp
 
-%.xml: %.txt
-	$(ASCIIDOC) -d manpage -b docbook $*.txt
-
-%.html: %.txt
-	$(ASCIIDOC) -b html4 $*.txt || $(ASCIIDOC) -b html $*.txt
+%.html: %.txt common.txt
+	$(RST2HTML) $*.txt > $*.html
 
 MANIFEST: man html
-	# tracked files are already in the main MANIFEST
+# tracked files are already in the main MANIFEST
 	$(RM) $@
 	for i in $(MAN) $(HTML) hg.1.gendoc.txt; do \
 	  echo "doc/$$i" >> $@ ; \
@@ -45,4 +47,4 @@ install: man
 	done
 
 clean:
-	$(RM) $(MAN) $(MAN:%=%.xml) $(MAN:%=%.html) *.[0-9].gendoc.txt MANIFEST
+	$(RM) $(MAN) $(MAN:%=%.html) *.[0-9].gendoc.txt MANIFEST
