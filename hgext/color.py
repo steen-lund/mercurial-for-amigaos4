@@ -29,33 +29,33 @@ also available. Effects are rendered with the ECMA-48 SGR control
 function (aka ANSI escape codes). This module also provides the
 render_text function, which can be used to add effects to any text.
 
-Default effects may be overridden from the .hgrc file:
+Default effects may be overridden from the .hgrc file::
 
-[color]
-status.modified = blue bold underline red_background
-status.added = green bold
-status.removed = red bold blue_background
-status.deleted = cyan bold underline
-status.unknown = magenta bold underline
-status.ignored = black bold
+  [color]
+  status.modified = blue bold underline red_background
+  status.added = green bold
+  status.removed = red bold blue_background
+  status.deleted = cyan bold underline
+  status.unknown = magenta bold underline
+  status.ignored = black bold
 
-# 'none' turns off all effects
-status.clean = none
-status.copied = none
+  # 'none' turns off all effects
+  status.clean = none
+  status.copied = none
 
-qseries.applied = blue bold underline
-qseries.unapplied = black bold
-qseries.missing = red bold
+  qseries.applied = blue bold underline
+  qseries.unapplied = black bold
+  qseries.missing = red bold
 
-diff.diffline = bold
-diff.extended = cyan bold
-diff.file_a = red bold
-diff.file_b = green bold
-diff.hunk = magenta
-diff.deleted = red
-diff.inserted = green
-diff.changed = white
-diff.trailingwhitespace = bold red_background
+  diff.diffline = bold
+  diff.extended = cyan bold
+  diff.file_a = red bold
+  diff.file_b = green bold
+  diff.hunk = magenta
+  diff.deleted = red
+  diff.inserted = green
+  diff.changed = white
+  diff.trailingwhitespace = bold red_background
 '''
 
 import os, sys
@@ -142,14 +142,10 @@ def colorqseries(orig, ui, repo, *dummy, **opts):
     '''run the qseries command with colored output'''
     ui.pushbuffer()
     retval = orig(ui, repo, **opts)
-    patches = ui.popbuffer().splitlines()
-    for patch in patches:
-        patchname = patch
-        if opts['summary']:
-            patchname = patchname.split(': ')[0]
-        if ui.verbose:
-            patchname = patchname.split(' ', 2)[-1]
+    patchlines = ui.popbuffer().splitlines()
+    patchnames = repo.mq.series
 
+    for patch, patchname in zip(patchlines, patchnames):
         if opts['missing']:
             effects = _patch_effects['missing']
         # Determine if patch is applied.
@@ -158,7 +154,9 @@ def colorqseries(orig, ui, repo, *dummy, **opts):
             effects = _patch_effects['applied']
         else:
             effects = _patch_effects['unapplied']
-        ui.write(render_effects(patch, effects) + '\n')
+
+        patch = patch.replace(patchname, render_effects(patchname, effects), 1)
+        ui.write(patch + '\n')
     return retval
 
 _patch_effects = { 'applied': ['blue', 'bold', 'underline'],
