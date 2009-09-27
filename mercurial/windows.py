@@ -17,7 +17,7 @@ def posixfile(name, mode='r', buffering=-1):
     try:
         return osutil.posixfile(name, mode, buffering)
     except WindowsError, err:
-        raise IOError(err.errno, err.strerror)
+        raise IOError(err.errno, '%s: %s' % (name, err.strerror))
 posixfile.__doc__ = osutil.posixfile.__doc__
 
 class winstdout(object):
@@ -125,6 +125,15 @@ def localpath(path):
 
 def normpath(path):
     return pconvert(os.path.normpath(path))
+
+def realpath(path):
+    '''
+    Returns the true, canonical file system path equivalent to the given
+    path.
+    '''
+    # TODO: There may be a more clever way to do this that also handles other,
+    # less common file systems.
+    return os.path.normpath(os.path.normcase(os.path.realpath(path)))
 
 def samestat(s1, s2):
     return False
