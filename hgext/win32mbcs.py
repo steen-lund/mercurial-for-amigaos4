@@ -19,19 +19,22 @@ wrapping some functions to convert to Unicode string before path
 operation.
 
 This extension is useful for:
- * Japanese Windows users using shift_jis encoding.
- * Chinese Windows users using big5 encoding.
- * All users who use a repository with one of problematic encodings on
-   case-insensitive file system.
+
+- Japanese Windows users using shift_jis encoding.
+- Chinese Windows users using big5 encoding.
+- All users who use a repository with one of problematic encodings on
+  case-insensitive file system.
 
 This extension is not needed for:
- * Any user who use only ASCII chars in path.
- * Any user who do not use any of problematic encodings.
+
+- Any user who use only ASCII chars in path.
+- Any user who do not use any of problematic encodings.
 
 Note that there are some limitations on using this extension:
- * You should use single encoding in one repository.
- * You should set same encoding for the repository by locale or
-   HGENCODING.
+
+- You should use single encoding in one repository.
+- You should set same encoding for the repository by locale or
+  HGENCODING.
 
 Path encoding conversion are done between Unicode and
 encoding.encoding which is decided by Mercurial from current locale
@@ -98,7 +101,7 @@ def wrapperforlistdir(func, args, kwds):
     if args:
         args = list(args)
         args[0] = appendsep(args[0])
-    if kwds.has_key('path'):
+    if 'path' in kwds:
         kwds['path'] = appendsep(kwds['path'])
     return func(*args, **kwds)
 
@@ -120,7 +123,7 @@ def wrapname(name, wrapper):
 funcs = '''os.path.join os.path.split os.path.splitext
  os.path.splitunc os.path.normpath os.path.normcase os.makedirs
  mercurial.util.endswithsep mercurial.util.splitpath mercurial.util.checkcase
- mercurial.util.fspath mercurial.windows.pconvert'''
+ mercurial.util.fspath mercurial.util.pconvert'''
 
 # codec and alias names of sjis and big5 to be faked.
 problematic_encodings = '''big5 big5-tw csbig5 big5hkscs big5-hkscs
