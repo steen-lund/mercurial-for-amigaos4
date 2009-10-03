@@ -13,9 +13,6 @@ commit=
 commit.test=cp a hooktest
 EOF
 
-echo % help
-hg help keyword
-
 echo % hg kwdemo
 hg --quiet kwdemo --default \
 | sed -e 's![^ ][^ ]*demo.txt,v!/TMP/demo.txt,v!' \
@@ -50,6 +47,11 @@ echo 'xxx $' >> a
 echo 'ignore $Id$' > b
 echo % cat
 cat a b
+
+echo % no kwfiles
+hg kwfiles
+echo % untracked candidates
+hg -v kwfiles --unknown
 
 echo % addremove
 hg addremove
@@ -165,6 +167,10 @@ hg status
 
 echo % kwfiles
 hg kwfiles
+echo % ignored files
+hg -v kwfiles --ignore
+echo % all files
+hg kwfiles --all
 
 echo % diff --rev
 hg diff --rev 1 | grep -v 'b/c'
