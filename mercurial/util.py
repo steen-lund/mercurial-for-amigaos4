@@ -266,9 +266,7 @@ def pathto(root, n1, n2):
 
 def canonpath(root, cwd, myname):
     """return the canonical path of myname, given cwd and root"""
-    if root == os.sep:
-        rootsep = os.sep
-    elif endswithsep(root):
+    if endswithsep(root):
         rootsep = root
     else:
         rootsep = root + os.sep
@@ -359,41 +357,26 @@ def system(cmd, environ={}, cwd=None, onerr=None, errprefix=None):
         if val is True:
             return '1'
         return str(val)
-    oldenv = {}
-    for k in environ:
-        oldenv[k] = os.environ.get(k)
-    if cwd is not None:
-        oldcwd = os.getcwd()
     origcmd = cmd
     if os.name == 'nt':
         cmd = '"%s"' % cmd
-    try:
-        for k, v in environ.iteritems():
-            os.environ[k] = py2shell(v)
-        os.environ['HG'] = hgexecutable()
-        if cwd is not None and oldcwd != cwd:
-            os.chdir(cwd)
-        rc = os.system(cmd)
-        if sys.platform == 'OpenVMS' and rc & 1:
-            rc = 0
-        if rc and onerr:
-            errmsg = '%s %s' % (os.path.basename(origcmd.split(None, 1)[0]),
-                                explain_exit(rc)[0])
-            if errprefix:
-                errmsg = '%s: %s' % (errprefix, errmsg)
-            try:
-                onerr.warn(errmsg + '\n')
-            except AttributeError:
-                raise onerr(errmsg)
-        return rc
-    finally:
-        for k, v in oldenv.iteritems():
-            if v is None:
-                del os.environ[k]
-            else:
-                os.environ[k] = v
-        if cwd is not None and oldcwd != cwd:
-            os.chdir(oldcwd)
+    env = dict(os.environ)
+    env.update((k, py2shell(v)) for k, v in environ.iteritems())
+    env['HG'] = hgexecutable()
+    rc = subprocess.call(cmd, shell=True, close_fds=closefds,
+                         env=env, cwd=cwd)
+    if sys.platform == 'OpenVMS' and rc & 1:
+        rc = 0
+    if rc and onerr:
+        errmsg = '%s %s' % (os.path.basename(origcmd.split(None, 1)[0]),
+                            explain_exit(rc)[0])
+        if errprefix:
+            errmsg = '%s: %s' % (errprefix, errmsg)
+        try:
+            onerr.warn(errmsg + '\n')
+        except AttributeError:
+            raise onerr(errmsg)
+    return rc
 
 def checksignature(func):
     '''wrap a function with code to check for calling errors'''
@@ -663,8 +646,9 @@ def fspath(name, root):
         contents = _fspathcache[dir]
 
         lpart = part.lower()
+        lenp = len(part)
         for n in contents:
-            if n.lower() == lpart:
+            if lenp == len(n) and n.lower() == lpart:
                 result.append(n)
                 break
         else:
@@ -842,11 +826,9 @@ class opener(object):
             self.audit_path = always
         self.createmode = None
 
-    def __getattr__(self, name):
-        if name == '_can_symlink':
-            self._can_symlink = checklink(self.base)
-            return self._can_symlink
-        raise AttributeError(name)
+    @propertycache
+    def _can_symlink(self):
+        return checklink(self.base)
 
     def _fixfilemode(self, name):
         if self.createmode is None:
@@ -969,8 +951,8 @@ def datestr(date=None, format='%a %b %d %H:%M:%S %Y %1%2'):
     t, tz = date or makedate()
     if "%1" in format or "%2" in format:
         sign = (tz > 0) and "-" or "+"
-        minutes = abs(tz) / 60
-        format = format.replace("%1", "%c%02d" % (sign, minutes / 60))
+        minutes = abs(tz) // 60
+        format = format.replace("%1", "%c%02d" % (sign, minutes // 60))
         format = format.replace("%2", "%02d" % (minutes % 60))
     s = time.strftime(format, time.gmtime(float(t) - tz))
     return s
@@ -1274,7 +1256,12 @@ def termwidth():
         pass
     return 80
 
-def wrap(line, hangindent, width=78):
+def wrap(line, hangindent, width=None):
+    if width is None:
+        width = termwidth() - 2
+    if width <= hangindent:
+        # adjust for weird terminal size
+        width = max(78, hangindent + 1)
     padding = '\n' + ' ' * hangindent
     # To avoid corrupting multi-byte characters in line, we must wrap
     # a Unicode string instead of a bytestring.

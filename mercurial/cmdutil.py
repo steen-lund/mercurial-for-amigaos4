@@ -546,24 +546,26 @@ def copy(ui, repo, pats, opts, rename=False):
 
     return errors
 
-def service(opts, parentfn=None, initfn=None, runfn=None, logfile=None):
+def service(opts, parentfn=None, initfn=None, runfn=None, logfile=None,
+    runargs=None):
     '''Run a command as a service.'''
 
     if opts['daemon'] and not opts['daemon_pipefds']:
         rfd, wfd = os.pipe()
-        args = sys.argv[:]
-        args.append('--daemon-pipefds=%d,%d' % (rfd, wfd))
+        if not runargs:
+            runargs = sys.argv[:]
+        runargs.append('--daemon-pipefds=%d,%d' % (rfd, wfd))
         # Don't pass --cwd to the child process, because we've already
         # changed directory.
-        for i in xrange(1,len(args)):
-            if args[i].startswith('--cwd='):
-                del args[i]
+        for i in xrange(1,len(runargs)):
+            if runargs[i].startswith('--cwd='):
+                del runargs[i]
                 break
-            elif args[i].startswith('--cwd'):
-                del args[i:i+2]
+            elif runargs[i].startswith('--cwd'):
+                del runargs[i:i+2]
                 break
         pid = os.spawnvp(os.P_NOWAIT | getattr(os, 'P_DETACH', 0),
-                         args[0], args)
+                         runargs[0], runargs)
         os.close(wfd)
         os.read(rfd, 1)
         if parentfn:
@@ -987,12 +989,12 @@ def show_changeset(ui, repo, opts, buffered=False, matchfn=False):
 def finddate(ui, repo, date):
     """Find the tipmost changeset that matches the given date spec"""
     df = util.matchdate(date)
-    get = util.cachefunc(lambda r: repo[r].changeset())
+    get = util.cachefunc(lambda r: repo[r])
     changeiter, matchfn = walkchangerevs(ui, repo, [], get, {'rev':None})
     results = {}
     for st, rev, fns in changeiter:
         if st == 'add':
-            d = get(rev)[2]
+            d = get(rev).date()
             if df(d[0]):
                 results[rev] = d
         elif st == 'iter':
@@ -1118,13 +1120,13 @@ def walkchangerevs(ui, repo, pats, change, opts):
         def changerevgen():
             for i, window in increasing_windows(len(repo) - 1, nullrev):
                 for j in xrange(i - window, i + 1):
-                    yield j, change(j)[3]
+                    yield change(j)
 
-        for rev, changefiles in changerevgen():
-            matches = filter(m, changefiles)
+        for ctx in changerevgen():
+            matches = filter(m, ctx.files())
             if matches:
-                fncache[rev] = matches
-                wanted.add(rev)
+                fncache[ctx.rev()] = matches
+                wanted.add(ctx.rev())
 
     class followfilter(object):
         def __init__(self, onlyfirst=False):
@@ -1189,7 +1191,7 @@ def walkchangerevs(ui, repo, pats, change, opts):
                 fns = fncache.get(rev)
                 if not fns:
                     def fns_generator():
-                        for f in change(rev)[3]:
+                        for f in change(rev).files():
                             if m(f):
                                 yield f
                     fns = fns_generator()
