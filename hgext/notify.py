@@ -7,62 +7,67 @@
 
 '''hooks for sending email notifications at commit/push time
 
-Subscriptions can be managed through hgrc. Default mode is to print
-messages to stdout, for testing and configuring.
+Subscriptions can be managed through a hgrc file. Default mode is to
+print messages to stdout, for testing and configuring.
 
-To use, configure notify extension and enable in hgrc like this:
+To use, configure the notify extension and enable it in hgrc like
+this::
 
-   [extensions]
-   hgext.notify =
+  [extensions]
+  hgext.notify =
 
-   [hooks]
-   # one email for each incoming changeset
-   incoming.notify = python:hgext.notify.hook
-   # batch emails when many changesets incoming at one time
-   changegroup.notify = python:hgext.notify.hook
+  [hooks]
+  # one email for each incoming changeset
+  incoming.notify = python:hgext.notify.hook
+  # batch emails when many changesets incoming at one time
+  changegroup.notify = python:hgext.notify.hook
 
-   [notify]
-   # config items go in here
+  [notify]
+  # config items go here
 
- config items:
+Required configuration items::
 
- REQUIRED:
-   config = /path/to/file # file containing subscriptions
+  config = /path/to/file # file containing subscriptions
 
- OPTIONAL:
-   test = True            # print messages to stdout for testing
-   strip = 3              # number of slashes to strip for url paths
-   domain = example.com   # domain to use if committer missing domain
-   style = ...            # style file to use when formatting email
-   template = ...         # template to use when formatting email
-   incoming = ...         # template to use when run as incoming hook
-   changegroup = ...      # template when run as changegroup hook
-   maxdiff = 300          # max lines of diffs to include (0=none, -1=all)
-   maxsubject = 67        # truncate subject line longer than this
-   diffstat = True        # add a diffstat before the diff content
-   sources = serve        # notify if source of incoming changes in this list
-                          # (serve == ssh or http, push, pull, bundle)
-   [email]
-   from = user@host.com   # email address to send as if none given
-   [web]
-   baseurl = http://hgserver/... # root of hg web site for browsing commits
+Optional configuration items::
 
- notify config file has same format as regular hgrc. it has two
- sections so you can express subscriptions in whatever way is handier
- for you.
+  test = True            # print messages to stdout for testing
+  strip = 3              # number of slashes to strip for url paths
+  domain = example.com   # domain to use if committer missing domain
+  style = ...            # style file to use when formatting email
+  template = ...         # template to use when formatting email
+  incoming = ...         # template to use when run as incoming hook
+  changegroup = ...      # template when run as changegroup hook
+  maxdiff = 300          # max lines of diffs to include (0=none, -1=all)
+  maxsubject = 67        # truncate subject line longer than this
+  diffstat = True        # add a diffstat before the diff content
+  sources = serve        # notify if source of incoming changes in this list
+                         # (serve == ssh or http, push, pull, bundle)
+  merge = False          # send notification for merges (default True)
+  [email]
+  from = user@host.com   # email address to send as if none given
+  [web]
+  baseurl = http://hgserver/... # root of hg web site for browsing commits
 
-   [usersubs]
-   # key is subscriber email, value is ","-separated list of glob patterns
-   user@host = pattern
+The notify config file has same format as a regular hgrc file. It has
+two sections so you can express subscriptions in whatever way is
+handier for you.
 
-   [reposubs]
-   # key is glob pattern, value is ","-separated list of subscriber emails
-   pattern = user@host
+::
 
- glob patterns are matched against path to repository root.
+  [usersubs]
+  # key is subscriber email, value is ","-separated list of glob patterns
+  user@host = pattern
 
- if you like, you can put notify config file in repository that users
- can push changes to, they can manage their own subscriptions.'''
+  [reposubs]
+  # key is glob pattern, value is ","-separated list of subscriber emails
+  pattern = user@host
+
+Glob patterns are matched against path to repository root.
+
+If you like, you can put notify config file in repository that users
+can push changes to, they can manage their own subscriptions.
+'''
 
 from mercurial.i18n import _
 from mercurial import patch, cmdutil, templater, util, mail
@@ -107,6 +112,7 @@ class notifier(object):
         self.test = self.ui.configbool('notify', 'test', True)
         self.charsets = mail._charsets(self.ui)
         self.subs = self.subscribers()
+        self.merge = self.ui.configbool('notify', 'merge', True)
 
         mapfile = self.ui.config('notify', 'style')
         template = (self.ui.config('notify', hooktype) or
@@ -161,11 +167,14 @@ class notifier(object):
     def url(self, path=None):
         return self.ui.config('web', 'baseurl') + (path or self.root)
 
-    def node(self, ctx):
-        '''format one changeset.'''
+    def node(self, ctx, **props):
+        '''format one changeset, unless it is a suppressed merge.'''
+        if not self.merge and len(ctx.parents()) > 1:
+            return False
         self.t.show(ctx, changes=ctx.changeset(),
                     baseurl=self.ui.config('web', 'baseurl'),
-                    root=self.repo.root, webroot=self.root)
+                    root=self.repo.root, webroot=self.root, **props)
+        return True
 
     def skipsource(self, source):
         '''true if incoming changes from this source should be skipped.'''
@@ -226,7 +235,7 @@ class notifier(object):
                                   hash(self.repo.root), socket.getfqdn()))
         msg['To'] = ', '.join(self.subs)
 
-        msgtext = msg.as_string(0)
+        msgtext = msg.as_string()
         if self.test:
             self.ui.write(msgtext)
             if not msgtext.endswith('\n'):
@@ -272,23 +281,36 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
     ctx = repo[node]
 
     if not n.subs:
-        ui.debug(_('notify: no subscribers to repository %s\n') % n.root)
+        ui.debug('notify: no subscribers to repository %s\n' % n.root)
         return
     if n.skipsource(source):
-        ui.debug(_('notify: changes have source "%s" - skipping\n') % source)
+        ui.debug('notify: changes have source "%s" - skipping\n' % source)
         return
 
     ui.pushbuffer()
+    data = ''
+    count = 0
     if hooktype == 'changegroup':
         start, end = ctx.rev(), len(repo)
-        count = end - start
         for rev in xrange(start, end):
-            n.node(repo[rev])
-        n.diff(ctx, repo['tip'])
+            if n.node(repo[rev]):
+                count += 1
+            else:
+                data += ui.popbuffer()
+                ui.note(_('notify: suppressing notification for merge %d:%s\n') %
+                        (rev, repo[rev].hex()[:12]))
+                ui.pushbuffer()
+        if count:
+            n.diff(ctx, repo['tip'])
     else:
-        count = 1
-        n.node(ctx)
+        if not n.node(ctx):
+            ui.popbuffer()
+            ui.note(_('notify: suppressing notification for merge %d:%s\n') %
+                    (ctx.rev(), ctx.hex()[:12]))
+            return
+        count += 1
         n.diff(ctx)
 
-    data = ui.popbuffer()
-    n.send(ctx, count, data)
+    data += ui.popbuffer()
+    if count:
+        n.send(ctx, count, data)
