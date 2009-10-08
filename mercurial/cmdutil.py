@@ -546,24 +546,26 @@ def copy(ui, repo, pats, opts, rename=False):
 
     return errors
 
-def service(opts, parentfn=None, initfn=None, runfn=None, logfile=None):
+def service(opts, parentfn=None, initfn=None, runfn=None, logfile=None,
+    runargs=None):
     '''Run a command as a service.'''
 
     if opts['daemon'] and not opts['daemon_pipefds']:
         rfd, wfd = os.pipe()
-        args = sys.argv[:]
-        args.append('--daemon-pipefds=%d,%d' % (rfd, wfd))
+        if not runargs:
+            runargs = sys.argv[:]
+        runargs.append('--daemon-pipefds=%d,%d' % (rfd, wfd))
         # Don't pass --cwd to the child process, because we've already
         # changed directory.
-        for i in xrange(1,len(args)):
-            if args[i].startswith('--cwd='):
-                del args[i]
+        for i in xrange(1,len(runargs)):
+            if runargs[i].startswith('--cwd='):
+                del runargs[i]
                 break
-            elif args[i].startswith('--cwd'):
-                del args[i:i+2]
+            elif runargs[i].startswith('--cwd'):
+                del runargs[i:i+2]
                 break
         pid = os.spawnvp(os.P_NOWAIT | getattr(os, 'P_DETACH', 0),
-                         args[0], args)
+                         runargs[0], runargs)
         os.close(wfd)
         os.read(rfd, 1)
         if parentfn:
@@ -743,6 +745,9 @@ class changeset_templater(changeset_printer):
                                          'parent': '{rev}:{node|formatnode} ',
                                          'manifest': '{rev}:{node|formatnode}',
                                          'filecopy': '{name} ({source})'})
+        # Cache mapping from rev to a tuple with tag date, tag
+        # distance and tag name
+        self._latesttagcache = {-1: (0, 0, 'null')}
 
     def use_template(self, t):
         '''set template string to use'''
@@ -759,6 +764,30 @@ class changeset_templater(changeset_printer):
         if parents[0].rev() >= ctx.rev() - 1:
             return []
         return parents
+
+    def _latesttaginfo(self, rev):
+        '''return date, distance and name for the latest tag of rev'''
+        todo = [rev]
+        while todo:
+            rev = todo.pop()
+            if rev in self._latesttagcache:
+                continue
+            ctx = self.repo[rev]
+            tags = [t for t in ctx.tags() if self.repo.tagtype(t) == 'global']
+            if tags:
+                self._latesttagcache[rev] = ctx.date()[0], 0, ':'.join(sorted(tags))
+                continue
+            try:
+                # The tuples are laid out so the right one can be found by comparison.
+                pdate, pdist, ptag = max(
+                    self._latesttagcache[p.rev()] for p in ctx.parents())
+            except KeyError:
+                # Cache miss - recurse
+                todo.append(rev)
+                todo.extend(p.rev() for p in ctx.parents())
+                continue
+            self._latesttagcache[rev] = pdate, pdist + 1, ptag
+        return self._latesttagcache[rev]
 
     def _show(self, ctx, copies, props):
         '''show a single changeset or file revision'''
@@ -877,6 +906,11 @@ class changeset_templater(changeset_printer):
                 removes += i[2]
             return '%s: +%s/-%s' % (files, adds, removes)
 
+        def showlatesttag(**args):
+            return self._latesttaginfo(ctx.rev())[2]
+        def showlatesttagdistance(**args):
+            return self._latesttaginfo(ctx.rev())[1]
+
         defprops = {
             'author': ctx.user(),
             'branches': showbranches,
@@ -894,6 +928,8 @@ class changeset_templater(changeset_printer):
             'tags': showtags,
             'extras': showextras,
             'diffstat': showdiffstat,
+            'latesttag': showlatesttag,
+            'latesttagdistance': showlatesttagdistance,
             }
         props = props.copy()
         props.update(defprops)
@@ -987,12 +1023,12 @@ def show_changeset(ui, repo, opts, buffered=False, matchfn=False):
 def finddate(ui, repo, date):
     """Find the tipmost changeset that matches the given date spec"""
     df = util.matchdate(date)
-    get = util.cachefunc(lambda r: repo[r].changeset())
+    get = util.cachefunc(lambda r: repo[r])
     changeiter, matchfn = walkchangerevs(ui, repo, [], get, {'rev':None})
     results = {}
     for st, rev, fns in changeiter:
         if st == 'add':
-            d = get(rev)[2]
+            d = get(rev).date()
             if df(d[0]):
                 results[rev] = d
         elif st == 'iter':
@@ -1118,13 +1154,13 @@ def walkchangerevs(ui, repo, pats, change, opts):
         def changerevgen():
             for i, window in increasing_windows(len(repo) - 1, nullrev):
                 for j in xrange(i - window, i + 1):
-                    yield j, change(j)[3]
+                    yield change(j)
 
-        for rev, changefiles in changerevgen():
-            matches = filter(m, changefiles)
+        for ctx in changerevgen():
+            matches = filter(m, ctx.files())
             if matches:
-                fncache[rev] = matches
-                wanted.add(rev)
+                fncache[ctx.rev()] = matches
+                wanted.add(ctx.rev())
 
     class followfilter(object):
         def __init__(self, onlyfirst=False):
@@ -1189,7 +1225,7 @@ def walkchangerevs(ui, repo, pats, change, opts):
                 fns = fncache.get(rev)
                 if not fns:
                     def fns_generator():
-                        for f in change(rev)[3]:
+                        for f in change(rev).files():
                             if m(f):
                                 yield f
                     fns = fns_generator()

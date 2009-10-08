@@ -12,15 +12,15 @@ the need to configure a server or a service. They can be discovered
 without knowing their actual IP address.
 
 To allow other people to discover your repository using run "hg serve"
-in your repository.
+in your repository::
 
- $ cd test
- $ hg serve
+  $ cd test
+  $ hg serve
 
-You can discover zeroconf enabled repositories by running "hg paths".
+You can discover zeroconf enabled repositories by running "hg paths"::
 
- $ hg paths
- zc-test = http://example.com:8000/test
+  $ hg paths
+  zc-test = http://example.com:8000/test
 '''
 
 import Zeroconf, socket, time, os
@@ -109,12 +109,13 @@ class hgwebdirzc(hgwebdir_mod.hgwebdir):
     def __init__(self, conf, baseui=None):
         super(hgwebdirzc, self).__init__(conf, baseui)
         prefix = self.ui.config("web", "prefix", "").strip('/') + '/'
-        for r, p in self.repos:
+        for repo, path in self.repos:
             u = self.ui.copy()
-            u.readconfig(os.path.join(p, '.hg', 'hgrc'))
-            n = os.path.basename(r)
-            path = (prefix + r).strip('/')
-            publish(n, "hgweb", path, int(u.config("web", "port", 8000)))
+            u.readconfig(os.path.join(path, '.hg', 'hgrc'))
+            name = os.path.basename(repo)
+            path = (prefix + repo).strip('/')
+            desc = u.config('web', 'description', name)
+            publish(name, desc, path, int(u.config("web", "port", 8000)))
 
 # listen
 
@@ -136,25 +137,24 @@ def getzcpaths():
     Zeroconf.ServiceBrowser(server, "_hg._tcp.local.", l)
     time.sleep(1)
     server.close()
-    for v in l.found.values():
-        n = v.name[:v.name.index('.')]
-        n.replace(" ", "-")
-        u = "http://%s:%s%s" % (socket.inet_ntoa(v.address), v.port,
-                                 v.properties.get("path", "/"))
-        yield "zc-" + n, u
+    for value in l.found.values():
+        name = value.name[:value.name.index('.')]
+        url = "http://%s:%s%s" % (socket.inet_ntoa(value.address), value.port,
+                                  value.properties.get("path", "/"))
+        yield "zc-" + name, url
 
 def config(orig, self, section, key, default=None, untrusted=False):
     if section == "paths" and key.startswith("zc-"):
-        for n, p in getzcpaths():
-            if n == key:
-                return p
+        for name, path in getzcpaths():
+            if name == key:
+                return path
     return orig(self, section, key, default, untrusted)
 
 def configitems(orig, self, section, untrusted=False):
-    r = orig(self, section, untrusted)
+    repos = orig(self, section, untrusted)
     if section == "paths":
-        r += getzcpaths()
-    return r
+        repos += getzcpaths()
+    return repos
 
 extensions.wrapfunction(ui.ui, 'config', config)
 extensions.wrapfunction(ui.ui, 'configitems', configitems)

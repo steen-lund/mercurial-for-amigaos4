@@ -131,11 +131,13 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
         if m == n: # flags agree
             return m # unchanged
         if m and n and not a: # flags set, don't agree, differ from parent
-            r = repo.ui.prompt(
+            r = repo.ui.promptchoice(
                 _(" conflicting flags for %s\n"
                   "(n)one, e(x)ec or sym(l)ink?") % f,
-                (_("&None"), _("E&xec"), _("Sym&link")), _("n"))
-            return r != _("n") and r or ''
+                (_("&None"), _("E&xec"), _("Sym&link")), 0)
+            if r == 1: return "x" # Exec
+            if r == 2: return "l" # Symlink
+            return ""
         if m and m != a: # changed from a to m
             return m
         if n and n != a: # changed from a to n
@@ -159,8 +161,8 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
             act("divergent renames", "dr", of, fl)
 
     repo.ui.note(_("resolving manifests\n"))
-    repo.ui.debug(_(" overwrite %s partial %s\n") % (overwrite, bool(partial)))
-    repo.ui.debug(_(" ancestor %s local %s remote %s\n") % (pa, p1, p2))
+    repo.ui.debug(" overwrite %s partial %s\n" % (overwrite, bool(partial)))
+    repo.ui.debug(" ancestor %s local %s remote %s\n" % (pa, p1, p2))
 
     m1, m2, ma = p1.manifest(), p2.manifest(), pa.manifest()
     copied = set(copy.values())
@@ -191,10 +193,10 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
                     f, f2, f, fmerge(f, f2, f2), False)
         elif f in ma: # clean, a different, no remote
             if n != ma[f]:
-                if repo.ui.prompt(
+                if repo.ui.promptchoice(
                     _(" local changed %s which remote deleted\n"
                       "use (c)hanged version or (d)elete?") % f,
-                    (_("&Changed"), _("&Delete")), _("c")) == _("d"):
+                    (_("&Changed"), _("&Delete")), 0):
                     act("prompt delete", "r", f)
                 else:
                     act("prompt keep", "a", f)
@@ -222,10 +224,10 @@ def manifestmerge(repo, p1, p2, pa, overwrite, partial):
         elif f not in ma:
             act("remote created", "g", f, m2.flags(f))
         elif n != ma[f]:
-            if repo.ui.prompt(
+            if repo.ui.promptchoice(
                 _("remote changed %s which local deleted\n"
                   "use (c)hanged version or leave (d)eleted?") % f,
-                (_("&Changed"), _("&Deleted")), _("c")) == _("c"):
+                (_("&Changed"), _("&Deleted")), 0) == 0:
                 act("prompt recreating", "g", f, m2.flags(f))
 
     return action
@@ -250,7 +252,7 @@ def applyupdates(repo, action, wctx, mctx):
             f2, fd, flags, move = a[2:]
             if f == '.hgsubstate': # merged internally
                 continue
-            repo.ui.debug(_("preserving %s for resolve of %s\n") % (f, fd))
+            repo.ui.debug("preserving %s for resolve of %s\n" % (f, fd))
             fcl = wctx[f]
             fco = mctx[f2]
             fca = fcl.ancestor(fco) or repo.filectx(f, fileid=nullrev)
@@ -261,7 +263,7 @@ def applyupdates(repo, action, wctx, mctx):
     # remove renamed files after safely stored
     for f in moves:
         if util.lexists(repo.wjoin(f)):
-            repo.ui.debug(_("removing %s\n") % f)
+            repo.ui.debug("removing %s\n" % f)
             os.unlink(repo.wjoin(f))
 
     audit_path = util.path_auditor(repo.root)
@@ -288,7 +290,7 @@ def applyupdates(repo, action, wctx, mctx):
                 continue
             f2, fd, flags, move = a[2:]
             r = ms.resolve(fd, wctx, mctx)
-            if r > 0:
+            if r is not None and r > 0:
                 unresolved += 1
             else:
                 if r is None:
@@ -297,7 +299,7 @@ def applyupdates(repo, action, wctx, mctx):
                     merged += 1
             util.set_flags(repo.wjoin(fd), 'l' in flags, 'x' in flags)
             if f != fd and move and util.lexists(repo.wjoin(f)):
-                repo.ui.debug(_("removing %s\n") % f)
+                repo.ui.debug("removing %s\n" % f)
                 os.unlink(repo.wjoin(f))
         elif m == "g": # get
             flags = a[2]
