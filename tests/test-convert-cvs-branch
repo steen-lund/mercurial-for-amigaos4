@@ -14,7 +14,6 @@ echo "[extensions]" >> $HGRCPATH
 echo "convert = " >> $HGRCPATH
 echo "graphlog = " >> $HGRCPATH
 echo "[convert]" >> $HGRCPATH
-echo "cvsps=builtin" >> $HGRCPATH
 echo "cvsps.cache=0" >> $HGRCPATH
 
 echo % create cvs repository
@@ -83,7 +82,8 @@ cvsci()
 
 cvscall -Q -d `pwd`/cvsmaster2 init >/dev/null 2>&1
 cd cvsmaster2
-export CVSROOT=`pwd`
+CVSROOT=`pwd`
+export CVSROOT
 mkdir foo
 cd ..
 cvscall -Q co -d cvswork2 foo

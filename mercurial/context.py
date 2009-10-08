@@ -199,7 +199,9 @@ class filectx(object):
 
         assert (changeid is not None
                 or fileid is not None
-                or changectx is not None)
+                or changectx is not None), \
+                ("bad args: changeid=%r, fileid=%r, changectx=%r"
+                 % (changeid, fileid, changectx))
 
         if filelog:
             self._filelog = filelog
@@ -297,6 +299,7 @@ class filectx(object):
     def files(self): return self._changectx.files()
     def description(self): return self._changectx.description()
     def branch(self): return self._changectx.branch()
+    def extra(self): return self._changectx.extra()
     def manifest(self): return self._changectx.manifest()
     def changectx(self): return self._changectx
 
@@ -441,7 +444,7 @@ class filectx(object):
                         del hist[p]
             hist[f] = curr
 
-        return zip(hist[f][0], hist[f][1].splitlines(1))
+        return zip(hist[f][0], hist[f][1].splitlines(True))
 
     def ancestor(self, fc2):
         """

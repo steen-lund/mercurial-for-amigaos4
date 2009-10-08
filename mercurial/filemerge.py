@@ -140,14 +140,14 @@ def filemerge(repo, mynode, orig, fcd, fco, fca):
     binary = isbin(fcd) or isbin(fco) or isbin(fca)
     symlink = 'l' in fcd.flags() + fco.flags()
     tool, toolpath = _picktool(repo, ui, fd, binary, symlink)
-    ui.debug(_("picked tool '%s' for %s (binary %s symlink %s)\n") %
+    ui.debug("picked tool '%s' for %s (binary %s symlink %s)\n" %
                (tool, fd, binary, symlink))
 
     if not tool or tool == 'internal:prompt':
         tool = "internal:local"
-        if ui.prompt(_(" no tool found to merge %s\n"
-                       "keep (l)ocal or take (o)ther?") % fd,
-                     (_("&Local"), _("&Other")), _("l")) != _("l"):
+        if ui.promptchoice(_(" no tool found to merge %s\n"
+                             "keep (l)ocal or take (o)ther?") % fd,
+                           (_("&Local"), _("&Other")), 0):
             tool = "internal:other"
     if tool == "internal:local":
         return 0
@@ -170,13 +170,13 @@ def filemerge(repo, mynode, orig, fcd, fco, fca):
     else:
         ui.status(_("merging %s\n") % fd)
 
-    ui.debug(_("my %s other %s ancestor %s\n") % (fcd, fco, fca))
+    ui.debug("my %s other %s ancestor %s\n" % (fcd, fco, fca))
 
     # do we attempt to simplemerge first?
     if _toolbool(ui, tool, "premerge", not (binary or symlink)):
         r = simplemerge.simplemerge(ui, a, b, c, quiet=True)
         if not r:
-            ui.debug(_(" premerge successful\n"))
+            ui.debug(" premerge successful\n")
             os.unlink(back)
             os.unlink(b)
             os.unlink(c)
@@ -213,9 +213,9 @@ def filemerge(repo, mynode, orig, fcd, fco, fca):
 
     if not r and _toolbool(ui, tool, "checkchanged"):
         if filecmp.cmp(repo.wjoin(fd), back):
-            if ui.prompt(_(" output file %s appears unchanged\n"
-                "was merge successful (yn)?") % fd,
-                (_("&Yes"), _("&No")), _("n")) != _("y"):
+            if ui.promptchoice(_(" output file %s appears unchanged\n"
+                                 "was merge successful (yn)?") % fd,
+                               (_("&Yes"), _("&No")), 1):
                 r = 1
 
     if _toolbool(ui, tool, "fixeol"):

@@ -2,7 +2,6 @@
 #
 # Copyright(C) 2007 Daniel Holth et al
 
-import locale
 import os
 import re
 import sys
@@ -23,6 +22,7 @@ from common import NoRepo, MissingTool, commit, encodeargs, decodeargs
 from common import commandline, converter_source, converter_sink, mapfile
 
 try:
+    raise ImportError("SVN support disabled due to license incompatibility")
     from svn.core import SubversionException, Pool
     import svn
     import svn.client
@@ -314,7 +314,7 @@ class svn_source(converter_source):
             self.module += '/' + trunk
             self.head = self.latest(self.module, self.last_changed)
             if not self.head:
-                raise util.Abort(_('no revision found in module %s') 
+                raise util.Abort(_('no revision found in module %s')
                                  % self.module)
 
         # First head in the list is the module's head
@@ -457,8 +457,8 @@ class svn_source(converter_source):
                 # Here/tags/tag.1 discarded as well as its children.
                 # It happens with tools like cvs2svn. Such tags cannot
                 # be represented in mercurial.
-                addeds = dict((p, e.copyfrom_path) for p, e 
-                              in origpaths.iteritems() 
+                addeds = dict((p, e.copyfrom_path) for p, e
+                              in origpaths.iteritems()
                               if e.action == 'A' and e.copyfrom_path)
                 badroots = set()
                 for destroot in addeds:
@@ -534,7 +534,7 @@ class svn_source(converter_source):
         """
         if not path.startswith(self.rootmodule):
             # Requests on foreign branches may be forbidden at server level
-            self.ui.debug(_('ignoring foreign branch %r\n') % path)
+            self.ui.debug('ignoring foreign branch %r\n' % path)
             return None
 
         if not stop:
@@ -562,7 +562,7 @@ class svn_source(converter_source):
                     if not path.startswith(p) or not paths[p].copyfrom_path:
                         continue
                     newpath = paths[p].copyfrom_path + path[len(p):]
-                    self.ui.debug(_("branch renamed from %s to %s at %d\n") %
+                    self.ui.debug("branch renamed from %s to %s at %d\n" %
                                   (path, newpath, revnum))
                     path = newpath
                     break
@@ -570,7 +570,7 @@ class svn_source(converter_source):
             stream.close()
 
         if not path.startswith(self.rootmodule):
-            self.ui.debug(_('ignoring foreign branch %r\n') % path)
+            self.ui.debug('ignoring foreign branch %r\n' % path)
             return None
         return self.revid(dirent.created_rev, path)
 
@@ -582,7 +582,7 @@ class svn_source(converter_source):
         prevmodule = self.prevmodule
         if prevmodule is None:
             prevmodule = ''
-        self.ui.debug(_("reparent to %s\n") % svnurl)
+        self.ui.debug("reparent to %s\n" % svnurl)
         svn.ra.reparent(self.ra, svnurl)
         self.prevmodule = module
         return prevmodule
@@ -615,14 +615,14 @@ class svn_source(converter_source):
                 copyfrom_path = self.getrelpath(ent.copyfrom_path, pmodule)
                 if not copyfrom_path:
                     continue
-                self.ui.debug(_("copied to %s from %s@%s\n") %
+                self.ui.debug("copied to %s from %s@%s\n" %
                               (entrypath, copyfrom_path, ent.copyfrom_rev))
                 copies[self.recode(entrypath)] = self.recode(copyfrom_path)
             elif kind == 0: # gone, but had better be a deleted *file*
-                self.ui.debug(_("gone from %s\n") % ent.copyfrom_rev)
+                self.ui.debug("gone from %s\n" % ent.copyfrom_rev)
                 pmodule, prevnum = self.revsplit(parents[0])[1:]
                 parentpath = pmodule + "/" + entrypath
-                self.ui.debug(_("entry %s\n") % parentpath)
+                self.ui.debug("entry %s\n" % parentpath)
 
                 # We can avoid the reparent calls if the module has
                 # not changed but it probably does not worth the pain.
@@ -649,7 +649,7 @@ class svn_source(converter_source):
                             del copies[childpath]
                         entries.append(childpath)
                 else:
-                    self.ui.debug(_('unknown path in revision %d: %s\n') % \
+                    self.ui.debug('unknown path in revision %d: %s\n' % \
                                   (revnum, path))
             elif kind == svn.core.svn_node_dir:
                 # If the directory just had a prop change,
@@ -682,7 +682,7 @@ class svn_source(converter_source):
                 if not copyfrompath:
                     continue
                 copyfrom[path] = ent
-                self.ui.debug(_("mark %s came from %s:%d\n")
+                self.ui.debug("mark %s came from %s:%d\n"
                               % (path, copyfrompath, ent.copyfrom_rev))
                 children = self._find_children(ent.copyfrom_path, ent.copyfrom_rev)
                 children.sort()
@@ -706,7 +706,7 @@ class svn_source(converter_source):
             """Return the parsed commit object or None, and True if
             the revision is a branch root.
             """
-            self.ui.debug(_("parsing revision %d (%d changes)\n") %
+            self.ui.debug("parsing revision %d (%d changes)\n" %
                           (revnum, len(orig_paths)))
 
             branched = False
@@ -735,7 +735,7 @@ class svn_source(converter_source):
                             self.ui.note(_('found parent of branch %s at %d: %s\n') %
                                          (self.module, prevnum, prevmodule))
                 else:
-                    self.ui.debug(_("no copyfrom path, don't know what to do.\n"))
+                    self.ui.debug("no copyfrom path, don't know what to do.\n")
 
             paths = []
             # filter out unrelated paths
@@ -788,7 +788,7 @@ class svn_source(converter_source):
                         lastonbranch = True
                         break
                     if not paths:
-                        self.ui.debug(_('revision %d has no entries\n') % revnum)
+                        self.ui.debug('revision %d has no entries\n' % revnum)
                         continue
                     cset, lastonbranch = parselogentry(paths, revnum, author,
                                                        date, message)
@@ -870,7 +870,7 @@ class svn_source(converter_source):
                 return relative
 
         # The path is outside our tracked tree...
-        self.ui.debug(_('%r is not under %r, ignoring\n') % (path, module))
+        self.ui.debug('%r is not under %r, ignoring\n' % (path, module))
         return None
 
     def _checkpath(self, path, revnum):

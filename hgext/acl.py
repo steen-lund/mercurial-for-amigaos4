@@ -22,7 +22,7 @@ interactive shell access, as they can then disable the hook.
 Nor is it safe if remote users share an account, because then there
 is no way to distinguish them.
 
-To use this hook, configure the acl extension in your hgrc like this:
+To use this hook, configure the acl extension in your hgrc like this::
 
   [extensions]
   hgext.acl =
@@ -35,10 +35,10 @@ To use this hook, configure the acl extension in your hgrc like this:
   # ("serve" == ssh or http, "push", "pull", "bundle")
   sources = serve
 
-The allow and deny sections take a subtree pattern as key (with a
-glob syntax by default), and a comma separated list of users as
-the corresponding value. The deny list is checked before the allow
-list is.
+The allow and deny sections take a subtree pattern as key (with a glob
+syntax by default), and a comma separated list of users as the
+corresponding value. The deny list is checked before the allow list
+is. ::
 
   [acl.allow]
   # If acl.allow is not present, all users are allowed by default.
@@ -60,12 +60,12 @@ import getpass, urllib
 def buildmatch(ui, repo, user, key):
     '''return tuple of (match function, list enabled).'''
     if not ui.has_section(key):
-        ui.debug(_('acl: %s not enabled\n') % key)
+        ui.debug('acl: %s not enabled\n' % key)
         return None
 
     pats = [pat for pat, users in ui.configitems(key)
             if user in users.replace(',', ' ').split()]
-    ui.debug(_('acl: %s enabled, %d entries for user %s\n') %
+    ui.debug('acl: %s enabled, %d entries for user %s\n' %
              (key, len(pats), user))
     if pats:
         return match.match(repo.root, '', pats)
@@ -77,7 +77,7 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
         raise util.Abort(_('config error - hook type "%s" cannot stop '
                            'incoming changesets') % hooktype)
     if source not in ui.config('acl', 'sources', 'serve').split():
-        ui.debug(_('acl: changes have source "%s" - skipping\n') % source)
+        ui.debug('acl: changes have source "%s" - skipping\n' % source)
         return
 
     user = None
@@ -99,9 +99,9 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
         ctx = repo[rev]
         for f in ctx.files():
             if deny and deny(f):
-                ui.debug(_('acl: user %s denied on %s\n') % (user, f))
+                ui.debug('acl: user %s denied on %s\n' % (user, f))
                 raise util.Abort(_('acl: access denied for changeset %s') % ctx)
             if allow and not allow(f):
-                ui.debug(_('acl: user %s not allowed on %s\n') % (user, f))
+                ui.debug('acl: user %s not allowed on %s\n' % (user, f))
                 raise util.Abort(_('acl: access denied for changeset %s') % ctx)
-        ui.debug(_('acl: allowing changeset %s\n') % ctx)
+        ui.debug('acl: allowing changeset %s\n' % ctx)
