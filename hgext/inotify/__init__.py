@@ -13,32 +13,11 @@
 from mercurial.i18n import _
 from mercurial import cmdutil, util
 import server
-from weakref import proxy
 from client import client, QueryFailed
 
 def serve(ui, repo, **opts):
     '''start an inotify server for this repository'''
-    timeout = opts.get('timeout')
-    if timeout:
-        timeout = float(timeout) * 1e3
-
-    class service(object):
-        def init(self):
-            try:
-                self.master = server.master(ui, repo, timeout)
-            except server.AlreadyStartedException, inst:
-                raise util.Abort(str(inst))
-
-        def run(self):
-            try:
-                self.master.run()
-            finally:
-                self.master.shutdown()
-
-    service = service()
-    logfile = ui.config('inotify', 'log')
-    cmdutil.service(opts, initfn=service.init, runfn=service.run,
-                    logfile=logfile)
+    server.start(ui, repo.dirstate, repo.root, opts)
 
 def debuginotify(ui, repo, **opts):
     '''debugging information for inotify extension
@@ -55,9 +34,6 @@ def debuginotify(ui, repo, **opts):
 def reposetup(ui, repo):
     if not hasattr(repo, 'dirstate'):
         return
-
-    # XXX: weakref until hg stops relying on __del__
-    repo = proxy(repo)
 
     class inotifydirstate(repo.dirstate.__class__):
 
