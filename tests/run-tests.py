@@ -31,8 +31,10 @@
 #      ./run-tests.py -j2 --local test-s*
 #  7) parallel, coverage, temp install:
 #      ./run-tests.py -j2 -c test-s*          # currently broken
-#  8) parallel, coverage, local install
+#  8) parallel, coverage, local install:
 #      ./run-tests.py -j2 -c --local test-s*  # unsupported (and broken)
+#  9) parallel, custom tmp dir:
+#      ./run-tests.py -j2 --tmpdir /tmp/myhgtests
 #
 # (You could use any subset of the tests: test-s* happens to match
 # enough that it's worth doing parallel runs, few enough that it
@@ -291,10 +293,18 @@ def installhg(options):
     script = os.path.realpath(sys.argv[0])
     hgroot = os.path.dirname(os.path.dirname(script))
     os.chdir(hgroot)
+    nohome = '--home=""'
+    if os.name == 'nt':
+        # The --home="" trick works only on OS where os.sep == '/'
+        # because of a distutils convert_path() fast-path. Avoid it at
+        # least on Windows for now, deal with .pydistutils.cfg bugs
+        # when they happen.
+        nohome = ''
     cmd = ('%s setup.py %s clean --all'
            ' install --force --prefix="%s" --install-lib="%s"'
-           ' --install-scripts="%s" >%s 2>&1'
-           % (sys.executable, pure, INST, PYTHONDIR, BINDIR, installerrs))
+           ' --install-scripts="%s" %s >%s 2>&1'
+           % (sys.executable, pure, INST, PYTHONDIR, BINDIR, nohome,
+              installerrs))
     vlog("# Running", cmd)
     if os.system(cmd) == 0:
         if not options.verbose:
@@ -639,6 +649,8 @@ def runchildren(options, tests):
             continue
         rfd, wfd = os.pipe()
         childopts = ['--child=%d' % wfd, '--port=%d' % (options.port + j * 3)]
+        childtmp = os.path.join(HGTMP, 'child%d' % j)
+        childopts += ['--tmpdir', childtmp]
         cmdline = [PYTHON, sys.argv[0]] + opts + childopts + job
         vlog(' '.join(cmdline))
         fps[os.spawnvp(os.P_NOWAIT, cmdline[0], cmdline)] = os.fdopen(rfd, 'r')
@@ -781,6 +793,7 @@ def main():
     os.environ['TZ'] = 'GMT'
     os.environ["EMAIL"] = "Foo Bar <foo.bar@example.com>"
     os.environ['CDPATH'] = ''
+    os.environ['COLUMNS'] = '80'
 
     global TESTDIR, HGTMP, INST, BINDIR, PYTHONDIR, COVERAGE_FILE
     TESTDIR = os.environ["TESTDIR"] = os.getcwd()
