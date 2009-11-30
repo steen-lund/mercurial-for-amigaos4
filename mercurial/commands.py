@@ -1476,7 +1476,7 @@ def help_(ui, name=None, with_version=False):
             ui.write('\n')
 
         try:
-            aliases, i = cmdutil.findcmd(name, table, False)
+            aliases, entry = cmdutil.findcmd(name, table, False)
         except error.AmbiguousCommand, inst:
             # py3k fix: except vars can't be used outside the scope of the
             # except block, nor can be used inside a lambda. python issue4617
@@ -1486,11 +1486,11 @@ def help_(ui, name=None, with_version=False):
             return
 
         # synopsis
-        if len(i) > 2:
-            if i[2].startswith('hg'):
-                ui.write("%s\n" % i[2])
+        if len(entry) > 2:
+            if entry[2].startswith('hg'):
+                ui.write("%s\n" % entry[2])
             else:
-                ui.write('hg %s %s\n' % (aliases[0], i[2]))
+                ui.write('hg %s %s\n' % (aliases[0], entry[2]))
         else:
             ui.write('hg %s\n' % aliases[0])
 
@@ -1499,7 +1499,7 @@ def help_(ui, name=None, with_version=False):
             ui.write(_("\naliases: %s\n") % ', '.join(aliases[1:]))
 
         # description
-        doc = gettext(i[0].__doc__)
+        doc = gettext(entry[0].__doc__)
         if not doc:
             doc = _("(no help text available)")
         if ui.quiet:
@@ -1508,8 +1508,8 @@ def help_(ui, name=None, with_version=False):
 
         if not ui.quiet:
             # options
-            if i[1]:
-                option_lists.append((_("options:\n"), i[1]))
+            if entry[1]:
+                option_lists.append((_("options:\n"), entry[1]))
 
             addglobalopts(False)
 
@@ -2017,7 +2017,6 @@ def log(ui, repo, *pats, **opts):
     else:
         endrev = len(repo)
     rcache = {}
-    ncache = {}
     def getrenamed(fn, rev):
         '''looks up all renames for a file (up to endrev) the first
         time the file is given. It indexes on the changerev and only
@@ -2025,15 +2024,11 @@ def log(ui, repo, *pats, **opts):
         Returns rename info for fn at changerev rev.'''
         if fn not in rcache:
             rcache[fn] = {}
-            ncache[fn] = {}
             fl = repo.file(fn)
             for i in fl:
-                node = fl.node(i)
                 lr = fl.linkrev(i)
-                renamed = fl.renamed(node)
+                renamed = fl.renamed(fl.node(i))
                 rcache[fn][lr] = renamed
-                if renamed:
-                    ncache[fn][node] = renamed
                 if lr >= endrev:
                     break
         if rev in rcache[fn]:
@@ -2041,12 +2036,10 @@ def log(ui, repo, *pats, **opts):
 
         # If linkrev != rev (i.e. rev not found in rcache) fallback to
         # filectx logic.
-
         try:
             return repo[rev][fn].renamed()
         except error.LookupError:
-            pass
-        return None
+            return None
 
     df = False
     if opts["date"]:
