@@ -128,6 +128,12 @@ class localrepository(repo.repository):
             return context.workingctx(self)
         return context.changectx(self, changeid)
 
+    def __contains__(self, changeid):
+        try:
+            return bool(self.lookup(changeid))
+        except error.RepoLookupError:
+            return False
+
     def __nonzero__(self):
         return True
 
@@ -819,6 +825,7 @@ class localrepository(repo.repository):
                                       extra, changes)
             if editor:
                 cctx._text = editor(self, cctx, subs)
+            edited = (text != cctx._text)
 
             # commit subs
             if subs:
@@ -829,7 +836,21 @@ class localrepository(repo.repository):
                     state[s] = (state[s][0], sr)
                 subrepo.writestate(self, state)
 
-            ret = self.commitctx(cctx, True)
+            # Save commit message in case this transaction gets rolled back
+            # (e.g. by a pretxncommit hook).  Leave the content alone on
+            # the assumption that the user will use the same editor again.
+            msgfile = self.opener('last-message.txt', 'wb')
+            msgfile.write(cctx._text)
+            msgfile.close()
+
+            try:
+                ret = self.commitctx(cctx, True)
+            except:
+                if edited:
+                    msgfn = self.pathto(msgfile.name[len(self.root)+1:])
+                    self.ui.write(
+                        _('note: commit message saved in %s\n') % msgfn)
+                raise
 
             # update dirstate and mergestate
             for f in changes[0] + changes[1]:
