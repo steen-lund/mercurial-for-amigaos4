@@ -41,6 +41,7 @@
 # completes fairly quickly, includes both shell and Python scripts, and
 # includes some scripts that run daemon processes.)
 
+from ConfigParser import ConfigParser
 import difflib
 import errno
 import optparse
@@ -130,6 +131,11 @@ def parseargs():
         help="use pure Python code instead of C extensions")
     parser.add_option("-3", "--py3k-warnings", action="store_true",
         help="enable Py3k warnings on Python 2.6+")
+    parser.add_option("--inotify", action="store_true",
+        help="enable inotify extension when running tests")
+    parser.add_option("--blacklist", action="append",
+        help="skip tests listed in the specified section of "
+             "the blacklist file")
 
     for option, default in defaults.items():
         defaults[option] = int(os.environ.get(*default))
@@ -195,6 +201,14 @@ def parseargs():
     if options.py3k_warnings:
         if sys.version_info[:2] < (2, 6) or sys.version_info[:2] >= (3, 0):
             parser.error('--py3k-warnings can only be used on Python 2.6+')
+    if options.blacklist:
+        configparser = ConfigParser()
+        configparser.read("blacklist")
+        blacklist = dict()
+        for section in options.blacklist:
+            for (item, value) in configparser.items(section):
+                blacklist["test-" + item] = section
+        options.blacklist = blacklist
 
     return (options, args)
 
@@ -293,10 +307,18 @@ def installhg(options):
     script = os.path.realpath(sys.argv[0])
     hgroot = os.path.dirname(os.path.dirname(script))
     os.chdir(hgroot)
+    nohome = '--home=""'
+    if os.name == 'nt':
+        # The --home="" trick works only on OS where os.sep == '/'
+        # because of a distutils convert_path() fast-path. Avoid it at
+        # least on Windows for now, deal with .pydistutils.cfg bugs
+        # when they happen.
+        nohome = ''
     cmd = ('%s setup.py %s clean --all'
            ' install --force --prefix="%s" --install-lib="%s"'
-           ' --install-scripts="%s" >%s 2>&1'
-           % (sys.executable, pure, INST, PYTHONDIR, BINDIR, installerrs))
+           ' --install-scripts="%s" --install-data="%s" %s >%s 2>&1'
+           % (sys.executable, pure, INST, PYTHONDIR, BINDIR, INST, nohome,
+              installerrs))
     vlog("# Running", cmd)
     if os.system(cmd) == 0:
         if not options.verbose:
@@ -449,6 +471,12 @@ def runone(options, test, skips, fails):
     hgrc.write('backout = -d "0 0"\n')
     hgrc.write('commit = -d "0 0"\n')
     hgrc.write('tag = -d "0 0"\n')
+    if options.inotify:
+        hgrc.write('[extensions]\n')
+        hgrc.write('inotify=\n')
+        hgrc.write('[inotify]\n')
+        hgrc.write('pidfile=%s\n' % DAEMON_PIDS)
+        hgrc.write('appendpid=True\n')
     hgrc.close()
 
     err = os.path.join(TESTDIR, test+".err")
@@ -715,6 +743,13 @@ def runtests(options, tests):
         fails = []
 
         for test in tests:
+            if options.blacklist:
+                section = options.blacklist.get(test)
+                if section is not None:
+                    skips.append((test, "blacklisted (%s section)" % section))
+                    skipped += 1
+                    continue
+
             if options.retest and not os.path.exists(test + ".err"):
                 skipped += 1
                 continue
