@@ -128,6 +128,12 @@ class localrepository(repo.repository):
             return context.workingctx(self)
         return context.changectx(self, changeid)
 
+    def __contains__(self, changeid):
+        try:
+            return bool(self.lookup(changeid))
+        except error.RepoLookupError:
+            return False
+
     def __nonzero__(self):
         return True
 
@@ -819,6 +825,7 @@ class localrepository(repo.repository):
                                       extra, changes)
             if editor:
                 cctx._text = editor(self, cctx, subs)
+            edited = (text != cctx._text)
 
             # commit subs
             if subs:
@@ -829,7 +836,21 @@ class localrepository(repo.repository):
                     state[s] = (state[s][0], sr)
                 subrepo.writestate(self, state)
 
-            ret = self.commitctx(cctx, True)
+            # Save commit message in case this transaction gets rolled back
+            # (e.g. by a pretxncommit hook).  Leave the content alone on
+            # the assumption that the user will use the same editor again.
+            msgfile = self.opener('last-message.txt', 'wb')
+            msgfile.write(cctx._text)
+            msgfile.close()
+
+            try:
+                ret = self.commitctx(cctx, True)
+            except:
+                if edited:
+                    msgfn = self.pathto(msgfile.name[len(self.root)+1:])
+                    self.ui.write(
+                        _('note: commit message saved in %s\n') % msgfn)
+                raise
 
             # update dirstate and mergestate
             for f in changes[0] + changes[1]:
@@ -1686,18 +1707,8 @@ class localrepository(repo.repository):
         # also assume the recipient will have all the parents.  This function
         # prunes them from the set of missing nodes.
         def prune_parents(revlog, hasset, msngset):
-            haslst = list(hasset)
-            haslst.sort(key=revlog.rev)
-            for node in haslst:
-                parentlst = [p for p in revlog.parents(node) if p != nullid]
-                while parentlst:
-                    n = parentlst.pop()
-                    if n not in hasset:
-                        hasset.add(n)
-                        p = [p for p in revlog.parents(n) if p != nullid]
-                        parentlst.extend(p)
-            for n in hasset:
-                msngset.pop(n, None)
+            for r in revlog.ancestors(*[revlog.rev(n) for n in hasset]):
+                msngset.pop(revlog.node(r), None)
 
         # This is a function generating function used to set up an environment
         # for the inner function to execute in.
@@ -1743,7 +1754,6 @@ class localrepository(repo.repository):
         # A function generating function that sets up the initial environment
         # the inner function.
         def filenode_collector(changedfiles):
-            next_rev = [0]
             # This gathers information from each manifestnode included in the
             # changegroup about which filenodes the manifest node references
             # so we can include those in the changegroup too.
@@ -1753,8 +1763,8 @@ class localrepository(repo.repository):
             # the first manifest that references it belongs to.
             def collect_msng_filenodes(mnfstnode):
                 r = mnfst.rev(mnfstnode)
-                if r == next_rev[0]:
-                    # If the last rev we looked at was the one just previous,
+                if r - 1 in mnfst.parentrevs(r):
+                    # If the previous rev is one of the parents,
                     # we only need to see a diff.
                     deltamf = mnfst.readdelta(mnfstnode)
                     # For each line in the delta
@@ -1783,8 +1793,6 @@ class localrepository(repo.repository):
                             clnode = msng_mnfst_set[mnfstnode]
                             ndset = msng_filenode_set.setdefault(f, {})
                             ndset.setdefault(fnode, clnode)
-                # Remember the revision we hope to see next.
-                next_rev[0] = r + 1
             return collect_msng_filenodes
 
         # We have a list of filenodes we think we need for a file, lets remove
