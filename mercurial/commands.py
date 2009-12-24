@@ -10,7 +10,7 @@ from lock import release
 from i18n import _, gettext
 import os, re, sys, difflib, time, tempfile
 import hg, util, revlog, bundlerepo, extensions, copies, error
-import patch, help, mdiff, url, encoding
+import patch, help, mdiff, url, encoding, templatekw
 import archival, changegroup, cmdutil, sshserver, hbisect
 from hgweb import server
 import merge as merge_
@@ -1161,6 +1161,7 @@ def export(ui, repo, *changesets, **opts):
     With the --switch-parent option, the diff will be against the
     second parent. It can be useful to review a merge.
     """
+    changesets += tuple(opts.get('rev', []))
     if not changesets:
         raise util.Abort(_("export requires at least one changeset"))
     revs = cmdutil.revrange(repo, changesets)
@@ -1476,7 +1477,7 @@ def help_(ui, name=None, with_version=False):
             ui.write('\n')
 
         try:
-            aliases, i = cmdutil.findcmd(name, table, False)
+            aliases, entry = cmdutil.findcmd(name, table, False)
         except error.AmbiguousCommand, inst:
             # py3k fix: except vars can't be used outside the scope of the
             # except block, nor can be used inside a lambda. python issue4617
@@ -1485,12 +1486,17 @@ def help_(ui, name=None, with_version=False):
             helplist(_('list of commands:\n\n'), select)
             return
 
+        # check if it's an invalid alias and display its error if it is
+        if getattr(entry[0], 'badalias', False):
+            entry[0](ui)
+            return
+
         # synopsis
-        if len(i) > 2:
-            if i[2].startswith('hg'):
-                ui.write("%s\n" % i[2])
+        if len(entry) > 2:
+            if entry[2].startswith('hg'):
+                ui.write("%s\n" % entry[2])
             else:
-                ui.write('hg %s %s\n' % (aliases[0], i[2]))
+                ui.write('hg %s %s\n' % (aliases[0], entry[2]))
         else:
             ui.write('hg %s\n' % aliases[0])
 
@@ -1499,7 +1505,7 @@ def help_(ui, name=None, with_version=False):
             ui.write(_("\naliases: %s\n") % ', '.join(aliases[1:]))
 
         # description
-        doc = gettext(i[0].__doc__)
+        doc = gettext(entry[0].__doc__)
         if not doc:
             doc = _("(no help text available)")
         if ui.quiet:
@@ -1508,8 +1514,8 @@ def help_(ui, name=None, with_version=False):
 
         if not ui.quiet:
             # options
-            if i[1]:
-                option_lists.append((_("options:\n"), i[1]))
+            if entry[1]:
+                option_lists.append((_("options:\n"), entry[1]))
 
             addglobalopts(False)
 
@@ -1918,7 +1924,7 @@ def incoming(ui, repo, source="default", **opts):
         displayer = cmdutil.show_changeset(ui, other, opts)
         count = 0
         for n in o:
-            if count >= limit:
+            if limit is not None and count >= limit:
                 break
             parents = [p for p in other.changelog.parents(n) if p != nullid]
             if opts.get('no_merges') and len(parents) == 2:
@@ -2012,41 +2018,9 @@ def log(ui, repo, *pats, **opts):
     limit = cmdutil.loglimit(opts)
     count = 0
 
+    endrev = None
     if opts.get('copies') and opts.get('rev'):
         endrev = max(cmdutil.revrange(repo, opts.get('rev'))) + 1
-    else:
-        endrev = len(repo)
-    rcache = {}
-    ncache = {}
-    def getrenamed(fn, rev):
-        '''looks up all renames for a file (up to endrev) the first
-        time the file is given. It indexes on the changerev and only
-        parses the manifest if linkrev != changerev.
-        Returns rename info for fn at changerev rev.'''
-        if fn not in rcache:
-            rcache[fn] = {}
-            ncache[fn] = {}
-            fl = repo.file(fn)
-            for i in fl:
-                node = fl.node(i)
-                lr = fl.linkrev(i)
-                renamed = fl.renamed(node)
-                rcache[fn][lr] = renamed
-                if renamed:
-                    ncache[fn][node] = renamed
-                if lr >= endrev:
-                    break
-        if rev in rcache[fn]:
-            return rcache[fn][rev]
-
-        # If linkrev != rev (i.e. rev not found in rcache) fallback to
-        # filectx logic.
-
-        try:
-            return repo[rev][fn].renamed()
-        except error.LookupError:
-            pass
-        return None
 
     df = False
     if opts["date"]:
@@ -2076,8 +2050,10 @@ def log(ui, repo, *pats, **opts):
             else:
                 return
 
-        copies = []
+        copies = None
         if opts.get('copies') and rev:
+            copies = []
+            getrenamed = templatekw.getrenamedfn(repo, endrev=endrev)
             for fn in ctx.files():
                 rename = getrenamed(fn, rev)
                 if rename:
@@ -2203,7 +2179,7 @@ def outgoing(ui, repo, dest=None, **opts):
     displayer = cmdutil.show_changeset(ui, repo, opts)
     count = 0
     for n in o:
-        if count >= limit:
+        if limit is not None and count >= limit:
             break
         parents = [p for p in repo.changelog.parents(n) if p != nullid]
         if opts.get('no_merges') and len(parents) == 2:
@@ -2849,7 +2825,8 @@ def status(ui, repo, *pats, **opts):
 
     If one revision is given, it is used as the base revision.
     If two revisions are given, the differences between them are
-    shown.
+    shown. The --change option can also be used as a shortcut to list
+    the changed files of a revision from its first parent.
 
     The codes used to show the status of files are::
 
@@ -2863,7 +2840,18 @@ def status(ui, repo, *pats, **opts):
         = origin of the previous file listed as A (added)
     """
 
-    node1, node2 = cmdutil.revpair(repo, opts.get('rev'))
+    revs = opts.get('rev')
+    change = opts.get('change')
+
+    if revs and change:
+        msg = _('cannot specify --rev and --change at the same time')
+        raise util.Abort(msg)
+    elif change:
+        node2 = repo.lookup(change)
+        node1 = repo[node2].parents()[0].node()
+    else:
+        node1, node2 = cmdutil.revpair(repo, revs)
+
     cwd = (pats and repo.getcwd()) or ''
     end = opts.get('print0') and '\0' or '\n'
     copy = {}
@@ -3451,7 +3439,8 @@ table = {
     "^export":
         (export,
          [('o', 'output', '', _('print output to file with formatted name')),
-          ('', 'switch-parent', None, _('diff against the second parent'))
+          ('', 'switch-parent', None, _('diff against the second parent')),
+          ('r', 'rev', [], _('revisions to export')),
           ] + diffopts,
          _('[OPTION]... [-o OUTFILESPEC] REV...')),
     "^forget":
@@ -3667,6 +3656,7 @@ table = {
           ('0', 'print0', None,
            _('end filenames with NUL, for use with xargs')),
           ('', 'rev', [], _('show difference from revision')),
+          ('', 'change', '', _('list the changed files of a revision')),
          ] + walkopts,
          _('[OPTION]... [FILE]...')),
     "tag":
