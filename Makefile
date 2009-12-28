@@ -39,7 +39,7 @@ clean:
 	-$(PYTHON) setup.py clean --all # ignore errors from this command
 	find . -name '*.py[cdo]' -exec rm -f '{}' ';'
 	rm -f MANIFEST mercurial/__version__.py mercurial/*.so tests/*.err
-	rm -rf locale
+	rm -rf mercurial/locale
 	$(MAKE) -C doc clean
 
 install: install-bin install-doc
@@ -79,9 +79,9 @@ test-%:
 
 update-pot: i18n/hg.pot
 
-i18n/hg.pot: $(PYTHON_FILES) help/*.txt
+i18n/hg.pot: $(PYTHON_FILES) mercurial/help/*.txt
 	$(PYTHON) i18n/hggettext mercurial/commands.py \
-	  hgext/*.py hgext/*/__init__.py help/*.txt > i18n/hg.pot
+	  hgext/*.py hgext/*/__init__.py mercurial/help/*.txt > i18n/hg.pot
         # All strings marked for translation in Mercurial contain
         # ASCII characters only. But some files contain string
         # literals like this '\037\213'. xgettext thinks it has to
