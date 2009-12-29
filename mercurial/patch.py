@@ -239,6 +239,7 @@ class linereader(object):
         self.fp = fp
         self.buf = []
         self.textmode = textmode
+        self.eol = None
 
     def push(self, line):
         if line is not None:
@@ -250,6 +251,11 @@ class linereader(object):
             del self.buf[0]
             return l
         l = self.fp.readline()
+        if not self.eol:
+            if l.endswith('\r\n'):
+                self.eol = '\r\n'
+            elif l.endswith('\n'):
+                self.eol = '\n'
         if self.textmode and l.endswith('\r\n'):
             l = l[:-2] + '\n'
         return l
@@ -264,11 +270,13 @@ class linereader(object):
 # @@ -start,len +start,len @@ or @@ -start +start @@ if len is 1
 unidesc = re.compile('@@ -(\d+)(,(\d+))? \+(\d+)(,(\d+))? @@')
 contextdesc = re.compile('(---|\*\*\*) (\d+)(,(\d+))? (---|\*\*\*)')
+eolmodes = ['strict', 'crlf', 'lf', 'auto']
 
 class patchfile(object):
-    def __init__(self, ui, fname, opener, missing=False, eol=None):
+    def __init__(self, ui, fname, opener, missing=False, eolmode='strict'):
         self.fname = fname
-        self.eol = eol
+        self.eolmode = eolmode
+        self.eol = None
         self.opener = opener
         self.ui = ui
         self.lines = []
@@ -297,7 +305,10 @@ class patchfile(object):
             return [os.readlink(fname)]
         fp = self.opener(fname, 'r')
         try:
-            return list(linereader(fp, self.eol is not None))
+            lr = linereader(fp, self.eolmode != 'strict')
+            lines = list(lr)
+            self.eol = lr.eol
+            return lines
         finally:
             fp.close()
 
@@ -311,10 +322,17 @@ class patchfile(object):
         else:
             fp = self.opener(fname, 'w')
         try:
-            if self.eol and self.eol != '\n':
+            if self.eolmode == 'auto':
+                eol = self.eol
+            elif self.eolmode == 'crlf':
+                eol = '\r\n'
+            else:
+                eol = '\n'
+
+            if self.eolmode != 'strict' and eol and eol != '\n':
                 for l in lines:
                     if l and l[-1] == '\n':
-                        l = l[:-1] + self.eol
+                        l = l[:-1] + eol
                     fp.write(l)
             else:
                 fp.writelines(lines)
@@ -416,6 +434,14 @@ class patchfile(object):
                 self.dirty = 1
             return 0
 
+        horig = h
+        if (self.eolmode in ('crlf', 'lf')
+            or self.eolmode == 'auto' and self.eol):
+            # If new eols are going to be normalized, then normalize
+            # hunk data before patching. Otherwise, preserve input
+            # line-endings.
+            h = h.getnormalized()
+
         # fast case first, no offsets, no fuzz
         old = h.old()
         # patch starts counting at 1 unless we are adding the file
@@ -475,7 +501,7 @@ class patchfile(object):
                         return fuzzlen
         self.printfile(True)
         self.ui.warn(_("Hunk #%d FAILED at %d\n") % (h.number, orig_start))
-        self.rej.append(h)
+        self.rej.append(horig)
         return -1
 
 class hunk(object):
@@ -487,12 +513,38 @@ class hunk(object):
         self.b = []
         self.starta = self.lena = None
         self.startb = self.lenb = None
-        if context:
-            self.read_context_hunk(lr)
-        else:
-            self.read_unified_hunk(lr)
+        if lr is not None:
+            if context:
+                self.read_context_hunk(lr)
+            else:
+                self.read_unified_hunk(lr)
         self.create = create
         self.remove = remove and not create
+
+    def getnormalized(self):
+        """Return a copy with line endings normalized to LF."""
+
+        def normalize(lines):
+            nlines = []
+            for line in lines:
+                if line.endswith('\r\n'):
+                    line = line[:-2] + '\n'
+                nlines.append(line)
+            return nlines
+
+        # Dummy object, it is rebuilt manually
+        nh = hunk(self.desc, self.number, None, None, False, False)
+        nh.number = self.number
+        nh.desc = self.desc
+        nh.a = normalize(self.a)
+        nh.b = normalize(self.b)
+        nh.starta = self.starta
+        nh.startb = self.startb
+        nh.lena = self.lena
+        nh.lenb = self.lenb
+        nh.create = self.create
+        nh.remove = self.remove
+        return nh
 
     def read_unified_hunk(self, lr):
         m = unidesc.match(self.desc)
@@ -668,14 +720,6 @@ class hunk(object):
     def old(self, fuzz=0, toponly=False):
         return self.fuzzit(self.a, fuzz, toponly)
 
-    def newctrl(self):
-        res = []
-        for x in self.hunk:
-            c = x[0]
-            if c == ' ' or c == '+':
-                res.append(x)
-        return res
-
     def new(self, fuzz=0, toponly=False):
         return self.fuzzit(self.b, fuzz, toponly)
 
@@ -822,15 +866,13 @@ def scangitpatch(lr, firstline):
     fp.seek(pos)
     return dopatch, gitpatches
 
-def iterhunks(ui, fp, sourcefile=None, textmode=False):
+def iterhunks(ui, fp, sourcefile=None):
     """Read a patch and yield the following events:
     - ("file", afile, bfile, firsthunk): select a new target file.
     - ("hunk", hunk): a new hunk is ready to be applied, follows a
     "file" event.
     - ("git", gitchanges): current diff is in git format, gitchanges
     maps filenames to gitpatch records. Unique event.
-
-    If textmode is True, input line-endings are normalized to LF.
     """
     changed = {}
     current_hunk = None
@@ -844,7 +886,7 @@ def iterhunks(ui, fp, sourcefile=None, textmode=False):
     # our states
     BFILE = 1
     context = None
-    lr = linereader(fp, textmode)
+    lr = linereader(fp)
     dopatch = True
     # gitworkdone is True if a git operation (copy, rename, ...) was
     # performed already for the current file. Useful when the file
@@ -944,7 +986,7 @@ def iterhunks(ui, fp, sourcefile=None, textmode=False):
     if hunknum == 0 and dopatch and not gitworkdone:
         raise NoHunks
 
-def applydiff(ui, fp, changed, strip=1, sourcefile=None, eol=None):
+def applydiff(ui, fp, changed, strip=1, sourcefile=None, eolmode='strict'):
     """
     Reads a patch from fp and tries to apply it.
 
@@ -952,16 +994,15 @@ def applydiff(ui, fp, changed, strip=1, sourcefile=None, eol=None):
     by the patch. Returns 0 for a clean patch, -1 if any rejects were
     found and 1 if there was any fuzz.
 
-    If 'eol' is None, the patch content and patched file are read in
-    binary mode. Otherwise, line endings are ignored when patching then
-    normalized to 'eol' (usually '\n' or \r\n').
+    If 'eolmode' is 'strict', the patch content and patched file are
+    read in binary mode. Otherwise, line endings are ignored when
+    patching then normalized according to 'eolmode'.
     """
     rejects = 0
     err = 0
     current_file = None
     gitpatches = None
     opener = util.opener(os.getcwd())
-    textmode = eol is not None
 
     def closefile():
         if not current_file:
@@ -969,7 +1010,7 @@ def applydiff(ui, fp, changed, strip=1, sourcefile=None, eol=None):
         current_file.close()
         return len(current_file.rej)
 
-    for state, values in iterhunks(ui, fp, sourcefile, textmode):
+    for state, values in iterhunks(ui, fp, sourcefile):
         if state == 'hunk':
             if not current_file:
                 continue
@@ -984,11 +1025,11 @@ def applydiff(ui, fp, changed, strip=1, sourcefile=None, eol=None):
             afile, bfile, first_hunk = values
             try:
                 if sourcefile:
-                    current_file = patchfile(ui, sourcefile, opener, eol=eol)
+                    current_file = patchfile(ui, sourcefile, opener, eolmode=eolmode)
                 else:
                     current_file, missing = selectfile(afile, bfile, first_hunk,
                                             strip)
-                    current_file = patchfile(ui, current_file, opener, missing, eol)
+                    current_file = patchfile(ui, current_file, opener, missing, eolmode)
             except PatchError, err:
                 ui.warn(str(err) + '\n')
                 current_file, current_hunk = None, None
@@ -1109,10 +1150,9 @@ def internalpatch(patchobj, ui, strip, cwd, files=None, eolmode='strict'):
         files = {}
     if eolmode is None:
         eolmode = ui.config('patch', 'eol', 'strict')
-    try:
-        eol = {'strict': None, 'crlf': '\r\n', 'lf': '\n'}[eolmode.lower()]
-    except KeyError:
+    if eolmode.lower() not in eolmodes:
         raise util.Abort(_('Unsupported line endings type: %s') % eolmode)
+    eolmode = eolmode.lower()
 
     try:
         fp = open(patchobj, 'rb')
@@ -1122,7 +1162,7 @@ def internalpatch(patchobj, ui, strip, cwd, files=None, eolmode='strict'):
         curdir = os.getcwd()
         os.chdir(cwd)
     try:
-        ret = applydiff(ui, fp, files, strip=strip, eol=eol)
+        ret = applydiff(ui, fp, files, strip=strip, eolmode=eolmode)
     finally:
         if cwd:
             os.chdir(curdir)
@@ -1253,11 +1293,10 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None):
     date1 = util.datestr(ctx1.date())
     man1 = ctx1.manifest()
 
-    if repo.ui.quiet:
-        r = None
-    else:
+    revs = None
+    if not repo.ui.quiet and not opts.git:
         hexfunc = repo.ui.debugflag and hex or short
-        r = [hexfunc(node) for node in [node1, node2] if node]
+        revs = [hexfunc(node) for node in [node1, node2] if node]
 
     if opts.git:
         copy, diverge = copies.copies(repo, ctx1, ctx2, repo[nullid])
@@ -1310,8 +1349,7 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None):
                 _addmodehdr(header, omode, nmode)
                 if util.binary(to) or util.binary(tn):
                     dodiff = 'binary'
-            r = None
-            header.insert(0, mdiff.diffline(r, a, b, opts))
+            header.insert(0, mdiff.diffline(revs, a, b, opts))
         if dodiff:
             if dodiff == 'binary':
                 text = b85diff(to, tn)
@@ -1319,7 +1357,7 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None):
                 text = mdiff.unidiff(to, date1,
                                     # ctx2 date may be dynamic
                                     tn, util.datestr(ctx2.date()),
-                                    a, b, r, opts=opts)
+                                    a, b, revs, opts=opts)
             if header and (text or len(header) > 1):
                 yield ''.join(header)
             if text:

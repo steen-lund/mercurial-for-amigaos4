@@ -56,6 +56,8 @@ Default effects may be overridden from the .hgrc file::
   diff.inserted = green
   diff.changed = white
   diff.trailingwhitespace = bold red_background
+
+  bookmarks.current = green
 '''
 
 import os, sys
@@ -138,6 +140,21 @@ _status_effects = { 'modified': ['blue', 'bold'],
                     'clean': ['none'],
                     'copied': ['none'], }
 
+_bookmark_effects = { 'current': ['green'] }
+
+def colorbookmarks(orig, ui, repo, *pats, **opts):
+    def colorize(orig, s):
+        lines = s.split('\n')
+        for i, line in enumerate(lines):
+            if line.startswith(" *"):
+                lines[i] = render_effects(line, _bookmark_effects['current'])
+        orig('\n'.join(lines))
+    oldwrite = extensions.wrapfunction(ui, 'write', colorize)
+    try:
+        orig(ui, repo, *pats, **opts)
+    finally:
+        ui.write = oldwrite
+
 def colorqseries(orig, ui, repo, *dummy, **opts):
     '''run the qseries command with colored output'''
     ui.pushbuffer()
@@ -213,6 +230,16 @@ def colordiff(orig, ui, repo, *pats, **opts):
     finally:
         ui.write = oldwrite
 
+def colorchurn(orig, ui, repo, *pats, **opts):
+    '''run the churn command with colored output'''
+    if not opts.get('diffstat'):
+        return orig(ui, repo, *pats, **opts)
+    oldwrite = extensions.wrapfunction(ui, 'write', colordiffstat)
+    try:
+        orig(ui, repo, *pats, **opts)
+    finally:
+        ui.write = oldwrite
+
 _diff_prefixes = [('diff', 'diffline'),
                   ('copy', 'extended'),
                   ('rename', 'extended'),
@@ -259,7 +286,19 @@ def extsetup(ui):
 
     if mq and rec:
         _setupcmd(ui, 'qrecord', rec.cmdtable, colordiff, _diff_effects)
+    try:
+        churn = extensions.find('churn')
+        _setupcmd(ui, 'churn', churn.cmdtable, colorchurn, _diff_effects)
+    except KeyError:
+        churn = None
 
+    try:
+        bookmarks = extensions.find('bookmarks')
+        _setupcmd(ui, 'bookmarks', bookmarks.cmdtable, colorbookmarks,
+                  _bookmark_effects)
+    except KeyError:
+        # The bookmarks extension is not enabled
+        pass
 
 def _setupcmd(ui, cmd, table, func, effectsmap):
     '''patch in command to command table and load effect map'''
@@ -268,10 +307,14 @@ def _setupcmd(ui, cmd, table, func, effectsmap):
         if (opts['no_color'] or opts['color'] == 'never' or
             (opts['color'] == 'auto' and (os.environ.get('TERM') == 'dumb'
                                           or not sys.__stdout__.isatty()))):
+            del opts['no_color']
+            del opts['color']
             return orig(*args, **opts)
 
         oldshowpatch = extensions.wrapfunction(cmdutil.changeset_printer,
                                                'showpatch', colorshowpatch)
+        del opts['no_color']
+        del opts['color']
         try:
             if func is not None:
                 return func(orig, *args, **opts)
