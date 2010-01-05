@@ -46,7 +46,11 @@ PrivilegesRequired=none
 Source: contrib\mercurial.el; DestDir: {app}/Contrib
 Source: contrib\vim\*.*; DestDir: {app}/Contrib/Vim
 Source: contrib\zsh_completion; DestDir: {app}/Contrib
+Source: contrib\bash_completion; DestDir: {app}/Contrib
+Source: contrib\tcsh_completion; DestDir: {app}/Contrib
+Source: contrib\tcsh_completion_build.sh; DestDir: {app}/Contrib
 Source: contrib\hgk; DestDir: {app}/Contrib; DestName: hgk.tcl
+Source: contrib\xml.rnc; DestDir: {app}/Contrib
 Source: contrib\win32\ReadMe.html; DestDir: {app}; Flags: isreadme
 Source: contrib\mergetools.hgrc; DestDir: {tmp};
 Source: contrib\win32\mercurial.ini; DestDir: {app}; DestName: Mercurial.ini; Check: CheckFile; AfterInstall: ConcatenateFiles;
@@ -62,9 +66,9 @@ Source: dist\w9xpopen.exe; DestDir: {app}
 Source: dist\add_path.exe; DestDir: {app}
 Source: doc\*.html; DestDir: {app}\Docs
 Source: doc\style.css; DestDir: {app}\Docs
-Source: help\*.txt; DestDir: {app}\help
-Source: locale\*.*; DestDir: {app}\locale; Flags: recursesubdirs createallsubdirs
-Source: templates\*.*; DestDir: {app}\Templates; Flags: recursesubdirs createallsubdirs
+Source: mercurial\help\*.txt; DestDir: {app}\help
+Source: mercurial\locale\*.*; DestDir: {app}\locale; Flags: recursesubdirs createallsubdirs
+Source: mercurial\templates\*.*; DestDir: {app}\Templates; Flags: recursesubdirs createallsubdirs
 Source: CONTRIBUTORS; DestDir: {app}; DestName: Contributors.txt
 Source: COPYING; DestDir: {app}; DestName: Copying.txt
 
