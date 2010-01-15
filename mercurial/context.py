@@ -433,19 +433,17 @@ class filectx(object):
         # sort by revision (per file) which is a topological order
         visit = []
         for f in files:
-            fn = [(n.rev(), n) for n in needed if n._path == f]
-            visit.extend(fn)
+            visit.extend(n for n in needed if n._path == f)
 
         hist = {}
-        for r, f in sorted(visit):
+        for f in sorted(visit, key=lambda x: x.rev()):
             curr = decorate(f.data(), f)
             for p in parents(f):
-                if p != nullid:
-                    curr = pair(hist[p], curr)
-                    # trim the history of unneeded revs
-                    needed[p] -= 1
-                    if not needed[p]:
-                        del hist[p]
+                curr = pair(hist[p], curr)
+                # trim the history of unneeded revs
+                needed[p] -= 1
+                if not needed[p]:
+                    del hist[p]
             hist[f] = curr
 
         return zip(hist[f][0], hist[f][1].splitlines(True))
@@ -640,7 +638,8 @@ class workingctx(changectx):
         return self._parents[0].ancestor(c2) # punt on two parents for now
 
     def walk(self, match):
-        return sorted(self._repo.dirstate.walk(match, True, False))
+        return sorted(self._repo.dirstate.walk(match, self.substate.keys(),
+                                               True, False))
 
     def dirty(self, missing=False):
         "check whether a working directory is modified"
