@@ -29,8 +29,11 @@ class ui(object):
             self._ocfg = src._ocfg.copy()
             self._trustusers = src._trustusers.copy()
             self._trustgroups = src._trustgroups.copy()
+            self.environ = src.environ
             self.fixconfig()
         else:
+            # shared read-only environment
+            self.environ = os.environ
             # we always trust global config files
             for f in util.rcpath():
                 self.readconfig(f, trust=True)
@@ -252,7 +255,13 @@ class ui(object):
     def interactive(self):
         i = self.configbool("ui", "interactive", None)
         if i is None:
-            return sys.stdin.isatty()
+            try:
+                return sys.stdin.isatty()
+            except AttributeError:
+                # some environments replace stdin without implementing isatty
+                # usually those are non-interactive
+                return False
+
         return i
 
     def _readline(self, prompt=''):
