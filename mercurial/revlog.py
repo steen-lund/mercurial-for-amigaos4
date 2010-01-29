@@ -127,7 +127,7 @@ class lazyparser(object):
         self.dataf = dataf
         self.s = struct.calcsize(indexformatng)
         self.datasize = size
-        self.l = size/self.s
+        self.l = size / self.s
         self.index = [None] * self.l
         self.map = {nullid: nullrev}
         self.allmap = 0
@@ -902,7 +902,7 @@ class revlog(object):
             try:
                 # hex(node)[:...]
                 l = len(id) // 2  # grab an even number of digits
-                bin_id = bin(id[:l*2])
+                bin_id = bin(id[:l * 2])
                 nl = [n for n in self.nodemap if n[:l] == bin_id]
                 nl = [n for n in nl if hex(n).startswith(id)]
                 if len(nl) > 0:
@@ -1140,10 +1140,19 @@ class revlog(object):
     def ancestor(self, a, b):
         """calculate the least common ancestor of nodes a and b"""
 
+        # fast path, check if it is a descendant
+        a, b = self.rev(a), self.rev(b)
+        start, end = sorted((a, b))
+        for i in self.descendants(start):
+            if i == end:
+                return self.node(start)
+            elif i > end:
+                break
+
         def parents(rev):
             return [p for p in self.parentrevs(rev) if p != nullrev]
 
-        c = ancestor.ancestor(self.rev(a), self.rev(b), parents)
+        c = ancestor.ancestor(a, b, parents)
         if c is None:
             return nullid
 
@@ -1394,7 +1403,7 @@ class revlog(object):
         return (dd, di)
 
     def files(self):
-        res = [ self.indexfile ]
+        res = [self.indexfile]
         if not self._inline:
             res.append(self.datafile)
         return res
