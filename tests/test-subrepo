@@ -105,6 +105,10 @@ hg pull | sed 's/ .*sub/ ...sub/g'
 hg up # should pull t
 cat t/t
 
+echo % bogus subrepo path aborts
+echo 'bogus=[boguspath' >> .hgsub
+hg ci -m 'bogus subrepo path'
+
 echo % issue 1986
 cd ..
 rm -rf sub

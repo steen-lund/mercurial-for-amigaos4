@@ -130,6 +130,10 @@ def parseargs():
         help="use pure Python code instead of C extensions")
     parser.add_option("-3", "--py3k-warnings", action="store_true",
         help="enable Py3k warnings on Python 2.6+")
+    parser.add_option("--inotify", action="store_true",
+        help="enable inotify extension when running tests")
+    parser.add_option("--blacklist", action="append",
+        help="skip tests listed in the specified blacklist file")
 
     for option, default in defaults.items():
         defaults[option] = int(os.environ.get(*default))
@@ -195,6 +199,24 @@ def parseargs():
     if options.py3k_warnings:
         if sys.version_info[:2] < (2, 6) or sys.version_info[:2] >= (3, 0):
             parser.error('--py3k-warnings can only be used on Python 2.6+')
+    if options.blacklist:
+        blacklist = dict()
+        for filename in options.blacklist:
+            try:
+                path = os.path.expanduser(os.path.expandvars(filename))
+                f = open(path, "r")
+            except IOError, err:
+                if err.errno != errno.ENOENT:
+                    raise
+                print "warning: no such blacklist file: %s" % filename
+                continue
+
+            for line in f.readlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    blacklist[line] = filename
+
+        options.blacklist = blacklist
 
     return (options, args)
 
@@ -217,7 +239,7 @@ def splitnewlines(text):
             if last:
                 lines.append(last)
             return lines
-        lines.append(text[i:n+1])
+        lines.append(text[i:n + 1])
         i = n + 1
 
 def parsehghaveoutput(lines):
@@ -237,9 +259,8 @@ def parsehghaveoutput(lines):
 
     return missing, failed
 
-def showdiff(expected, output):
-    for line in difflib.unified_diff(expected, output,
-            "Expected output", "Test output"):
+def showdiff(expected, output, ref, err):
+    for line in difflib.unified_diff(expected, output, ref, err):
         sys.stdout.write(line)
 
 def findprogram(program):
@@ -293,10 +314,18 @@ def installhg(options):
     script = os.path.realpath(sys.argv[0])
     hgroot = os.path.dirname(os.path.dirname(script))
     os.chdir(hgroot)
+    nohome = '--home=""'
+    if os.name == 'nt':
+        # The --home="" trick works only on OS where os.sep == '/'
+        # because of a distutils convert_path() fast-path. Avoid it at
+        # least on Windows for now, deal with .pydistutils.cfg bugs
+        # when they happen.
+        nohome = ''
     cmd = ('%s setup.py %s clean --all'
            ' install --force --prefix="%s" --install-lib="%s"'
-           ' --install-scripts="%s" >%s 2>&1'
-           % (sys.executable, pure, INST, PYTHONDIR, BINDIR, installerrs))
+           ' --install-scripts="%s" %s >%s 2>&1'
+           % (sys.executable, pure, INST, PYTHONDIR, BINDIR, nohome,
+              installerrs))
     vlog("# Running", cmd)
     if os.system(cmd) == 0:
         if not options.verbose:
@@ -430,13 +459,13 @@ def runone(options, test, skips, fails):
         if not options.verbose:
             skips.append((test, msg))
         else:
-            print "\nSkipping %s: %s" % (test, msg)
+            print "\nSkipping %s: %s" % (testpath, msg)
         return None
 
     def fail(msg):
         fails.append((test, msg))
         if not options.nodiff:
-            print "\nERROR: %s %s" % (test, msg)
+            print "\nERROR: %s %s" % (testpath, msg)
         return None
 
     vlog("# Test", test)
@@ -449,6 +478,12 @@ def runone(options, test, skips, fails):
     hgrc.write('backout = -d "0 0"\n')
     hgrc.write('commit = -d "0 0"\n')
     hgrc.write('tag = -d "0 0"\n')
+    if options.inotify:
+        hgrc.write('[extensions]\n')
+        hgrc.write('inotify=\n')
+        hgrc.write('[inotify]\n')
+        hgrc.write('pidfile=%s\n' % DAEMON_PIDS)
+        hgrc.write('appendpid=True\n')
     hgrc.close()
 
     err = os.path.join(TESTDIR, test+".err")
@@ -537,7 +572,7 @@ def runone(options, test, skips, fails):
         else:
             fail("output changed")
         if not options.nodiff:
-            showdiff(refout, out)
+            showdiff(refout, out, ref, err)
         ret = 1
     elif ret:
         mark = '!'
@@ -633,7 +668,8 @@ def runchildren(options, tests):
     jobs = [[] for j in xrange(options.jobs)]
     while tests:
         for job in jobs:
-            if not tests: break
+            if not tests:
+                break
             job.append(tests.pop())
     fps = {}
     for j, job in enumerate(jobs):
@@ -715,6 +751,13 @@ def runtests(options, tests):
         fails = []
 
         for test in tests:
+            if options.blacklist:
+                filename = options.blacklist.get(test)
+                if filename is not None:
+                    skips.append((test, "blacklisted (%s)" % filename))
+                    skipped += 1
+                    continue
+
             if options.retest and not os.path.exists(test + ".err"):
                 skipped += 1
                 continue
