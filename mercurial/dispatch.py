@@ -35,7 +35,8 @@ def _runcatch(ui, args):
 
     for name in 'SIGBREAK', 'SIGHUP', 'SIGTERM':
         num = getattr(signal, name, None)
-        if num: signal.signal(num, catchterm)
+        if num:
+            signal.signal(num, catchterm)
 
     try:
         try:
@@ -177,6 +178,7 @@ class cmdalias(object):
         self.opts = []
         self.help = ''
         self.norepo = True
+        self.badalias = False
 
         try:
             cmdutil.findcmd(self.name, cmdtable, True)
@@ -189,6 +191,7 @@ class cmdalias(object):
                 ui.warn(_("no definition for alias '%s'\n") % self.name)
                 return 1
             self.fn = fn
+            self.badalias = True
 
             return
 
@@ -205,18 +208,26 @@ class cmdalias(object):
             self.args = aliasargs(self.fn) + args
             if cmd not in commands.norepo.split(' '):
                 self.norepo = False
+            if self.help.startswith("hg " + cmd):
+                # drop prefix in old-style help lines so hg shows the alias
+                self.help = self.help[4 + len(cmd):]
+            self.__doc__ = _("alias for: hg %s\n\n%s") \
+                               % (definition, self.fn.__doc__)
+
         except error.UnknownCommand:
             def fn(ui, *args):
                 ui.warn(_("alias '%s' resolves to unknown command '%s'\n") \
                             % (self.name, cmd))
                 return 1
             self.fn = fn
+            self.badalias = True
         except error.AmbiguousCommand:
             def fn(ui, *args):
                 ui.warn(_("alias '%s' resolves to ambiguous command '%s'\n") \
                             % (self.name, cmd))
                 return 1
             self.fn = fn
+            self.badalias = True
 
     def __call__(self, ui, *args, **opts):
         if self.shadows:
@@ -245,14 +256,14 @@ def _parse(ui, args):
 
     if args:
         cmd, args = args[0], args[1:]
-        aliases, i = cmdutil.findcmd(cmd, commands.table,
+        aliases, entry = cmdutil.findcmd(cmd, commands.table,
                                      ui.config("ui", "strict"))
         cmd = aliases[0]
-        args = aliasargs(i[0]) + args
+        args = aliasargs(entry[0]) + args
         defaults = ui.config("defaults", cmd)
         if defaults:
             args = map(util.expandpath, shlex.split(defaults)) + args
-        c = list(i[1])
+        c = list(entry[1])
     else:
         cmd = None
         c = []
@@ -272,7 +283,7 @@ def _parse(ui, args):
         options[n] = cmdoptions[n]
         del cmdoptions[n]
 
-    return (cmd, cmd and i[0] or None, args, options, cmdoptions)
+    return (cmd, cmd and entry[0] or None, args, options, cmdoptions)
 
 def _parseconfig(ui, config):
     """parse the --config options from the command line"""
