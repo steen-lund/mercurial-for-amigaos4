@@ -616,7 +616,7 @@ class queue(object):
         return (True, files, fuzz)
 
     def apply(self, repo, series, list=False, update_status=True,
-              strict=False, patchdir=None, merge=None, all_files={}):
+              strict=False, patchdir=None, merge=None, all_files=None):
         wlock = lock = tr = None
         try:
             wlock = repo.wlock()
@@ -641,7 +641,7 @@ class queue(object):
             self.removeundo(repo)
 
     def _apply(self, repo, series, list=False, update_status=True,
-               strict=False, patchdir=None, merge=None, all_files={}):
+               strict=False, patchdir=None, merge=None, all_files=None):
         '''returns (error, hash)
         error = 1 for unable to read, 2 for patch failed, 3 for patch fuzz'''
         # TODO unify with commands.py
@@ -674,7 +674,8 @@ class queue(object):
 
             if ph.haspatch:
                 (patcherr, files, fuzz) = self.patch(repo, pf)
-                all_files.update(files)
+                if all_files is not None:
+                    all_files.update(files)
                 patcherr = not patcherr
             else:
                 self.ui.warn(_("patch %s is empty\n") % patchname)
@@ -1071,7 +1072,7 @@ class queue(object):
                 end = self.series.index(patch, start) + 1
 
             s = self.series[start:end]
-            all_files = {}
+            all_files = set()
             try:
                 if mergeq:
                     ret = self.mergepatch(repo, mergeq, s, diffopts)
@@ -1081,11 +1082,10 @@ class queue(object):
                 self.ui.warn(_('cleaning up working directory...'))
                 node = repo.dirstate.parents()[0]
                 hg.revert(repo, node, None)
-                unknown = repo.status(unknown=True)[4]
                 # only remove unknown files that we know we touched or
                 # created while patching
-                for f in unknown:
-                    if f in all_files:
+                for f in all_files:
+                    if f not in repo.dirstate:
                         util.unlink(repo.wjoin(f))
                 self.ui.warn(_('done\n'))
                 raise
@@ -1104,10 +1104,6 @@ class queue(object):
             wlock.release()
 
     def pop(self, repo, patch=None, force=False, update=True, all=False):
-        def getfile(f, rev, flags):
-            t = repo.file(f).read(rev)
-            repo.wwrite(f, t, flags)
-
         wlock = repo.wlock()
         try:
             if patch:
@@ -1175,8 +1171,7 @@ class queue(object):
             # form of hg.update.
             if update:
                 qp = self.qparents(repo, rev)
-                changes = repo.changelog.read(qp)
-                mmap = repo.manifest.read(changes[0])
+                ctx = repo[qp]
                 m, a, r, d = repo.status(qp, top)[:4]
                 if d:
                     raise util.Abort(_("deletions found between repo revs"))
@@ -1189,11 +1184,9 @@ class queue(object):
                     try: os.removedirs(os.path.dirname(repo.wjoin(f)))
                     except: pass
                     repo.dirstate.forget(f)
-                for f in m:
-                    getfile(f, mmap[f], mmap.flags(f))
-                for f in r:
-                    getfile(f, mmap[f], mmap.flags(f))
                 for f in m + r:
+                    fctx = ctx[f]
+                    repo.wwrite(f, fctx.data(), fctx.flags())
                     repo.dirstate.normal(f)
                 repo.dirstate.setparents(qp, nullid)
             for patch in reversed(self.applied[start:end]):
@@ -1681,7 +1674,7 @@ class queue(object):
                 self.full_series.insert(0, patchname)
 
                 patchf = self.opener(patchname, "w")
-                patch.export(repo, [n], fp=patchf, opts=diffopts)
+                cmdutil.export(repo, [n], fp=patchf, opts=diffopts)
                 patchf.close()
 
                 se = statusentry(hex(n), patchname)
