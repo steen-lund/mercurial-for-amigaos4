@@ -53,18 +53,11 @@ commands.norepo += " qclone"
 normname = util.normpath
 
 class statusentry(object):
-    def __init__(self, rev, name=None):
-        if not name:
-            fields = rev.split(':', 1)
-            if len(fields) == 2:
-                self.rev, self.name = fields
-            else:
-                self.rev, self.name = None, None
-        else:
-            self.rev, self.name = rev, name
+    def __init__(self, node, name):
+        self.node, self.name = node, name
 
     def __str__(self):
-        return self.rev + ':' + self.name
+        return hex(self.node) + ':' + self.name
 
 class patchheader(object):
     def __init__(self, pf, plainmode=False):
@@ -79,8 +72,7 @@ class patchheader(object):
                     break
         def eatempty(lines):
             while lines:
-                l = lines[-1]
-                if re.match('\s*$', l):
+                if not lines[-1].strip():
                     del lines[-1]
                 else:
                     break
@@ -265,8 +257,11 @@ class queue(object):
     @util.propertycache
     def applied(self):
         if os.path.exists(self.join(self.status_path)):
+            def parse(l):
+                n, name = l.split(':', 1)
+                return statusentry(bin(n), name)
             lines = self.opener(self.status_path).read().splitlines()
-            return [statusentry(l) for l in lines]
+            return [parse(l) for l in lines]
         return []
 
     @util.propertycache
@@ -329,16 +324,12 @@ class queue(object):
         return os.path.join(self.path, *p)
 
     def find_series(self, patch):
-        pre = re.compile("(\s*)([^#]+)")
-        index = 0
-        for l in self.full_series:
-            m = pre.match(l)
-            if m:
-                s = m.group(2)
-                s = s.rstrip()
-                if s == patch:
-                    return index
-            index += 1
+        def matchpatch(l):
+            l = l.split('#', 1)[0]
+            return l.strip() == patch
+        for index, l in enumerate(self.full_series):
+            if matchpatch(l):
+                return index
         return None
 
     guard_re = re.compile(r'\s?#([-+][^-+# \t\r\n\f][^# \t\r\n\f]*)')
@@ -544,22 +535,16 @@ class queue(object):
             (p1, p2) = repo.dirstate.parents()
             if p2 == nullid:
                 return p1
-            if len(self.applied) == 0:
+            if not self.applied:
                 return None
-            return bin(self.applied[-1].rev)
-        pp = repo.changelog.parents(rev)
-        if pp[1] != nullid:
-            arevs = [x.rev for x in self.applied]
-            p0 = hex(pp[0])
-            p1 = hex(pp[1])
-            if p0 in arevs:
-                return pp[0]
-            if p1 in arevs:
-                return pp[1]
-        return pp[0]
+            return self.applied[-1].node
+        p1, p2 = repo.changelog.parents(rev)
+        if p2 != nullid and p2 in [x.node for x in self.applied]:
+            return p2
+        return p1
 
     def mergepatch(self, repo, mergeq, series, diffopts):
-        if len(self.applied) == 0:
+        if not self.applied:
             # each of the patches merged in will have two parents.  This
             # can confuse the qrefresh, qdiff, and strip code because it
             # needs to know which parent is actually in the patch queue.
@@ -569,7 +554,7 @@ class queue(object):
             pname = ".hg.patches.merge.marker"
             n = repo.commit('[mq]: merge marker', force=True)
             self.removeundo(repo)
-            self.applied.append(statusentry(hex(n), pname))
+            self.applied.append(statusentry(n, pname))
             self.applied_dirty = 1
 
         head = self.qparents(repo)
@@ -587,10 +572,10 @@ class queue(object):
             if not info:
                 self.ui.warn(_("patch %s is not applied\n") % patch)
                 return (1, None)
-            rev = bin(info[1])
+            rev = info[1]
             err, head = self.mergeone(repo, mergeq, head, patch, rev, diffopts)
             if head:
-                self.applied.append(statusentry(hex(head), patch))
+                self.applied.append(statusentry(head, patch))
                 self.applied_dirty = 1
             if err:
                 return (err, head)
@@ -613,7 +598,7 @@ class queue(object):
         return (True, files, fuzz)
 
     def apply(self, repo, series, list=False, update_status=True,
-              strict=False, patchdir=None, merge=None, all_files={}):
+              strict=False, patchdir=None, merge=None, all_files=None):
         wlock = lock = tr = None
         try:
             wlock = repo.wlock()
@@ -638,7 +623,7 @@ class queue(object):
             self.removeundo(repo)
 
     def _apply(self, repo, series, list=False, update_status=True,
-               strict=False, patchdir=None, merge=None, all_files={}):
+               strict=False, patchdir=None, merge=None, all_files=None):
         '''returns (error, hash)
         error = 1 for unable to read, 2 for patch failed, 3 for patch fuzz'''
         # TODO unify with commands.py
@@ -671,7 +656,8 @@ class queue(object):
 
             if ph.haspatch:
                 (patcherr, files, fuzz) = self.patch(repo, pf)
-                all_files.update(files)
+                if all_files is not None:
+                    all_files.update(files)
                 patcherr = not patcherr
             else:
                 self.ui.warn(_("patch %s is empty\n") % patchname)
@@ -701,7 +687,7 @@ class queue(object):
                 raise util.Abort(_("repo commit failed"))
 
             if update_status:
-                self.applied.append(statusentry(hex(n), patchname))
+                self.applied.append(statusentry(n, patchname))
 
             if patcherr:
                 self.ui.warn(_("patch failed, rejects left in working dir\n"))
@@ -733,7 +719,7 @@ class queue(object):
         self.series_dirty = 1
 
     def _revpatches(self, repo, revs):
-        firstrev = repo[self.applied[0].rev].rev()
+        firstrev = repo[self.applied[0].node].rev()
         patches = []
         for i, rev in enumerate(revs):
 
@@ -741,7 +727,7 @@ class queue(object):
                 raise util.Abort(_('revision %d is not managed') % rev)
 
             ctx = repo[rev]
-            base = bin(self.applied[i].rev)
+            base = self.applied[i].node
             if ctx.node() != base:
                 msg = _('cannot delete revision %d above applied patches')
                 raise util.Abort(msg % rev)
@@ -789,8 +775,8 @@ class queue(object):
         self._cleanup(realpatches, numrevs, opts.get('keep'))
 
     def check_toppatch(self, repo):
-        if len(self.applied) > 0:
-            top = bin(self.applied[-1].rev)
+        if self.applied:
+            top = self.applied[-1].node
             patch = self.applied[-1].name
             pp = repo.dirstate.parents()
             if top not in pp:
@@ -870,7 +856,7 @@ class queue(object):
                     raise util.Abort(_("repo commit failed"))
                 try:
                     self.full_series[insert:insert] = [patchfn]
-                    self.applied.append(statusentry(hex(n), patchfn))
+                    self.applied.append(statusentry(n, patchfn))
                     self.parse_series()
                     self.series_dirty = 1
                     self.applied_dirty = 1
@@ -927,7 +913,7 @@ class queue(object):
         """returns (index, rev, patch)"""
         for i, a in enumerate(self.applied):
             if a.name == patch:
-                return (i, a.rev, a.name)
+                return (i, a.node, a.name)
         return None
 
     # if the exact patch name does not exist, we try a few
@@ -950,7 +936,7 @@ class queue(object):
                 return None
             if matches:
                 return matches[0]
-            if len(self.series) > 0 and len(self.applied) > 0:
+            if self.series and self.applied:
                 if s == 'qtip':
                     return self.series[self.series_end(True)-1]
                 if s == 'qbase':
@@ -1068,7 +1054,7 @@ class queue(object):
                 end = self.series.index(patch, start) + 1
 
             s = self.series[start:end]
-            all_files = {}
+            all_files = set()
             try:
                 if mergeq:
                     ret = self.mergepatch(repo, mergeq, s, diffopts)
@@ -1078,12 +1064,15 @@ class queue(object):
                 self.ui.warn(_('cleaning up working directory...'))
                 node = repo.dirstate.parents()[0]
                 hg.revert(repo, node, None)
-                unknown = repo.status(unknown=True)[4]
                 # only remove unknown files that we know we touched or
                 # created while patching
-                for f in unknown:
-                    if f in all_files:
-                        util.unlink(repo.wjoin(f))
+                for f in all_files:
+                    if f not in repo.dirstate:
+                        try:
+                            util.unlink(repo.wjoin(f))
+                        except OSError, inst:
+                            if inst.errno != errno.ENOENT:
+                                raise
                 self.ui.warn(_('done\n'))
                 raise
 
@@ -1101,10 +1090,6 @@ class queue(object):
             wlock.release()
 
     def pop(self, repo, patch=None, force=False, update=True, all=False):
-        def getfile(f, rev, flags):
-            t = repo.file(f).read(rev)
-            repo.wwrite(f, t, flags)
-
         wlock = repo.wlock()
         try:
             if patch:
@@ -1116,7 +1101,7 @@ class queue(object):
                 if not info:
                     raise util.Abort(_("patch %s is not applied") % patch)
 
-            if len(self.applied) == 0:
+            if not self.applied:
                 # Allow qpop -a to work repeatedly,
                 # but not qpop without an argument
                 self.ui.warn(_("no patches applied\n"))
@@ -1135,16 +1120,16 @@ class queue(object):
 
             if not update:
                 parents = repo.dirstate.parents()
-                rr = [bin(x.rev) for x in self.applied]
+                rr = [x.node for x in self.applied]
                 for p in parents:
                     if p in rr:
                         self.ui.warn(_("qpop: forcing dirstate update\n"))
                         update = True
             else:
-                parents = [p.hex() for p in repo[None].parents()]
+                parents = [p.node() for p in repo[None].parents()]
                 needupdate = False
                 for entry in self.applied[start:]:
-                    if entry.rev in parents:
+                    if entry.node in parents:
                         needupdate = True
                         break
                 update = needupdate
@@ -1154,7 +1139,7 @@ class queue(object):
 
             self.applied_dirty = 1
             end = len(self.applied)
-            rev = bin(self.applied[start].rev)
+            rev = self.applied[start].node
             if update:
                 top = self.check_toppatch(repo)[0]
 
@@ -1164,7 +1149,7 @@ class queue(object):
                 node = short(rev)
                 raise util.Abort(_('trying to pop unknown node %s') % node)
 
-            if heads != [bin(self.applied[-1].rev)]:
+            if heads != [self.applied[-1].node]:
                 raise util.Abort(_("popping would remove a revision not "
                                    "managed by this patch queue"))
 
@@ -1172,8 +1157,7 @@ class queue(object):
             # form of hg.update.
             if update:
                 qp = self.qparents(repo, rev)
-                changes = repo.changelog.read(qp)
-                mmap = repo.manifest.read(changes[0])
+                ctx = repo[qp]
                 m, a, r, d = repo.status(qp, top)[:4]
                 if d:
                     raise util.Abort(_("deletions found between repo revs"))
@@ -1186,18 +1170,16 @@ class queue(object):
                     try: os.removedirs(os.path.dirname(repo.wjoin(f)))
                     except: pass
                     repo.dirstate.forget(f)
-                for f in m:
-                    getfile(f, mmap[f], mmap.flags(f))
-                for f in r:
-                    getfile(f, mmap[f], mmap.flags(f))
                 for f in m + r:
+                    fctx = ctx[f]
+                    repo.wwrite(f, fctx.data(), fctx.flags())
                     repo.dirstate.normal(f)
                 repo.dirstate.setparents(qp, nullid)
             for patch in reversed(self.applied[start:end]):
                 self.ui.status(_("popping %s\n") % patch.name)
             del self.applied[start:end]
             self.strip(repo, rev, update=False, backup='strip')
-            if len(self.applied):
+            if self.applied:
                 self.ui.write(_("now at: %s\n") % self.applied[-1].name)
             else:
                 self.ui.write(_("patch queue now empty\n"))
@@ -1218,7 +1200,7 @@ class queue(object):
         self.printdiff(repo, diffopts, node1, node2, files=pats, opts=opts)
 
     def refresh(self, repo, pats=None, **opts):
-        if len(self.applied) == 0:
+        if not self.applied:
             self.ui.write(_("no patches applied\n"))
             return 1
         msg = opts.get('msg', '').rstrip()
@@ -1230,8 +1212,7 @@ class queue(object):
 
         try:
             self.check_toppatch(repo)
-            (top, patchfn) = (self.applied[-1].rev, self.applied[-1].name)
-            top = bin(top)
+            (top, patchfn) = (self.applied[-1].node, self.applied[-1].name)
             if repo.changelog.heads(top) != [top]:
                 raise util.Abort(_("cannot refresh a revision with children"))
 
@@ -1388,7 +1369,7 @@ class queue(object):
                 patchf.rename()
                 n = repo.commit(message, user, ph.date, match=match,
                                 force=True)
-                self.applied.append(statusentry(hex(n), patchfn))
+                self.applied.append(statusentry(n, patchfn))
             except:
                 ctx = repo[cparents[0]]
                 repo.dirstate.rebuild(ctx.node(), ctx.manifest())
@@ -1487,8 +1468,7 @@ class queue(object):
             return hg.repository(self.ui, path=self.path, create=create)
 
     def restore(self, repo, rev, delete=None, qupdate=None):
-        c = repo.changelog.read(rev)
-        desc = c[4].strip()
+        desc = repo[rev].description().strip()
         lines = desc.splitlines()
         i = 0
         datastart = None
@@ -1504,12 +1484,11 @@ class queue(object):
                 qpp = [bin(x) for x in l]
             elif datastart != None:
                 l = line.rstrip()
-                se = statusentry(l)
-                file_ = se.name
-                if se.rev:
-                    applied.append(se)
+                n, name = l.split(':', 1)
+                if n:
+                    applied.append(statusentry(bin(n), name))
                 else:
-                    series.append(file_)
+                    series.append(l)
         if datastart is None:
             self.ui.warn(_("No saved patch data found\n"))
             return 1
@@ -1543,14 +1522,13 @@ class queue(object):
                 hg.clean(r, qpp[0])
 
     def save(self, repo, msg=None):
-        if len(self.applied) == 0:
+        if not self.applied:
             self.ui.warn(_("save: no patches applied, exiting\n"))
             return 1
         if self.issaveline(self.applied[-1]):
             self.ui.warn(_("status is already saved\n"))
             return 1
 
-        ar = [':' + x for x in self.full_series]
         if not msg:
             msg = _("hg patches saved state")
         else:
@@ -1560,18 +1538,18 @@ class queue(object):
             pp = r.dirstate.parents()
             msg += "\nDirstate: %s %s" % (hex(pp[0]), hex(pp[1]))
         msg += "\n\nPatch Data:\n"
-        text = msg + "\n".join([str(x) for x in self.applied]) + '\n' + (ar and
-                   "\n".join(ar) + '\n' or "")
-        n = repo.commit(text, force=True)
+        msg += ''.join('%s\n' % x for x in self.applied)
+        msg += ''.join(':%s\n' % x for x in self.full_series)
+        n = repo.commit(msg, force=True)
         if not n:
             self.ui.warn(_("repo commit failed\n"))
             return 1
-        self.applied.append(statusentry(hex(n),'.hg.patches.save.line'))
+        self.applied.append(statusentry(n, '.hg.patches.save.line'))
         self.applied_dirty = 1
         self.removeundo(repo)
 
     def full_series_end(self):
-        if len(self.applied) > 0:
+        if self.applied:
             p = self.applied[-1].name
             end = self.find_series(p)
             if end is None:
@@ -1586,17 +1564,15 @@ class queue(object):
         """
         end = 0
         def next(start):
-            if all_patches:
+            if all_patches or start >= len(self.series):
                 return start
-            i = start
-            while i < len(self.series):
+            for i in xrange(start, len(self.series)):
                 p, reason = self.pushable(i)
                 if p:
                     break
                 self.explain_pushable(i)
-                i += 1
             return i
-        if len(self.applied) > 0:
+        if self.applied:
             p = self.applied[-1].name
             try:
                 end = self.series.index(p)
@@ -1633,7 +1609,6 @@ class queue(object):
         if (len(files) > 1 or len(rev) > 1) and patchname:
             raise util.Abort(_('option "-n" not valid when importing multiple '
                                'patches'))
-        i = 0
         added = []
         if rev:
             # If mq patches are applied, we can only import revisions
@@ -1644,14 +1619,14 @@ class queue(object):
                 raise util.Abort(_('revision %d is the root of more than one '
                                    'branch') % rev[-1])
             if self.applied:
-                base = hex(repo.changelog.node(rev[0]))
-                if base in [n.rev for n in self.applied]:
+                base = repo.changelog.node(rev[0])
+                if base in [n.node for n in self.applied]:
                     raise util.Abort(_('revision %d is already managed')
                                      % rev[0])
-                if heads != [bin(self.applied[-1].rev)]:
+                if heads != [self.applied[-1].node]:
                     raise util.Abort(_('revision %d is not the parent of '
                                        'the queue') % rev[0])
-                base = repo.changelog.rev(bin(self.applied[0].rev))
+                base = repo.changelog.rev(self.applied[0].node)
                 lastparent = repo.changelog.parentrevs(base)[0]
             else:
                 if heads != [repo.changelog.node(rev[0])]:
@@ -1678,10 +1653,10 @@ class queue(object):
                 self.full_series.insert(0, patchname)
 
                 patchf = self.opener(patchname, "w")
-                patch.export(repo, [n], fp=patchf, opts=diffopts)
+                cmdutil.export(repo, [n], fp=patchf, opts=diffopts)
                 patchf.close()
 
-                se = statusentry(hex(n), patchname)
+                se = statusentry(n, patchname)
                 self.applied.insert(0, se)
 
                 added.append(patchname)
@@ -1689,7 +1664,7 @@ class queue(object):
             self.parse_series()
             self.applied_dirty = 1
 
-        for filename in files:
+        for i, filename in enumerate(files):
             if existing:
                 if filename == '-':
                     raise util.Abort(_('-e is incompatible with import from -'))
@@ -1722,7 +1697,6 @@ class queue(object):
                 self.full_series[index:index] = [patchname]
             self.parse_series()
             self.ui.warn(_("adding %s to series file\n") % patchname)
-            i += 1
             added.append(patchname)
             patchname = None
         self.series_dirty = 1
@@ -1899,7 +1873,7 @@ def clone(ui, source, dest=None, **opts):
     qbase, destrev = None, None
     if sr.local():
         if sr.mq.applied:
-            qbase = bin(sr.mq.applied[0].rev)
+            qbase = sr.mq.applied[0].node
             if not hg.islocal(dest):
                 heads = set(sr.heads())
                 destrev = list(heads.difference(sr.heads(qbase)))
@@ -2541,8 +2515,8 @@ def reposetup(ui, repo):
 
         def abort_if_wdir_patched(self, errmsg, force=False):
             if self.mq.applied and not force:
-                parent = hex(self.dirstate.parents()[0])
-                if parent in [s.rev for s in self.mq.applied]:
+                parent = self.dirstate.parents()[0]
+                if parent in [s.node for s in self.mq.applied]:
                     raise util.Abort(errmsg)
 
         def commit(self, text="", user=None, date=None, match=None,
@@ -2567,7 +2541,7 @@ def reposetup(ui, repo):
             if not q.applied:
                 return result
 
-            mqtags = [(bin(patch.rev), patch.name) for patch in q.applied]
+            mqtags = [(patch.node, patch.name) for patch in q.applied]
 
             if mqtags[-1][0] not in self.changelog.nodemap:
                 self.ui.warn(_('mq status file refers to unknown node %s\n')
@@ -2593,7 +2567,7 @@ def reposetup(ui, repo):
                 return super(mqrepo, self)._branchtags(partial, lrev)
 
             cl = self.changelog
-            qbasenode = bin(q.applied[0].rev)
+            qbasenode = q.applied[0].node
             if qbasenode not in cl.nodemap:
                 self.ui.warn(_('mq status file refers to unknown node %s\n')
                              % short(qbasenode))
