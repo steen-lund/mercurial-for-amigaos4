@@ -14,7 +14,7 @@ For more information:
 http://mercurial.selenic.com/wiki/RebaseExtension
 '''
 
-from mercurial import util, repair, merge, cmdutil, commands, error
+from mercurial import hg, util, repair, merge, cmdutil, commands, error
 from mercurial import extensions, ancestor, copies, patch
 from mercurial.commands import templateopts
 from mercurial.node import nullrev
@@ -87,6 +87,9 @@ def rebase(ui, repo, **opts):
         keepf = opts.get('keep', False)
         keepbranchesf = opts.get('keepbranches', False)
         detachf = opts.get('detach', False)
+        # keepopen is not meant for use on the command line, but by
+        # other extensions
+        keepopen = opts.get('keepopen', False)
 
         if contf or abortf:
             if contf and abortf:
@@ -181,7 +184,7 @@ def rebase(ui, repo, **opts):
 
         ui.note(_('rebase merging completed\n'))
 
-        if collapsef:
+        if collapsef and not keepopen:
             p1, p2 = defineparents(repo, min(state), target,
                                                         state, targetancestors)
             commitmsg = 'Collapsed revision'
@@ -345,10 +348,10 @@ def updatemq(repo, state, skipped, **opts):
     'Update rebased mq patches - finalize and then import them'
     mqrebase = {}
     for p in repo.mq.applied:
-        if repo[p.rev].rev() in state:
+        if repo[p.node].rev() in state:
             repo.ui.debug('revision %d is an mq patch (%s), finalize it.\n' %
-                                        (repo[p.rev].rev(), p.name))
-            mqrebase[repo[p.rev].rev()] = (p.name, isagitpatch(repo, p.name))
+                                        (repo[p.node].rev(), p.name))
+            mqrebase[repo[p.node].rev()] = (p.name, isagitpatch(repo, p.name))
 
     if mqrebase:
         repo.mq.finish(repo, mqrebase.keys())
@@ -445,8 +448,8 @@ def buildstate(repo, dest, src, base, detach):
     # This check isn't strictly necessary, since mq detects commits over an
     # applied patch. But it prevents messing up the working directory when
     # a partially completed rebase is blocked by mq.
-    if 'qtip' in repo.tags() and (repo[dest].hex() in
-                            [s.rev for s in repo.mq.applied]):
+    if 'qtip' in repo.tags() and (repo[dest].node() in
+                            [s.node for s in repo.mq.applied]):
         raise util.Abort(_('cannot rebase onto an applied mq patch'))
 
     if src:
@@ -502,7 +505,14 @@ def pullrebase(orig, ui, repo, *args, **opts):
 
         cmdutil.bail_if_changed(repo)
         revsprepull = len(repo)
-        orig(ui, repo, *args, **opts)
+        origpostincoming = commands.postincoming
+        def _dummy(*args, **kwargs):
+            pass
+        commands.postincoming = _dummy
+        try:
+            orig(ui, repo, *args, **opts)
+        finally:
+            commands.postincoming = origpostincoming
         revspostpull = len(repo)
         if revspostpull > revsprepull:
             rebase(ui, repo, **opts)
@@ -510,7 +520,7 @@ def pullrebase(orig, ui, repo, *args, **opts):
             dest = repo[branch].rev()
             if dest != repo['.'].rev():
                 # there was nothing to rebase we force an update
-                merge.update(repo, dest, False, False, False)
+                hg.update(repo, dest)
     else:
         orig(ui, repo, *args, **opts)
 
