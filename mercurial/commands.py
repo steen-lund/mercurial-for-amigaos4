@@ -12,8 +12,8 @@ import os, re, sys, difflib, time, tempfile
 import hg, util, revlog, bundlerepo, extensions, copies, error
 import patch, help, mdiff, url, encoding, templatekw
 import archival, changegroup, cmdutil, sshserver, hbisect
-from hgweb import server
-import merge as merge_
+from hgweb import server, hgweb_mod, hgwebdir_mod
+import merge as mergemod
 import minirst
 
 # Commands start here, listed alphabetically
@@ -158,8 +158,10 @@ def archive(ui, repo, dest, **opts):
     By default, the revision used is the parent of the working
     directory; use -r/--rev to specify a different revision.
 
-    To specify the type of archive to create, use -t/--type. Valid
-    types are:
+    The archive type is automatically detected based on file
+    extension (or override using -t/--type).
+
+    Valid types are:
 
     :``files``: a directory full of files (default)
     :``tar``:   tar archive, uncompressed
@@ -184,16 +186,32 @@ def archive(ui, repo, dest, **opts):
     dest = cmdutil.make_filename(repo, dest, node)
     if os.path.realpath(dest) == repo.root:
         raise util.Abort(_('repository root cannot be destination'))
-    matchfn = cmdutil.match(repo, [], opts)
-    kind = opts.get('type') or 'files'
+
+    def guess_type():
+        exttypes = {
+            'tar': ['.tar'],
+            'tbz2': ['.tbz2', '.tar.bz2'],
+            'tgz': ['.tgz', '.tar.gz'],
+            'zip': ['.zip'],
+        }
+
+        for type, extensions in exttypes.items():
+            if util.any(dest.endswith(ext) for ext in extensions):
+                return type
+        return None
+
+    kind = opts.get('type') or guess_type() or 'files'
     prefix = opts.get('prefix')
+
     if dest == '-':
         if kind == 'files':
             raise util.Abort(_('cannot archive plain files to stdout'))
         dest = sys.stdout
         if not prefix:
             prefix = os.path.basename(repo.root) + '-%h'
+
     prefix = cmdutil.make_filename(repo, prefix, node)
+    matchfn = cmdutil.match(repo, [], opts)
     archival.archive(repo, dest, node, kind, not opts.get('no_decode'),
                      matchfn, prefix)
 
@@ -1208,7 +1226,7 @@ def export(ui, repo, *changesets, **opts):
         ui.note(_('exporting patches:\n'))
     else:
         ui.note(_('exporting patch:\n'))
-    patch.export(repo, revs, template=opts.get('output'),
+    cmdutil.export(repo, revs, template=opts.get('output'),
                  switch_parent=opts.get('switch_parent'),
                  opts=patch.diffopts(ui, opts))
 
@@ -2578,7 +2596,7 @@ def resolve(ui, repo, *pats, **opts):
         raise util.Abort(_('no files or directories specified; '
                            'use --all to remerge all files'))
 
-    ms = merge_.mergestate(repo)
+    ms = mergemod.mergestate(repo)
     m = cmdutil.match(repo, pats, opts)
 
     for f in ms:
@@ -2868,6 +2886,10 @@ def serve(ui, repo, **opts):
     By default, the server logs accesses to stdout and errors to
     stderr. Use the -A/--accesslog and -E/--errorlog options to log to
     files.
+
+    To have the server choose a free port number to listen on, specify
+    a port number of 0; in this case, the server will print the port
+    number it uses.
     """
 
     if opts["stdio"]:
@@ -2877,25 +2899,35 @@ def serve(ui, repo, **opts):
         s = sshserver.sshserver(ui, repo)
         s.serve_forever()
 
+    # this way we can check if something was given in the command-line
+    if opts.get('port'):
+        opts['port'] = int(opts.get('port'))
+
     baseui = repo and repo.baseui or ui
     optlist = ("name templates style address port prefix ipv6"
-               " accesslog errorlog webdir_conf certificate encoding")
+               " accesslog errorlog certificate encoding")
     for o in optlist.split():
-        if opts.get(o, None):
-            baseui.setconfig("web", o, str(opts[o]))
-            if (repo is not None) and (repo.ui != baseui):
-                repo.ui.setconfig("web", o, str(opts[o]))
+        val = opts.get(o, '')
+        if val in (None, ''): # should check against default options instead
+            continue
+        baseui.setconfig("web", o, val)
+        if repo and repo.ui != baseui:
+            repo.ui.setconfig("web", o, val)
 
-    if repo is None and not ui.config("web", "webdir_conf"):
-        raise error.RepoError(_("There is no Mercurial repository here"
-                                " (.hg not found)"))
+    if opts.get('webdir_conf'):
+        app = hgwebdir_mod.hgwebdir(opts['webdir_conf'], ui)
+    elif repo is not None:
+        app = hgweb_mod.hgweb(hg.repository(repo.ui, repo.root))
+    else:
+        raise error.RepoError(_("There is no Mercurial repository"
+                                " here (.hg not found)"))
 
     class service(object):
         def init(self):
             util.set_signal_handler()
-            self.httpd = server.create_server(baseui, repo)
+            self.httpd = server.create_server(ui, app)
 
-            if not ui.verbose:
+            if opts['port'] and not ui.verbose:
                 return
 
             if self.httpd.prefix:
@@ -2916,8 +2948,12 @@ def serve(ui, repo, **opts):
             fqaddr = self.httpd.fqaddr
             if ':' in fqaddr:
                 fqaddr = '[%s]' % fqaddr
-            ui.status(_('listening at http://%s%s/%s (bound to %s:%d)\n') %
-                      (fqaddr, port, prefix, bindaddr, self.httpd.port))
+            if opts['port']:
+                write = ui.status
+            else:
+                write = ui.write
+            write(_('listening at http://%s%s/%s (bound to %s:%d)\n') %
+                  (fqaddr, port, prefix, bindaddr, self.httpd.port))
 
         def run(self):
             self.httpd.serve_forever()
@@ -3047,7 +3083,7 @@ def summary(ui, repo, **opts):
         ui.status(m)
 
     st = list(repo.status(unknown=True))[:6]
-    ms = merge_.mergestate(repo)
+    ms = mergemod.mergestate(repo)
     st.append([f for f in ms if ms[f] == 'u'])
     labels = [_('%d modified'), _('%d added'), _('%d removed'),
               _('%d deleted'), _('%d unknown'), _('%d ignored'),
@@ -3771,7 +3807,8 @@ table = {
           ('d', 'daemon', None, _('run server in background')),
           ('', 'daemon-pipefds', '', _('used internally by daemon mode')),
           ('E', 'errorlog', '', _('name of error log file to write to')),
-          ('p', 'port', 0, _('port to listen on (default: 8000)')),
+          # use string type, then we can check if something was passed
+          ('p', 'port', '', _('port to listen on (default: 8000')),
           ('a', 'address', '',
            _('address to listen on (default: all interfaces)')),
           ('', 'prefix', '',

@@ -1,6 +1,6 @@
 # keyword.py - $Keyword$ expansion for Mercurial
 #
-# Copyright 2007-2009 Christian Ebert <blacktrash@gmx.net>
+# Copyright 2007-2010 Christian Ebert <blacktrash@gmx.net>
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
@@ -79,7 +79,6 @@ like CVS' $Log$, are not supported. A keyword template map "Log =
 from mercurial import commands, cmdutil, dispatch, filelog, revlog, extensions
 from mercurial import patch, localrepo, templater, templatefilters, util, match
 from mercurial.hgweb import webcommands
-from mercurial.lock import release
 from mercurial.node import nullid
 from mercurial.i18n import _
 import re, shutil, tempfile
@@ -163,16 +162,13 @@ class kwtemplater(object):
         Caveat: localrepository._link fails on Windows.'''
         return self.match(path) and not 'l' in flagfunc(path)
 
-    def overwrite(self, node, expand, files):
+    def overwrite(self, node, expand, candidates):
         '''Overwrites selected files expanding/shrinking keywords.'''
         ctx = self.repo[node]
         mf = ctx.manifest()
         if node is not None:     # commit
-            files = [f for f in ctx.files() if f in mf]
-            notify = self.ui.debug
-        else:                    # kwexpand/kwshrink
-            notify = self.ui.note
-        candidates = [f for f in files if self.iskwfile(f, ctx.flags)]
+            candidates = [f for f in ctx.files() if f in mf]
+        candidates = [f for f in candidates if self.iskwfile(f, ctx.flags)]
         if candidates:
             self.restrict = True # do not expand when reading
             msg = (expand and _('overwriting %s expanding keywords\n')
@@ -190,7 +186,7 @@ class kwtemplater(object):
                 else:
                     found = self.re_kw.search(data)
                 if found:
-                    notify(msg % f)
+                    self.ui.note(msg % f)
                     self.repo.wwrite(f, data, mf.flags(f))
                     if node is None:
                         self.repo.dirstate.normal(f)
@@ -251,10 +247,8 @@ def _status(ui, repo, kwt, *pats, **opts):
     '''Bails out if [keyword] configuration is not active.
     Returns status of working directory.'''
     if kwt:
-        unknown = (opts.get('unknown') or opts.get('all')
-                   or opts.get('untracked'))
         return repo.status(match=cmdutil.match(repo, pats, opts), clean=True,
-                           unknown=unknown)
+                           unknown=opts.get('unknown') or opts.get('all'))
     if ui.configitems('keyword'):
         raise util.Abort(_('[keyword] patterns cannot match'))
     raise util.Abort(_('no [keyword] patterns configured'))
@@ -264,17 +258,15 @@ def _kwfwrite(ui, repo, expand, *pats, **opts):
     if repo.dirstate.parents()[1] != nullid:
         raise util.Abort(_('outstanding uncommitted merge'))
     kwt = kwtools['templater']
-    status = _status(ui, repo, kwt, *pats, **opts)
-    modified, added, removed, deleted = status[:4]
-    if modified or added or removed or deleted:
-        raise util.Abort(_('outstanding uncommitted changes'))
-    wlock = lock = None
+    wlock = repo.wlock()
     try:
-        wlock = repo.wlock()
-        lock = repo.lock()
-        kwt.overwrite(None, expand, status[6])
+        status = _status(ui, repo, kwt, *pats, **opts)
+        modified, added, removed, deleted, unknown, ignored, clean = status
+        if modified or added or removed or deleted:
+            raise util.Abort(_('outstanding uncommitted changes'))
+        kwt.overwrite(None, expand, clean)
     finally:
-        release(lock, wlock)
+        wlock.release()
 
 def demo(ui, repo, *args, **opts):
     '''print [keywordmaps] configuration and an expansion example
@@ -295,7 +287,6 @@ def demo(ui, repo, *args, **opts):
             ui.write('%s = %s\n' % (k, v))
 
     fn = 'demo.txt'
-    branchname = 'demobranch'
     tmpdir = tempfile.mkdtemp('', 'kwdemo.')
     ui.note(_('creating temporary repository at %s\n') % tmpdir)
     repo = localrepo.localrepository(ui, tmpdir, True)
@@ -331,35 +322,23 @@ def demo(ui, repo, *args, **opts):
 
     uisetup(ui)
     reposetup(ui, repo)
-    for k, v in ui.configitems('extensions'):
-        if k.endswith('keyword'):
-            extension = '%s = %s' % (k, v)
-            break
-    ui.write('[extensions]\n%s\n' % extension)
+    ui.write('[extensions]\nkeyword =\n')
     demoitems('keyword', ui.configitems('keyword'))
     demoitems('keywordmaps', kwmaps.iteritems())
     keywords = '$' + '$\n$'.join(sorted(kwmaps.keys())) + '$\n'
     repo.wopener(fn, 'w').write(keywords)
     repo.add([fn])
-    path = repo.wjoin(fn)
-    ui.note(_('\nkeywords written to %s:\n') % path)
+    ui.note(_('\nkeywords written to %s:\n') % fn)
     ui.note(keywords)
-    ui.note('\nhg -R "%s" branch "%s"\n' % (tmpdir, branchname))
-    # silence branch command if not verbose
-    quiet = ui.quiet
-    ui.quiet = not ui.verbose
-    commands.branch(ui, repo, branchname)
-    ui.quiet = quiet
+    repo.dirstate.setbranch('demobranch')
     for name, cmd in ui.configitems('hooks'):
         if name.split('.', 1)[0].find('commit') > -1:
             repo.ui.setconfig('hooks', name, '')
-    ui.note(_('unhooked all commit hooks\n'))
     msg = _('hg keyword configuration and expansion example')
-    ui.note("hg -R '%s' ci -m '%s'\n" % (tmpdir, msg))
+    ui.note("hg ci -m '%s'\n" % msg)
     repo.commit(text=msg)
     ui.status(_('\n\tkeywords expanded\n'))
     ui.write(repo.wread(fn))
-    ui.debug('\nremoving temporary repository %s\n' % tmpdir)
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 def expand(ui, repo, *pats, **opts):
@@ -398,7 +377,7 @@ def files(ui, repo, *pats, **opts):
     cwd = pats and repo.getcwd() or ''
     modified, added, removed, deleted, unknown, ignored, clean = status
     files = []
-    if not (opts.get('unknown') or opts.get('untracked')) or opts.get('all'):
+    if not opts.get('unknown') or opts.get('all'):
         files = sorted(modified + added + clean)
     wctx = repo[None]
     kwfiles = [f for f in files if kwt.iskwfile(f, wctx.flags)]
@@ -485,15 +464,10 @@ def reposetup(ui, repo):
                 del self.commitctx
 
         def kwcommitctx(self, ctx, error=False):
-            wlock = lock = None
-            try:
-                wlock = self.wlock()
-                lock = self.lock()
-                n = super(kwrepo, self).commitctx(ctx, error)
-                kwt.overwrite(n, True, None)
-                return n
-            finally:
-                release(lock, wlock)
+            n = super(kwrepo, self).commitctx(ctx, error)
+            # no lock needed, only called from repo.commit() which already locks
+            kwt.overwrite(n, True, None)
+            return n
 
     # monkeypatches
     def kwpatchfile_init(orig, self, ui, fname, opener,
@@ -540,9 +514,6 @@ cmdtable = {
          [('A', 'all', None, _('show keyword status flags of all files')),
           ('i', 'ignore', None, _('show files excluded from expansion')),
           ('u', 'unknown', None, _('only show unknown (not tracked) files')),
-          ('a', 'all', None,
-           _('show keyword status flags of all files (DEPRECATED)')),
-          ('u', 'untracked', None, _('only show untracked files (DEPRECATED)')),
          ] + commands.walkopts,
          _('hg kwfiles [OPTION]... [FILE]...')),
     'kwshrink': (shrink, commands.walkopts,
