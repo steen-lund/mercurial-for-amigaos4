@@ -293,6 +293,7 @@ def filterpatch(ui, chunks):
                     _('&Quit, recording no changes'),
                     _('&?'))
             r = ui.promptchoice("%s %s" % (query, resps), choices)
+            ui.write("\n")
             if r == 7: # ?
                 doc = gettext(record.__doc__)
                 c = doc.find(_('y - record this change'))
@@ -519,7 +520,18 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 os.rmdir(backupdir)
             except OSError:
                 pass
-    return cmdutil.commit(ui, repo, recordfunc, pats, opts)
+
+    # wrap ui.write so diff output can be labeled/colorized
+    def wrapwrite(orig, *args, **kw):
+        label = kw.pop('label', '')
+        for chunk, l in patch.difflabel(lambda: args):
+            orig(chunk, label=label + l)
+    oldwrite = ui.write
+    extensions.wrapfunction(ui, 'write', wrapwrite)
+    try:
+        return cmdutil.commit(ui, repo, recordfunc, pats, opts)
+    finally:
+        ui.write = oldwrite
 
 cmdtable = {
     "record":
