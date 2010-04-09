@@ -17,8 +17,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Mercurial\n"
 "Report-Msgid-Bugs-To: <mercurial-devel@selenic.com>\n"
-"POT-Creation-Date: 2010-04-04 23:48+0200\n"
-"PO-Revision-Date: 2010-04-05 01:09+0200\n"
+"POT-Creation-Date: 2010-04-05 01:22+0200\n"
+"PO-Revision-Date: 2010-04-05 01:37+0200\n"
 "Last-Translator:  <mg@lazybytes.net>\n"
 "Language-Team: Danish\n"
 "MIME-Version: 1.0\n"
@@ -425,9 +425,8 @@ msgstr "kommando til at vise statistikker om depotets historie"
 msgid "Revision %d is a merge, ignoring...\n"
 msgstr "Revision %d er en sammenføjning; ignorerer...\n"
 
-#, python-format
-msgid "generating stats: %d%%"
-msgstr "genererer statistik: %d%%"
+msgid "analyzing"
+msgstr ""
 
 msgid ""
 "histogram of changes to the repository\n"
@@ -524,11 +523,8 @@ msgstr "vil tilføjede/fjernede linier separat"
 msgid "file with email aliases"
 msgstr "fil med email-aliaser"
 
-msgid "show progress"
-msgstr "vis fremskridt"
-
-msgid "hg churn [-d DATE] [-r REV] [--aliases FILE] [--progress] [FILE]"
-msgstr "hg churn [-d DATO] [-r REV] [--aliases FIL] [--progress] [FIL]"
+msgid "hg churn [-d DATE] [-r REV] [--aliases FILE] [FILE]"
+msgstr "hg churn [-d DATO] [-r REV] [--aliases FIL] [FIL]"
 
 msgid ""
 "colorize output from some commands\n"
@@ -2168,9 +2164,6 @@ msgstr ""
 "\n"
 "nøgleord skrevet til %s:\n"
 
-msgid "unhooked all commit hooks\n"
-msgstr ""
-
 msgid "hg keyword configuration and expansion example"
 msgstr "eksempel på konfiguration og ekspansion af nøgleord"
 
@@ -2258,12 +2251,6 @@ msgstr "vis filer ekskluderet fra ekspansion"
 
 msgid "only show unknown (not tracked) files"
 msgstr "vis kun ukendte (ikke-fulgte) filer"
-
-msgid "show keyword status flags of all files (DEPRECATED)"
-msgstr "vis keyword status for alle filer (FORÆLDET)"
-
-msgid "only show untracked files (DEPRECATED)"
-msgstr "vis kun ikke-fulgte filer (FORÆLDET)"
 
 msgid "hg kwfiles [OPTION]... [FILE]..."
 msgstr "hg kwfiles [TILVALG]... [FIL]..."
@@ -4776,6 +4763,9 @@ msgstr "der er specificeret for mange revisioner"
 msgid "invalid format spec '%%%s' in output filename"
 msgstr "ugyldig formatspecifikation '%%%s' i output filnavn"
 
+msgid "searching"
+msgstr "søger"
+
 #, python-format
 msgid "adding %s\n"
 msgstr "tilføjer %s\n"
@@ -5103,8 +5093,10 @@ msgid ""
 "    By default, the revision used is the parent of the working\n"
 "    directory; use -r/--rev to specify a different revision.\n"
 "\n"
-"    To specify the type of archive to create, use -t/--type. Valid\n"
-"    types are:\n"
+"    The archive type is automatically detected based on file\n"
+"    extension (or override using -t/--type).\n"
+"\n"
+"    Valid types are:\n"
 "\n"
 "    :``files``: a directory full of files (default)\n"
 "    :``tar``:   tar archive, uncompressed\n"
@@ -6781,6 +6773,10 @@ msgid ""
 "    By default, the server logs accesses to stdout and errors to\n"
 "    stderr. Use the -A/--accesslog and -E/--errorlog options to log to\n"
 "    files.\n"
+"\n"
+"    To have the server choose a free port number to listen on, specify\n"
+"    a port number of 0; in this case, the server will print the port\n"
+"    number it uses.\n"
 "    "
 msgstr ""
 "eksporter depotet via HTTP\n"
@@ -6790,6 +6786,10 @@ msgstr ""
 "    Som standard logger serveren forespørgsler til stdout og fejl til\n"
 "    stderr. Brug -A/--accesslog og -E/--errorlog tilvalgene for at\n"
 "    logge til filer.\n"
+"\n"
+"    For at få serveren til at vælge et frit portnummer at lytte til,\n"
+"    angiv da portnummer 0; så vil serveren skrive det portnummer den\n"
+"    bruger.\n"
 "    "
 
 #, python-format
@@ -7739,7 +7739,7 @@ msgstr "navn på adgangslogfilen der skrives til"
 msgid "name of error log file to write to"
 msgstr "navn på fejlllog fil der skrives til"
 
-msgid "port to listen on (default: 8000)"
+msgid "port to listen on (default: 8000"
 msgstr "port der skal lyttes på (standard: 8000)"
 
 msgid "address to listen on (default: all interfaces)"
@@ -9156,9 +9156,6 @@ msgstr "leder efter ændringer\n"
 msgid "queries"
 msgstr ""
 
-msgid "searching"
-msgstr "søger"
-
 msgid "already have changeset "
 msgstr "har allerede ændringen "
 
@@ -9493,6 +9490,15 @@ msgstr "patch kommando fejlede: %s"
 msgid "Unsupported line endings type: %s"
 msgstr "Linieendelse %s understøttes ikke"
 
+msgid ""
+"internal patcher failed\n"
+"please report details to http://mercurial.selenic.com/bts/\n"
+"or mercurial@selenic.com\n"
+msgstr ""
+"intern lappe-funktionalitet fejlede\n"
+"angiv venligst fejldetaljer på http://mercurial.selenic.com/bts/\n"
+"eller mercurial@selenic.com\n"
+
 #, python-format
 msgid " %d files changed, %d insertions(+), %d deletions(-)\n"
 msgstr "%d filer ændret, %d indsættelser(+), %d sletninger(-)\n"
@@ -9640,8 +9646,8 @@ msgid "removing subrepo %s\n"
 msgstr "fjerner underdepot %s\n"
 
 #, python-format
-msgid "pulling subrepo %s\n"
-msgstr "hiver fra underdepot %s\n"
+msgid "pulling subrepo %s from %s\n"
+msgstr "hiver underdepot %s fra %s\n"
 
 #, python-format
 msgid "pushing subrepo %s\n"
