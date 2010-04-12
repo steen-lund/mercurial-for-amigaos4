@@ -1192,20 +1192,6 @@ def applydiff(ui, fp, changed, strip=1, sourcefile=None, eolmode='strict'):
         return -1
     return err
 
-def diffopts(ui, opts=None, untrusted=False):
-    def get(key, name=None, getter=ui.configbool):
-        return ((opts and opts.get(key)) or
-                getter('diff', name or key, None, untrusted=untrusted))
-    return mdiff.diffopts(
-        text=opts and opts.get('text'),
-        git=get('git'),
-        nodates=get('nodates'),
-        showfunc=get('show_function', 'showfunc'),
-        ignorews=get('ignore_all_space', 'ignorews'),
-        ignorewsamount=get('ignore_space_change', 'ignorewsamount'),
-        ignoreblanklines=get('ignore_blank_lines', 'ignoreblanklines'),
-        context=get('unified', getter=ui.config))
-
 def updatedir(ui, repo, patches, similarity=0):
     '''Update dirstate after patch application according to metadata'''
     if not patches:
@@ -1337,6 +1323,10 @@ def patch(patchname, ui, strip=1, cwd=None, files=None, eolmode='strict'):
             try:
                 return internalpatch(patchname, ui, strip, cwd, files, eolmode)
             except NoHunks:
+                ui.warn(_('internal patcher failed\n'
+                          'please report details to '
+                          'http://mercurial.selenic.com/bts/\n'
+                          'or mercurial@selenic.com\n'))
                 patcher = (util.find_exe('gpatch') or util.find_exe('patch')
                            or 'patch')
                 ui.debug('no valid hunks found; trying with %r instead\n' %
@@ -1392,6 +1382,20 @@ def b85diff(to, tn):
 
 class GitDiffRequired(Exception):
     pass
+
+def diffopts(ui, opts=None, untrusted=False):
+    def get(key, name=None, getter=ui.configbool):
+        return ((opts and opts.get(key)) or
+                getter('diff', name or key, None, untrusted=untrusted))
+    return mdiff.diffopts(
+        text=opts and opts.get('text'),
+        git=get('git'),
+        nodates=get('nodates'),
+        showfunc=get('show_function', 'showfunc'),
+        ignorews=get('ignore_all_space', 'ignorews'),
+        ignorewsamount=get('ignore_space_change', 'ignorewsamount'),
+        ignoreblanklines=get('ignore_blank_lines', 'ignoreblanklines'),
+        context=get('unified', getter=ui.config))
 
 def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None,
          losedatafn=None):
@@ -1464,6 +1468,43 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None,
             return difffn(opts.copy(git=True), None)
     else:
         return difffn(opts, None)
+
+def difflabel(func, *args, **kw):
+    '''yields 2-tuples of (output, label) based on the output of func()'''
+    prefixes = [('diff', 'diff.diffline'),
+                ('copy', 'diff.extended'),
+                ('rename', 'diff.extended'),
+                ('old', 'diff.extended'),
+                ('new', 'diff.extended'),
+                ('deleted', 'diff.extended'),
+                ('---', 'diff.file_a'),
+                ('+++', 'diff.file_b'),
+                ('@@', 'diff.hunk'),
+                ('-', 'diff.deleted'),
+                ('+', 'diff.inserted')]
+
+    for chunk in func(*args, **kw):
+        lines = chunk.split('\n')
+        for i, line in enumerate(lines):
+            if i != 0:
+                yield ('\n', '')
+            stripline = line
+            if line and line[0] in '+-':
+                # highlight trailing whitespace, but only in changed lines
+                stripline = line.rstrip()
+            for prefix, label in prefixes:
+                if stripline.startswith(prefix):
+                    yield (stripline, label)
+                    break
+            else:
+                yield (line, '')
+            if line != stripline:
+                yield (line[len(stripline):], 'diff.trailingwhitespace')
+
+def diffui(*args, **kw):
+    '''like diff(), but yields 2-tuples of (output, label) for ui.write()'''
+    return difflabel(diff, *args, **kw)
+
 
 def _addmodehdr(header, omode, nmode):
     if omode != nmode:
@@ -1568,47 +1609,6 @@ def trydiff(repo, revs, ctx1, ctx2, modified, added, removed,
             if text:
                 yield text
 
-def export(repo, revs, template='hg-%h.patch', fp=None, switch_parent=False,
-           opts=None):
-    '''export changesets as hg patches.'''
-
-    total = len(revs)
-    revwidth = max([len(str(rev)) for rev in revs])
-
-    def single(rev, seqno, fp):
-        ctx = repo[rev]
-        node = ctx.node()
-        parents = [p.node() for p in ctx.parents() if p]
-        branch = ctx.branch()
-        if switch_parent:
-            parents.reverse()
-        prev = (parents and parents[0]) or nullid
-
-        if not fp:
-            fp = cmdutil.make_file(repo, template, node, total=total,
-                                   seqno=seqno, revwidth=revwidth,
-                                   mode='ab')
-        if fp != sys.stdout and hasattr(fp, 'name'):
-            repo.ui.note("%s\n" % fp.name)
-
-        fp.write("# HG changeset patch\n")
-        fp.write("# User %s\n" % ctx.user())
-        fp.write("# Date %d %d\n" % ctx.date())
-        if branch and (branch != 'default'):
-            fp.write("# Branch %s\n" % branch)
-        fp.write("# Node ID %s\n" % hex(node))
-        fp.write("# Parent  %s\n" % hex(prev))
-        if len(parents) > 1:
-            fp.write("# Parent  %s\n" % hex(parents[1]))
-        fp.write(ctx.description().rstrip())
-        fp.write("\n\n")
-
-        for chunk in diff(repo, prev, node, opts=opts):
-            fp.write(chunk)
-
-    for seqno, rev in enumerate(revs):
-        single(rev, seqno + 1, fp)
-
 def diffstatdata(lines):
     filename, adds, removes = None, 0, 0
     for line in lines:
@@ -1676,3 +1676,22 @@ def diffstat(lines, width=80, git=False):
                       % (len(stats), totaladds, totalremoves))
 
     return ''.join(output)
+
+def diffstatui(*args, **kw):
+    '''like diffstat(), but yields 2-tuples of (output, label) for
+    ui.write()
+    '''
+
+    for line in diffstat(*args, **kw).splitlines():
+        if line and line[-1] in '+-':
+            name, graph = line.rsplit(' ', 1)
+            yield (name + ' ', '')
+            m = re.search(r'\++', graph)
+            if m:
+                yield (m.group(0), 'diffstat.inserted')
+            m = re.search(r'-+', graph)
+            if m:
+                yield (m.group(0), 'diffstat.deleted')
+        else:
+            yield (line, '')
+        yield ('\n', '')

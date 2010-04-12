@@ -11,9 +11,10 @@ import repo, changegroup, subrepo
 import changelog, dirstate, filelog, manifest, context
 import lock, transaction, store, encoding
 import util, extensions, hook, error
-import match as match_
-import merge as merge_
-import tags as tags_
+import match as matchmod
+import merge as mergemod
+import tags as tagsmod
+import url as urlmod
 from lock import release
 import weakref, stat, errno, os, time, inspect
 propertycache = util.propertycache
@@ -207,7 +208,7 @@ class localrepository(repo.repository):
         if '.hgtags' not in self.dirstate:
             self.add(['.hgtags'])
 
-        m = match_.exact(self.root, '', ['.hgtags'])
+        m = matchmod.exact(self.root, '', ['.hgtags'])
         tagnode = self.commit(message, user, date, extra=extra, match=m)
 
         for name in names:
@@ -268,8 +269,8 @@ class localrepository(repo.repository):
         alltags = {}                    # map tag name to (node, hist)
         tagtypes = {}
 
-        tags_.findglobaltags(self.ui, self, alltags, tagtypes)
-        tags_.readlocaltags(self.ui, self, alltags, tagtypes)
+        tagsmod.findglobaltags(self.ui, self, alltags, tagtypes)
+        tagsmod.readlocaltags(self.ui, self, alltags, tagtypes)
 
         # Build the return dicts.  Have to re-encode tag names because
         # the tags module always uses UTF-8 (in order not to lose info
@@ -503,7 +504,7 @@ class localrepository(repo.repository):
             for pat, cmd in self.ui.configitems(filter):
                 if cmd == '!':
                     continue
-                mf = match_.match(self.root, '', [pat])
+                mf = matchmod.match(self.root, '', [pat])
                 fn = None
                 params = cmd
                 for name, filterfn in self._datafilters.iteritems():
@@ -554,7 +555,7 @@ class localrepository(repo.repository):
     def wwritedata(self, filename, data):
         return self._filter("decode", filename, data)
 
-    def transaction(self):
+    def transaction(self, desc):
         tr = self._transref and self._transref() or None
         if tr and tr.running():
             return tr.nest()
@@ -571,10 +572,12 @@ class localrepository(repo.repository):
             ds = ""
         self.opener("journal.dirstate", "w").write(ds)
         self.opener("journal.branch", "w").write(self.dirstate.branch())
+        self.opener("journal.desc", "w").write("%d,%s" % (len(self), desc))
 
         renames = [(self.sjoin("journal"), self.sjoin("undo")),
                    (self.join("journal.dirstate"), self.join("undo.dirstate")),
-                   (self.join("journal.branch"), self.join("undo.branch"))]
+                   (self.join("journal.branch"), self.join("undo.branch")),
+                   (self.join("journal.desc"), self.join("undo.desc"))]
         tr = transaction.transaction(self.ui.warn, self.sopener,
                                      self.sjoin("journal"),
                                      aftertrans(renames),
@@ -597,13 +600,25 @@ class localrepository(repo.repository):
         finally:
             lock.release()
 
-    def rollback(self):
+    def rollback(self, dryrun=False):
         wlock = lock = None
         try:
             wlock = self.wlock()
             lock = self.lock()
             if os.path.exists(self.sjoin("undo")):
-                self.ui.status(_("rolling back last transaction\n"))
+                try:
+                    args = self.opener("undo.desc", "r").read().split(",")
+                    if len(args) == 3 and self.ui.verbose:
+                        desc = _("rolling back %s (%s) to revision %s\n") % (
+                                 args[1], args[2], args[0])
+                    else:
+                        desc = _("rolling back %s to revision %s\n") % (
+                                 args[1], args[0])
+                except (IOError, IndexError):
+                    desc = _("rolling back unknown transaction\n")
+                self.ui.status(desc)
+                if dryrun:
+                    return
                 transaction.rollback(self.sopener, self.sjoin("undo"),
                                      self.ui.warn)
                 util.rename(self.join("undo.dirstate"), self.join("dirstate"))
@@ -767,7 +782,7 @@ class localrepository(repo.repository):
             raise util.Abort('%s: %s' % (f, msg))
 
         if not match:
-            match = match_.always(self.root, '')
+            match = matchmod.always(self.root, '')
 
         if not force:
             vdirs = []
@@ -824,7 +839,7 @@ class localrepository(repo.repository):
                 and self[None].branch() == self['.'].branch()):
                 return None
 
-            ms = merge_.mergestate(self)
+            ms = mergemod.mergestate(self)
             for f in changes[0]:
                 if f in ms and ms[f] == 'u':
                     raise util.Abort(_("unresolved merge conflicts "
@@ -890,7 +905,7 @@ class localrepository(repo.repository):
 
         lock = self.lock()
         try:
-            tr = self.transaction()
+            tr = self.transaction("commit")
             trp = weakref.proxy(tr)
 
             # check in files
@@ -996,7 +1011,7 @@ class localrepository(repo.repository):
 
         working = ctx2.rev() is None
         parentworking = working and ctx1 == self['.']
-        match = match or match_.always(self.root, self.getcwd())
+        match = match or matchmod.always(self.root, self.getcwd())
         listignored, listclean, listunknown = ignored, clean, unknown
 
         # load earliest manifest first for caching reasons
@@ -1396,7 +1411,7 @@ class localrepository(repo.repository):
         self.ui.debug("found new changesets starting at " +
                      " ".join([short(f) for f in fetch]) + "\n")
 
-        self.ui.progress(_('searching'), None, unit=_('queries'))
+        self.ui.progress(_('searching'), None)
         self.ui.debug("%d total queries\n" % reqcnt)
 
         return base.keys(), list(fetch), heads
@@ -1500,8 +1515,13 @@ class localrepository(repo.repository):
         remote_heads = remote.heads()
         inc = self.findincoming(remote, common, remote_heads, force=force)
 
+        cl = self.changelog
         update, updated_heads = self.findoutgoing(remote, common, remote_heads)
-        msng_cl, bases, heads = self.changelog.nodesbetween(update, revs)
+        msng_cl, bases, heads = cl.nodesbetween(update, revs)
+
+        outgoingnodeset = set(msng_cl)
+        # compute set of nodes which, if they were a head before, no longer are
+        nolongeraheadnodeset = set(p for n in msng_cl for p in cl.parents(n))
 
         def checkbranch(lheads, rheads, branchname=None):
             '''
@@ -1511,33 +1531,10 @@ class localrepository(repo.repository):
             lheads: local branch heads
             rheads: remote branch heads
             '''
-
-            warn = 0
-
-            if len(lheads) > len(rheads):
-                warn = 1
-            else:
-                # add local heads involved in the push
-                updatelheads = [self.changelog.heads(x, lheads)
-                                for x in update]
-                newheads = set(sum(updatelheads, [])) & set(lheads)
-
-                if not newheads:
-                    return True
-
-                # add heads we don't have or that are not involved in the push
-                for r in rheads:
-                    if r in self.changelog.nodemap:
-                        desc = self.changelog.heads(r, heads)
-                        l = [h for h in heads if h in desc]
-                        if not l:
-                            newheads.add(r)
-                    else:
-                        newheads.add(r)
-                if len(newheads) > len(rheads):
-                    warn = 1
-
-            if warn:
+            newlheads = [n for n in lheads if n in outgoingnodeset]
+            formerrheads = [n for n in rheads if n in nolongeraheadnodeset]
+            if len(newlheads) > len(formerrheads):
+                # we add more new heads than we demote former heads to non-head
                 if branchname is not None:
                     msg = _("abort: push creates new remote heads"
                             " on branch '%s'!\n") % branchname
@@ -1601,7 +1598,7 @@ class localrepository(repo.repository):
 
         if revs is None:
             # use the fast path, no race possible on push
-            nodes = self.changelog.findmissing(common.keys())
+            nodes = cl.findmissing(common.keys())
             cg = self._changegroup(nodes, 'push')
         else:
             cg = self.changegroupsubset(update, revs, 'push')
@@ -1827,7 +1824,7 @@ class localrepository(repo.repository):
                 yield chnk
                 self.ui.progress(_('bundling changes'), cnt, unit=_('chunks'))
                 cnt += 1
-            self.ui.progress(_('bundling changes'), None, unit=_('chunks'))
+            self.ui.progress(_('bundling changes'), None)
 
 
             # Figure out which manifest nodes (of the ones we think might be
@@ -1855,7 +1852,7 @@ class localrepository(repo.repository):
                 yield chnk
                 self.ui.progress(_('bundling manifests'), cnt, unit=_('chunks'))
                 cnt += 1
-            self.ui.progress(_('bundling manifests'), None, unit=_('chunks'))
+            self.ui.progress(_('bundling manifests'), None)
 
             # These are no longer needed, dereference and toss the memory for
             # them.
@@ -1904,7 +1901,7 @@ class localrepository(repo.repository):
                     del msng_filenode_set[fname]
             # Signal that no more groups are left.
             yield changegroup.closechunk()
-            self.ui.progress(_('bundling files'), None, unit=_('chunks'))
+            self.ui.progress(_('bundling files'), None)
 
             if msng_cl_lst:
                 self.hook('outgoing', node=hex(msng_cl_lst[0]), source=source)
@@ -1956,7 +1953,7 @@ class localrepository(repo.repository):
                 self.ui.progress(_('bundling changes'), cnt, unit=_('chunks'))
                 cnt += 1
                 yield chnk
-            self.ui.progress(_('bundling changes'), None, unit=_('chunks'))
+            self.ui.progress(_('bundling changes'), None)
 
             mnfst = self.manifest
             nodeiter = gennodelst(mnfst)
@@ -1965,7 +1962,7 @@ class localrepository(repo.repository):
                 self.ui.progress(_('bundling manifests'), cnt, unit=_('chunks'))
                 cnt += 1
                 yield chnk
-            self.ui.progress(_('bundling manifests'), None, unit=_('chunks'))
+            self.ui.progress(_('bundling manifests'), None)
 
             cnt = 0
             for fname in sorted(changedfiles):
@@ -1983,7 +1980,7 @@ class localrepository(repo.repository):
                             _('bundling files'), cnt, item=fname, unit=_('chunks'))
                         cnt += 1
                         yield chnk
-            self.ui.progress(_('bundling files'), None, unit=_('chunks'))
+            self.ui.progress(_('bundling files'), None)
 
             yield changegroup.closechunk()
 
@@ -2021,7 +2018,7 @@ class localrepository(repo.repository):
         cl.delayupdate()
         oldheads = len(cl.heads())
 
-        tr = self.transaction()
+        tr = self.transaction(",".join([srctype, urlmod.hidepassword(url)]))
         try:
             trp = weakref.proxy(tr)
             # pull off the changeset group
