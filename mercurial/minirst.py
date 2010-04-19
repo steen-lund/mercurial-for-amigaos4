@@ -261,7 +261,7 @@ def addmargins(blocks):
     i = 1
     while i < len(blocks):
         if (blocks[i]['type'] == blocks[i - 1]['type'] and
-            blocks[i]['type'] in ('bullet', 'option', 'field', 'definition')):
+            blocks[i]['type'] in ('bullet', 'option', 'field')):
             i += 1
         else:
             blocks.insert(i, dict(lines=[''], indent=0, type='margin'))
@@ -289,7 +289,7 @@ def formatblock(block, width):
         return "%s\n%s" % (term, textwrap.fill(text, width=width,
                                                initial_indent=defindent,
                                                subsequent_indent=defindent))
-    initindent = subindent = indent
+    subindent = indent
     if block['type'] == 'bullet':
         if block['lines'][0].startswith('| '):
             # Remove bullet for line blocks and add no extra
@@ -321,7 +321,7 @@ def formatblock(block, width):
 
     text = ' '.join(map(str.strip, block['lines']))
     return textwrap.fill(text, width=width,
-                         initial_indent=initindent,
+                         initial_indent=indent,
                          subsequent_indent=subindent)
 
 

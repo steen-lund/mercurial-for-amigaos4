@@ -152,15 +152,22 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False, rename=No
             for bmark, n in marks.iteritems():
                 if ui.configbool('bookmarks', 'track.current'):
                     current = repo._bookmarkcurrent
-                    prefix = (bmark == current and n == cur) and '*' or ' '
+                    if bmark == current and n == cur:
+                        prefix, label = '*', 'bookmarks.current'
+                    else:
+                        prefix, label = ' ', ''
                 else:
-                    prefix = (n == cur) and '*' or ' '
+                    if n == cur:
+                        prefix, label = '*', 'bookmarks.current'
+                    else:
+                        prefix, label = ' ', ''
 
                 if ui.quiet:
-                    ui.write("%s\n" % bmark)
+                    ui.write("%s\n" % bmark, label=label)
                 else:
                     ui.write(" %s %-25s %d:%s\n" % (
-                        prefix, bmark, repo.changelog.rev(n), hexfn(n)))
+                        prefix, bmark, repo.changelog.rev(n), hexfn(n)),
+                        label=label)
         return
 
 def _revstostrip(changelog, node):
@@ -234,10 +241,10 @@ def reposetup(ui, repo):
                 file.close()
             return mark
 
-        def rollback(self):
+        def rollback(self, *args):
             if os.path.exists(self.join('undo.bookmarks')):
                 util.rename(self.join('undo.bookmarks'), self.join('bookmarks'))
-            return super(bookmark_repo, self).rollback()
+            return super(bookmark_repo, self).rollback(*args)
 
         def lookup(self, key):
             if key in self._bookmarks:
@@ -332,3 +339,5 @@ cmdtable = {
           ('m', 'rename', '', _('rename a given bookmark'))],
          _('hg bookmarks [-f] [-d] [-m NAME] [-r REV] [NAME]')),
 }
+
+colortable = {'bookmarks.current': 'green'}
