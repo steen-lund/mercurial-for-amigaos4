@@ -12,8 +12,8 @@ import os, re, sys, difflib, time, tempfile
 import hg, util, revlog, bundlerepo, extensions, copies, error
 import patch, help, mdiff, url, encoding, templatekw
 import archival, changegroup, cmdutil, sshserver, hbisect
-from hgweb import server
-import merge as merge_
+from hgweb import server, hgweb_mod, hgwebdir_mod
+import merge as mergemod
 import minirst
 
 # Commands start here, listed alphabetically
@@ -32,7 +32,7 @@ def add(ui, repo, *pats, **opts):
     .. container:: verbose
 
        An example showing how new (unknown) files are added
-       automatically by ``hg add``::
+       automatically by :hg:`add`::
 
          $ ls
          foo.c
@@ -158,8 +158,10 @@ def archive(ui, repo, dest, **opts):
     By default, the revision used is the parent of the working
     directory; use -r/--rev to specify a different revision.
 
-    To specify the type of archive to create, use -t/--type. Valid
-    types are:
+    The archive type is automatically detected based on file
+    extension (or override using -t/--type).
+
+    Valid types are:
 
     :``files``: a directory full of files (default)
     :``tar``:   tar archive, uncompressed
@@ -169,7 +171,7 @@ def archive(ui, repo, dest, **opts):
     :``zip``:   zip archive, compressed using deflate
 
     The exact name of the destination archive or directory is given
-    using a format string; see 'hg help export' for details.
+    using a format string; see :hg:`help export` for details.
 
     Each member added to an archive file has a directory prefix
     prepended. Use -p/--prefix to specify a format string for the
@@ -184,16 +186,32 @@ def archive(ui, repo, dest, **opts):
     dest = cmdutil.make_filename(repo, dest, node)
     if os.path.realpath(dest) == repo.root:
         raise util.Abort(_('repository root cannot be destination'))
-    matchfn = cmdutil.match(repo, [], opts)
-    kind = opts.get('type') or 'files'
+
+    def guess_type():
+        exttypes = {
+            'tar': ['.tar'],
+            'tbz2': ['.tbz2', '.tar.bz2'],
+            'tgz': ['.tgz', '.tar.gz'],
+            'zip': ['.zip'],
+        }
+
+        for type, extensions in exttypes.items():
+            if util.any(dest.endswith(ext) for ext in extensions):
+                return type
+        return None
+
+    kind = opts.get('type') or guess_type() or 'files'
     prefix = opts.get('prefix')
+
     if dest == '-':
         if kind == 'files':
             raise util.Abort(_('cannot archive plain files to stdout'))
         dest = sys.stdout
         if not prefix:
             prefix = os.path.basename(repo.root) + '-%h'
+
     prefix = cmdutil.make_filename(repo, prefix, node)
+    matchfn = cmdutil.match(repo, [], opts)
     archival.archive(repo, dest, node, kind, not opts.get('no_decode'),
                      matchfn, prefix)
 
@@ -212,7 +230,7 @@ def backout(ui, repo, node=None, rev=None, **opts):
     changeset afterwards. This saves you from doing the merge by hand.
     The result of this merge is not committed, as with a normal merge.
 
-    See 'hg help dates' for a list of formats valid for -d/--date.
+    See :hg:`help dates` for a list of formats valid for -d/--date.
     '''
     if rev and node:
         raise util.Abort(_("please specify just one revision"))
@@ -438,8 +456,8 @@ def branch(ui, repo, label=None, **opts):
     the parent of the working directory, negating a previous branch
     change.
 
-    Use the command 'hg update' to switch to an existing branch. Use
-    'hg commit --close-branch' to mark this branch as closed.
+    Use the command :hg:`update` to switch to an existing branch. Use
+    :hg:`commit --close-branch` to mark this branch as closed.
     """
 
     if opts.get('clean'):
@@ -467,7 +485,7 @@ def branches(ui, repo, active=False, closed=False):
     If -a/--active is specified, only show active branches. A branch
     is considered active if it contains repository heads.
 
-    Use the command 'hg update' to switch to an existing branch.
+    Use the command :hg:`update` to switch to an existing branch.
     """
 
     hexfunc = ui.debugflag and hex or short
@@ -619,11 +637,11 @@ def clone(ui, source, dest=None, **opts):
     The location of the source is added to the new repository's
     .hg/hgrc file, as the default to be used for future pulls.
 
-    See 'hg help urls' for valid source format details.
+    See :hg:`help urls` for valid source format details.
 
     It is possible to specify an ``ssh://`` URL as the destination, but no
     .hg/hgrc and working directory will be created on the remote side.
-    Please see 'hg help urls' for important details about ``ssh://`` URLs.
+    Please see :hg:`help urls` for important details about ``ssh://`` URLs.
 
     A set of changesets (tags, or branch names) to pull may be specified
     by listing each changeset (tag, or branch name) with -r/--rev.
@@ -687,7 +705,7 @@ def commit(ui, repo, *pats, **opts):
     centralized RCS, this operation is a local operation. See hg push
     for a way to actively distribute your changes.
 
-    If a list of files is omitted, all changes reported by "hg status"
+    If a list of files is omitted, all changes reported by :hg:`status`
     will be committed.
 
     If you are committing the result of a merge, do not provide any
@@ -696,7 +714,7 @@ def commit(ui, repo, *pats, **opts):
     If no commit message is specified, the configured editor is
     started to prompt you for a message.
 
-    See 'hg help dates' for a list of formats valid for -d/--date.
+    See :hg:`help dates` for a list of formats valid for -d/--date.
     """
     extra = {}
     if opts.get('close_branch'):
@@ -784,6 +802,8 @@ def debugcomplete(ui, cmd='', **opts):
             otables.append(entry[1])
         for t in otables:
             for o in t:
+                if "(DEPRECATED)" in o[3]:
+                    continue
                 if o[0]:
                     options.append('-%s' % o[0])
                 options.append('--%s' % o[1])
@@ -1131,7 +1151,7 @@ def diff(ui, repo, *pats, **opts):
     anyway, probably with undesirable results.
 
     Use the -g/--git option to generate diffs in the git extended diff
-    format. For more information, read 'hg help diffs'.
+    format. For more information, read :hg:`help diffs`.
     """
 
     revs = opts.get('rev')
@@ -1156,16 +1176,18 @@ def diff(ui, repo, *pats, **opts):
     diffopts = patch.diffopts(ui, opts)
 
     m = cmdutil.match(repo, pats, opts)
-    it = patch.diff(repo, node1, node2, match=m, opts=diffopts)
     if stat:
+        it = patch.diff(repo, node1, node2, match=m, opts=diffopts)
         width = 80
         if not ui.plain():
             width = util.termwidth()
-        ui.write(patch.diffstat(util.iterlines(it), width=width,
-                                git=diffopts.git))
+        for chunk, label in patch.diffstatui(util.iterlines(it), width=width,
+                                             git=diffopts.git):
+            ui.write(chunk, label=label)
     else:
-        for chunk in it:
-            ui.write(chunk)
+        it = patch.diffui(repo, node1, node2, match=m, opts=diffopts)
+        for chunk, label in it:
+            ui.write(chunk, label=label)
 
 def export(ui, repo, *changesets, **opts):
     """dump the header and diffs for one or more changesets
@@ -1197,7 +1219,7 @@ def export(ui, repo, *changesets, **opts):
     diff anyway, probably with undesirable results.
 
     Use the -g/--git option to generate diffs in the git extended diff
-    format. See 'hg help diffs' for more information.
+    format. See :hg:`help diffs` for more information.
 
     With the --switch-parent option, the diff will be against the
     second parent. It can be useful to review a merge.
@@ -1210,7 +1232,7 @@ def export(ui, repo, *changesets, **opts):
         ui.note(_('exporting patches:\n'))
     else:
         ui.note(_('exporting patch:\n'))
-    patch.export(repo, revs, template=opts.get('output'),
+    cmdutil.export(repo, revs, template=opts.get('output'),
                  switch_parent=opts.get('switch_parent'),
                  opts=patch.diffopts(ui, opts))
 
@@ -1337,6 +1359,7 @@ def grep(ui, repo, pattern, *pats, **opts):
             iter = [('', l) for l in states]
         for change, l in iter:
             cols = [fn, str(rev)]
+            before, match, after = None, None, None
             if opts.get('line_number'):
                 cols.append(str(l.linenum))
             if opts.get('all'):
@@ -1351,8 +1374,15 @@ def grep(ui, repo, pattern, *pats, **opts):
                     continue
                 filerevmatches[c] = 1
             else:
-                cols.append(l.line)
-            ui.write(sep.join(cols), eol)
+                before = l.line[:l.colstart]
+                match = l.line[l.colstart:l.colend]
+                after = l.line[l.colend:]
+            ui.write(sep.join(cols))
+            if before is not None:
+                ui.write(sep + before)
+                ui.write(match, label='grep.match')
+                ui.write(after)
+            ui.write(eol)
             found = True
         return found
 
@@ -1848,7 +1878,7 @@ def import_(ui, repo, patch1, *patches, **opts):
 
     To read a patch from standard input, use "-" as the patch name. If
     a URL is specified, the patch will be downloaded from it.
-    See 'hg help dates' for a list of formats valid for -d/--date.
+    See :hg:`help dates` for a list of formats valid for -d/--date.
     """
     patches = (patch1,) + patches
 
@@ -2051,7 +2081,7 @@ def init(ui, dest=".", **opts):
     If no directory is given, the current directory is used.
 
     It is possible to specify an ``ssh://`` URL as the destination.
-    See 'hg help urls' for more information.
+    See :hg:`help urls` for more information.
     """
     hg.repository(cmdutil.remoteui(ui, opts), dest, create=1)
 
@@ -2106,7 +2136,7 @@ def log(ui, repo, *pats, **opts):
     --follow is set, in which case the working directory parent is
     used as the starting revision.
 
-    See 'hg help dates' for a list of formats valid for -d/--date.
+    See :hg:`help dates` for a list of formats valid for -d/--date.
 
     By default this command prints revision number and changeset id,
     tags, non-trivial parents, user, date and time, and a summary for
@@ -2131,6 +2161,9 @@ def log(ui, repo, *pats, **opts):
     if opts["date"]:
         df = util.matchdate(opts["date"])
 
+    branches = opts.get('branch', []) + opts.get('only_branch', [])
+    opts['branch'] = [repo.lookupbranch(b) for b in branches]
+
     displayer = cmdutil.show_changeset(ui, repo, opts, True, matchfn)
     def prep(ctx, fns):
         rev = ctx.rev()
@@ -2140,7 +2173,7 @@ def log(ui, repo, *pats, **opts):
             return
         if opts.get('only_merges') and len(parents) != 2:
             return
-        if opts.get('only_branch') and ctx.branch() not in opts['only_branch']:
+        if opts.get('branch') and ctx.branch() not in opts['branch']:
             return
         if df and not df(ctx.date()[0]):
             return
@@ -2354,7 +2387,7 @@ def paths(ui, repo, search=None):
     unless a location is specified. When cloning a repository, the
     clone source is written as 'default' in .hg/hgrc.
 
-    See 'hg help urls' for more information.
+    See :hg:`help urls` for more information.
     """
     if search:
         for name, path in ui.configitems("paths"):
@@ -2396,7 +2429,7 @@ def pull(ui, repo, source="default", **opts):
     where X is the last changeset listed by hg incoming.
 
     If SOURCE is omitted, the 'default' path will be used.
-    See 'hg help urls' for more information.
+    See :hg:`help urls` for more information.
     """
     source, branches = hg.parseurl(ui.expandpath(source), opts.get('branch'))
     other = hg.repository(cmdutil.remoteui(repo, opts), source)
@@ -2432,7 +2465,7 @@ def push(ui, repo, dest=None, **opts):
     If -r/--rev is used, the named revision and all its ancestors will
     be pushed to the remote repository.
 
-    Please see 'hg help urls' for important details about ``ssh://``
+    Please see :hg:`help urls` for important details about ``ssh://``
     URLs. If DESTINATION is omitted, a default path will be used.
     """
     dest = ui.expandpath(dest or 'default-push', dest or 'default')
@@ -2585,7 +2618,7 @@ def resolve(ui, repo, *pats, **opts):
         raise util.Abort(_('no files or directories specified; '
                            'use --all to remerge all files'))
 
-    ms = merge_.mergestate(repo)
+    ms = mergemod.mergestate(repo)
     m = cmdutil.match(repo, pats, opts)
 
     for f in ms:
@@ -2594,7 +2627,9 @@ def resolve(ui, repo, *pats, **opts):
                 if nostatus:
                     ui.write("%s\n" % f)
                 else:
-                    ui.write("%s %s\n" % (ms[f].upper(), f))
+                    ui.write("%s %s\n" % (ms[f].upper(), f),
+                             label='resolve.' +
+                             {'u': 'unresolved', 'r': 'resolved'}[ms[f]])
             elif mark:
                 ms.mark(f, "r")
             elif unmark:
@@ -2628,8 +2663,8 @@ def revert(ui, repo, *pats, **opts):
 
     Using the -r/--rev option, revert the given files or directories
     to their contents as of a specific revision. This can be helpful
-    to "roll back" some or all of an earlier change. See 'hg help
-    dates' for a list of formats valid for -d/--date.
+    to "roll back" some or all of an earlier change. See :hg:`help
+    dates` for a list of formats valid for -d/--date.
 
     Revert modifies the working directory. It does not commit any
     changes, or change the parent of the working directory. If you
@@ -2831,8 +2866,8 @@ def revert(ui, repo, *pats, **opts):
     finally:
         wlock.release()
 
-def rollback(ui, repo):
-    """roll back the last transaction
+def rollback(ui, repo, **opts):
+    """roll back the last transaction (dangerous)
 
     This command should be used with care. There is only one level of
     rollback, and there is no way to undo a rollback. It will also
@@ -2858,7 +2893,7 @@ def rollback(ui, repo):
     repository; for example an in-progress pull from the repository
     may fail if a rollback is performed.
     """
-    repo.rollback()
+    repo.rollback(opts.get('dry_run'))
 
 def root(ui, repo):
     """print the root (top) of the current working directory
@@ -2868,13 +2903,17 @@ def root(ui, repo):
     ui.write(repo.root + "\n")
 
 def serve(ui, repo, **opts):
-    """export the repository via HTTP
+    """start stand-alone webserver
 
     Start a local HTTP repository browser and pull server.
 
     By default, the server logs accesses to stdout and errors to
     stderr. Use the -A/--accesslog and -E/--errorlog options to log to
     files.
+
+    To have the server choose a free port number to listen on, specify
+    a port number of 0; in this case, the server will print the port
+    number it uses.
     """
 
     if opts["stdio"]:
@@ -2884,25 +2923,35 @@ def serve(ui, repo, **opts):
         s = sshserver.sshserver(ui, repo)
         s.serve_forever()
 
+    # this way we can check if something was given in the command-line
+    if opts.get('port'):
+        opts['port'] = int(opts.get('port'))
+
     baseui = repo and repo.baseui or ui
     optlist = ("name templates style address port prefix ipv6"
-               " accesslog errorlog webdir_conf certificate encoding")
+               " accesslog errorlog certificate encoding")
     for o in optlist.split():
-        if opts.get(o, None):
-            baseui.setconfig("web", o, str(opts[o]))
-            if (repo is not None) and (repo.ui != baseui):
-                repo.ui.setconfig("web", o, str(opts[o]))
+        val = opts.get(o, '')
+        if val in (None, ''): # should check against default options instead
+            continue
+        baseui.setconfig("web", o, val)
+        if repo and repo.ui != baseui:
+            repo.ui.setconfig("web", o, val)
 
-    if repo is None and not ui.config("web", "webdir_conf"):
-        raise error.RepoError(_("There is no Mercurial repository here"
-                                " (.hg not found)"))
+    if opts.get('webdir_conf'):
+        app = hgwebdir_mod.hgwebdir(opts['webdir_conf'], ui)
+    elif repo is not None:
+        app = hgweb_mod.hgweb(hg.repository(repo.ui, repo.root))
+    else:
+        raise error.RepoError(_("There is no Mercurial repository"
+                                " here (.hg not found)"))
 
     class service(object):
         def init(self):
             util.set_signal_handler()
-            self.httpd = server.create_server(baseui, repo)
+            self.httpd = server.create_server(ui, app)
 
-            if not ui.verbose:
+            if opts['port'] and not ui.verbose:
                 return
 
             if self.httpd.prefix:
@@ -2923,8 +2972,12 @@ def serve(ui, repo, **opts):
             fqaddr = self.httpd.fqaddr
             if ':' in fqaddr:
                 fqaddr = '[%s]' % fqaddr
-            ui.status(_('listening at http://%s%s/%s (bound to %s:%d)\n') %
-                      (fqaddr, port, prefix, bindaddr, self.httpd.port))
+            if opts['port']:
+                write = ui.status
+            else:
+                write = ui.write
+            write(_('listening at http://%s%s/%s (bound to %s:%d)\n') %
+                  (fqaddr, port, prefix, bindaddr, self.httpd.port))
 
         def run(self):
             self.httpd.serve_forever()
@@ -3015,9 +3068,11 @@ def status(ui, repo, *pats, **opts):
                 format = "%%s%s" % end
 
             for f in files:
-                ui.write(format % repo.pathto(f, cwd))
+                ui.write(format % repo.pathto(f, cwd),
+                         label='status.' + state)
                 if f in copy:
-                    ui.write('  %s%s' % (repo.pathto(copy[f], cwd), end))
+                    ui.write('  %s%s' % (repo.pathto(copy[f], cwd), end),
+                             label='status.copied')
 
 def summary(ui, repo, **opts):
     """summarize working directory state
@@ -3032,33 +3087,41 @@ def summary(ui, repo, **opts):
     ctx = repo[None]
     parents = ctx.parents()
     pnode = parents[0].node()
-    tags = repo.tags()
 
     for p in parents:
-        t = ' '.join([t for t in tags if tags[t] == p.node()])
+        # label with log.changeset (instead of log.parent) since this
+        # shows a working directory parent *changeset*:
+        ui.write(_('parent: %d:%s ') % (p.rev(), str(p)),
+                 label='log.changeset')
+        ui.write(' '.join(p.tags()), label='log.tag')
         if p.rev() == -1:
             if not len(repo):
-                t += _(' (empty repository)')
+                ui.write(_(' (empty repository)'))
             else:
-                t += _(' (no revision checked out)')
-        ui.write(_('parent: %d:%s %s\n') % (p.rev(), str(p), t))
+                ui.write(_(' (no revision checked out)'))
+        ui.write('\n')
         if p.description():
-            ui.status(' ' + p.description().splitlines()[0].strip() + '\n')
+            ui.status(' ' + p.description().splitlines()[0].strip() + '\n',
+                      label='log.summary')
 
     branch = ctx.branch()
     bheads = repo.branchheads(branch)
     m = _('branch: %s\n') % branch
     if branch != 'default':
-        ui.write(m)
+        ui.write(m, label='log.branch')
     else:
-        ui.status(m)
+        ui.status(m, label='log.branch')
 
     st = list(repo.status(unknown=True))[:6]
-    ms = merge_.mergestate(repo)
+    ms = mergemod.mergestate(repo)
     st.append([f for f in ms if ms[f] == 'u'])
-    labels = [_('%d modified'), _('%d added'), _('%d removed'),
-              _('%d deleted'), _('%d unknown'), _('%d ignored'),
-              _('%d unresolved')]
+    labels = [ui.label(_('%d modified'), 'status.modified'),
+              ui.label(_('%d added'), 'status.added'),
+              ui.label(_('%d removed'), 'status.removed'),
+              ui.label(_('%d deleted'), 'status.deleted'),
+              ui.label(_('%d unknown'), 'status.unknown'),
+              ui.label(_('%d ignored'), 'status.ignored'),
+              ui.label(_('%d unresolved'), 'resolve.unresolved')]
     t = []
     for s, l in zip(st, labels):
         if s:
@@ -3150,7 +3213,7 @@ def tag(ui, repo, name1, *names, **opts):
     necessary. The file '.hg/localtags' is used for local tags (not
     shared among repositories).
 
-    See 'hg help dates' for a list of formats valid for -d/--date.
+    See :hg:`help dates` for a list of formats valid for -d/--date.
     """
 
     rev_ = "."
@@ -3265,7 +3328,7 @@ def unbundle(ui, repo, fname1, *fnames, **opts):
     return postincoming(ui, repo, modheads, opts.get('update'), None)
 
 def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
-    """update working directory
+    """update working directory (or switch revisions)
 
     Update the repository's working directory to the specified
     changeset.
@@ -3292,12 +3355,12 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
     3. With the -C/--clean option, uncommitted changes are discarded and
        the working directory is updated to the requested changeset.
 
-    Use null as the changeset to remove the working directory (like 'hg
-    clone -U').
+    Use null as the changeset to remove the working directory (like
+    :hg:`clone -U`).
 
-    If you want to update just one file to an older changeset, use 'hg revert'.
+    If you want to update just one file to an older changeset, use :hg:`revert`.
 
-    See 'hg help dates' for a list of formats valid for -d/--date.
+    See :hg:`help dates` for a list of formats valid for -d/--date.
     """
     if rev and node:
         raise util.Abort(_("please specify just one revision"))
@@ -3683,8 +3746,10 @@ table = {
           ('', 'removed', None, _('include revisions where files were removed')),
           ('m', 'only-merges', None, _('show only merges')),
           ('u', 'user', [], _('revisions committed by user')),
-          ('b', 'only-branch', [],
-            _('show only changesets within the given named branch')),
+          ('', 'only-branch', [],
+            _('show only changesets within the given named branch (DEPRECATED)')),
+          ('b', 'branch', [],
+            _('show changesets within the given named branch')),
           ('P', 'prune', [],
            _('do not display revision or any of its ancestors')),
          ] + logopts + walkopts,
@@ -3770,7 +3835,7 @@ table = {
           ('', 'no-backup', None, _('do not save backup copies of files')),
          ] + walkopts + dryrunopts,
          _('[OPTION]... [-r REV] [NAME]...')),
-    "rollback": (rollback, []),
+    "rollback": (rollback, dryrunopts),
     "root": (root, []),
     "^serve":
         (serve,
@@ -3778,7 +3843,8 @@ table = {
           ('d', 'daemon', None, _('run server in background')),
           ('', 'daemon-pipefds', '', _('used internally by daemon mode')),
           ('E', 'errorlog', '', _('name of error log file to write to')),
-          ('p', 'port', 0, _('port to listen on (default: 8000)')),
+          # use string type, then we can check if something was passed
+          ('p', 'port', '', _('port to listen on (default: 8000)')),
           ('a', 'address', '',
            _('address to listen on (default: all interfaces)')),
           ('', 'prefix', '',
