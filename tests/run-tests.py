@@ -46,9 +46,8 @@ import difflib
 import errno
 import optparse
 import os
-import signal
-import subprocess
 import shutil
+import subprocess
 import signal
 import sys
 import tempfile
@@ -70,6 +69,9 @@ SKIPPED_STATUS = 80
 SKIPPED_PREFIX = 'skipped: '
 FAILED_PREFIX  = 'hghave check failed: '
 PYTHON = sys.executable
+IMPL_PATH = 'PYTHONPATH'
+if 'java' in sys.platform:
+    IMPL_PATH = 'JYTHONPATH'
 
 requiredtools = ["python", "diff", "grep", "unzip", "gunzip", "bunzip2", "sed"]
 
@@ -139,6 +141,10 @@ def parseargs():
         defaults[option] = int(os.environ.get(*default))
     parser.set_defaults(**defaults)
     (options, args) = parser.parse_args()
+
+    # jython is always pure
+    if 'java' in sys.platform or '__pypy__' in sys.modules:
+        options.pure = True
 
     if options.with_hg:
         if not (os.path.isfile(options.with_hg) and
@@ -843,6 +849,7 @@ def main():
     os.environ["EMAIL"] = "Foo Bar <foo.bar@example.com>"
     os.environ['CDPATH'] = ''
     os.environ['COLUMNS'] = '80'
+    os.environ['GREP_OPTIONS'] = ''
     os.environ['http_proxy'] = ''
 
     # unset env related to hooks
@@ -914,10 +921,10 @@ def main():
         # it, in case external libraries are only available via current
         # PYTHONPATH.  (In particular, the Subversion bindings on OS X
         # are in /opt/subversion.)
-        oldpypath = os.environ.get('PYTHONPATH')
+        oldpypath = os.environ.get(IMPL_PATH)
         if oldpypath:
             pypath.append(oldpypath)
-        os.environ['PYTHONPATH'] = os.pathsep.join(pypath)
+        os.environ[IMPL_PATH] = os.pathsep.join(pypath)
 
     COVERAGE_FILE = os.path.join(TESTDIR, ".coverage")
 
@@ -938,7 +945,7 @@ def main():
     vlog("# Using TESTDIR", TESTDIR)
     vlog("# Using HGTMP", HGTMP)
     vlog("# Using PATH", os.environ["PATH"])
-    vlog("# Using PYTHONPATH", os.environ["PYTHONPATH"])
+    vlog("# Using", IMPL_PATH, os.environ[IMPL_PATH])
 
     try:
         if len(tests) > 1 and options.jobs > 1:
