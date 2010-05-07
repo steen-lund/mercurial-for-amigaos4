@@ -7,7 +7,7 @@
 
 from node import nullid, nullrev, short, hex
 from i18n import _
-import ancestor, bdiff, error, util, subrepo
+import ancestor, bdiff, error, util, subrepo, patch
 import os, errno
 
 propertycache = util.propertycache
@@ -203,6 +203,14 @@ class changectx(object):
 
     def sub(self, path):
         return subrepo.subrepo(self, path)
+
+    def diff(self, ctx2=None, match=None):
+        """Returns a diff generator for the given contexts and matcher"""
+        if ctx2 is None:
+            ctx2 = self.p1()
+        if ctx2 is not None and not isinstance(ctx2, changectx):
+            ctx2 = self._repo[ctx2]
+        return patch.diff(self._repo, ctx2.node(), self.node(), match=match)
 
 class filectx(object):
     """A filecontext object makes access to data related to a particular
@@ -539,15 +547,14 @@ class filectx(object):
 class workingctx(changectx):
     """A workingctx object makes access to data related to
     the current working directory convenient.
-    parents - a pair of parent nodeids, or None to use the dirstate.
     date - any valid date string or (unixtime, offset), or None.
     user - username string, or None.
     extra - a dictionary of extra values, or None.
     changes - a list of file lists as returned by localrepo.status()
                or None to use the repository status.
     """
-    def __init__(self, repo, parents=None, text="", user=None, date=None,
-                 extra=None, changes=None):
+    def __init__(self, repo, text="", user=None, date=None, extra=None,
+                 changes=None):
         self._repo = repo
         self._rev = None
         self._node = None
@@ -556,10 +563,15 @@ class workingctx(changectx):
             self._date = util.parsedate(date)
         if user:
             self._user = user
-        if parents:
-            self._parents = [changectx(self._repo, p) for p in parents]
         if changes:
-            self._status = list(changes)
+            self._status = list(changes[:4])
+            self._unknown = changes[4]
+            self._ignored = changes[5]
+            self._clean = changes[6]
+        else:
+            self._unknown = None
+            self._ignored = None
+            self._clean = None
 
         self._extra = {}
         if extra:
@@ -587,6 +599,9 @@ class workingctx(changectx):
     def _manifest(self):
         """generate a manifest corresponding to the working directory"""
 
+        if self._unknown is None:
+            self.status(unknown=True)
+
         man = self._parents[0].manifest().copy()
         copied = self._repo.dirstate.copies()
         if len(self._parents) > 1:
@@ -601,7 +616,8 @@ class workingctx(changectx):
             f = copied.get(f, f)
             return getman(f).flags(f)
         ff = self._repo.dirstate.flagfunc(cf)
-        modified, added, removed, deleted, unknown = self._status[:5]
+        modified, added, removed, deleted = self._status
+        unknown = self._unknown
         for i, l in (("a", added), ("m", modified), ("u", unknown)):
             for f in l:
                 orig = copied.get(f, f)
@@ -619,7 +635,7 @@ class workingctx(changectx):
 
     @propertycache
     def _status(self):
-        return self._repo.status(unknown=True)
+        return self._repo.status()[:4]
 
     @propertycache
     def _user(self):
@@ -636,6 +652,22 @@ class workingctx(changectx):
             p = p[:-1]
         self._parents = [changectx(self._repo, x) for x in p]
         return self._parents
+
+    def status(self, ignored=False, clean=False, unknown=False):
+        """Explicit status query
+        Unless this method is used to query the working copy status, the
+        _status property will implicitly read the status using its default
+        arguments."""
+        stat = self._repo.status(ignored=ignored, clean=clean, unknown=unknown)
+        self._unknown = self._ignored = self._clean = None
+        if unknown:
+            self._unknown = stat[4]
+        if ignored:
+            self._ignored = stat[5]
+        if clean:
+            self._clean = stat[6]
+        self._status = stat[:4]
+        return stat
 
     def manifest(self):
         return self._manifest
@@ -657,9 +689,14 @@ class workingctx(changectx):
     def deleted(self):
         return self._status[3]
     def unknown(self):
-        return self._status[4]
+        assert self._unknown is not None  # must call status first
+        return self._unknown
+    def ignored(self):
+        assert self._ignored is not None  # must call status first
+        return self._ignored
     def clean(self):
-        return self._status[5]
+        assert self._clean is not None  # must call status first
+        return self._clean
     def branch(self):
         return self._extra['branch']
     def extra(self):
@@ -873,8 +910,10 @@ class memctx(object):
         return self._status[3]
     def unknown(self):
         return self._status[4]
-    def clean(self):
+    def ignored(self):
         return self._status[5]
+    def clean(self):
+        return self._status[6]
     def branch(self):
         return self._extra['branch']
     def extra(self):
