@@ -151,8 +151,10 @@ popping test2.patch
 now at: test.patch
 0 A test.patch: foo bar
 1 U test2.patch: 
+mq:     1 applied, 1 unapplied
 applying test2.patch
 now at: test2.patch
+mq:     2 applied
 % qapplied
 test.patch
 test2.patch
@@ -191,6 +193,32 @@ now at: test1b.patch
 popping test1b.patch
 now at: test.patch
 applying test1b.patch
+applying test2.patch
+now at: test2.patch
+% qpush --move
+popping test2.patch
+popping test1b.patch
+popping test.patch
+patch queue now empty
+applying test2.patch
+now at: test2.patch
+applying test1b.patch
+now at: test1b.patch
+applying test.patch
+now at: test.patch
+0 A test2.patch
+1 A test1b.patch
+2 A test.patch
+popping test.patch
+popping test1b.patch
+popping test2.patch
+patch queue now empty
+applying test.patch
+now at: test.patch
+applying test1b.patch
+now at: test1b.patch
+abort: patch bogus not in series
+abort: cannot push to a previous patch: test.patch
 applying test2.patch
 now at: test2.patch
 % pop, qapplied, qunapplied
@@ -357,8 +385,8 @@ errors during apply, please fix and refresh bar
 ? foo.rej
 % mq tags
 0 qparent
-1 qbase foo
-2 qtip bar tip
+1 foo qbase
+2 bar qtip tip
 % bad node in status
 popping bar
 now at: foo
@@ -577,10 +605,10 @@ diff -r 9ecee4f634e3 hello.txt
  hello
 +world
 changeset:   1:bf5fc3f07a0a
-tag:         qtip
-tag:         tip
 tag:         empty
 tag:         qbase
+tag:         qtip
+tag:         tip
 user:        test
 date:        Thu Jan 01 00:00:00 1970 +0000
 summary:     imported patch empty
