@@ -36,6 +36,13 @@ def _fastsha1(s):
     _fastsha1 = sha1 = _sha1
     return _sha1(s)
 
+import __builtin__
+
+def fakebuffer(sliceable, offset=0):
+    return sliceable[offset:]
+if not hasattr(__builtin__, 'buffer'):
+    __builtin__.buffer = fakebuffer
+
 import subprocess
 closefds = os.name == 'posix'
 
@@ -765,7 +772,7 @@ class atomictempfile(object):
     file.  When rename is called, the copy is renamed to the original
     name, making the changes visible.
     """
-    def __init__(self, name, mode, createmode):
+    def __init__(self, name, mode='w+b', createmode=None):
         self.__name = name
         self._fp = None
         self.temp = mktempcopy(name, emptyok=('w' in mode),
