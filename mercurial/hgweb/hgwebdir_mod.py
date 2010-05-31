@@ -56,21 +56,33 @@ class hgwebdir(object):
             return
 
         if self.baseui:
-            self.ui = self.baseui.copy()
+            u = self.baseui.copy()
         else:
-            self.ui = ui.ui()
-            self.ui.setconfig('ui', 'report_untrusted', 'off')
-            self.ui.setconfig('ui', 'interactive', 'off')
+            u = ui.ui()
+            u.setconfig('ui', 'report_untrusted', 'off')
+            u.setconfig('ui', 'interactive', 'off')
 
         if not isinstance(self.conf, (dict, list, tuple)):
             map = {'paths': 'hgweb-paths'}
-            self.ui.readconfig(self.conf, remap=map, trust=True)
-            paths = self.ui.configitems('hgweb-paths')
+            u.readconfig(self.conf, remap=map, trust=True)
+            paths = u.configitems('hgweb-paths')
         elif isinstance(self.conf, (list, tuple)):
             paths = self.conf
         elif isinstance(self.conf, dict):
             paths = self.conf.items()
 
+        repos = findrepos(paths)
+        for prefix, root in u.configitems('collections'):
+            prefix = util.pconvert(prefix)
+            for path in util.walkrepos(root, followsym=True):
+                repo = os.path.normpath(path)
+                name = util.pconvert(repo)
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                repos.append((name.lstrip('/'), repo))
+
+        self.repos = repos
+        self.ui = u
         encoding.encoding = self.ui.config('web', 'encoding',
                                            encoding.encoding)
         self.style = self.ui.config('web', 'style', 'paper')
@@ -78,17 +90,6 @@ class hgwebdir(object):
         if self.stripecount:
             self.stripecount = int(self.stripecount)
         self._baseurl = self.ui.config('web', 'baseurl')
-
-        self.repos = findrepos(paths)
-        for prefix, root in self.ui.configitems('collections'):
-            prefix = util.pconvert(prefix)
-            for path in util.walkrepos(root, followsym=True):
-                repo = os.path.normpath(path)
-                name = util.pconvert(repo)
-                if name.startswith(prefix):
-                    name = name[len(prefix):]
-                self.repos.append((name.lstrip('/'), repo))
-
         self.lastrefresh = time.time()
 
     def run(self):
@@ -195,11 +196,8 @@ class hgwebdir(object):
                     yield {"type" : i[0], "extension": i[1],
                            "node": nodeid, "url": url}
 
-        sortdefault = None, False
-        def entries(sortcolumn="", descending=False, subdir="", **map):
+        def rawentries(subdir="", **map):
 
-            rows = []
-            parity = paritygen(self.stripecount)
             descend = self.ui.configbool('web', 'descend', True)
             for name, path in self.repos:
 
@@ -251,19 +249,19 @@ class hgwebdir(object):
                            lastchange=d,
                            lastchange_sort=d[1]-d[0],
                            archives=archivelist(u, "tip", url))
-                if (not sortcolumn or (sortcolumn, descending) == sortdefault):
-                    # fast path for unsorted output
-                    row['parity'] = parity.next()
-                    yield row
-                else:
-                    rows.append((row["%s_sort" % sortcolumn], row))
-            if rows:
-                rows.sort()
-                if descending:
-                    rows.reverse()
-                for key, row in rows:
-                    row['parity'] = parity.next()
-                    yield row
+                yield row
+
+        sortdefault = None, False
+        def entries(sortcolumn="", descending=False, subdir="", **map):
+            rows = rawentries(subdir=subdir, **map)
+
+            if sortcolumn and sortdefault != (sortcolumn, descending):
+                sortkey = '%s_sort' % sortcolumn
+                rows = sorted(rows, key=lambda x: x[sortkey],
+                              reverse=descending)
+            for row, parity in zip(rows, paritygen(self.stripecount)):
+                row['parity'] = parity
+                yield row
 
         self.refresh()
         sortable = ["name", "description", "contact", "lastchange"]

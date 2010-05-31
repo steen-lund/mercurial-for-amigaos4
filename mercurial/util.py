@@ -36,6 +36,13 @@ def _fastsha1(s):
     _fastsha1 = sha1 = _sha1
     return _sha1(s)
 
+import __builtin__
+
+def fakebuffer(sliceable, offset=0):
+    return sliceable[offset:]
+if not hasattr(__builtin__, 'buffer'):
+    __builtin__.buffer = fakebuffer
+
 import subprocess
 closefds = os.name == 'posix'
 
@@ -451,7 +458,7 @@ def copyfiles(src, dst, hardlink=None):
         for name, kind in osutil.listdir(src):
             srcname = os.path.join(src, name)
             dstname = os.path.join(dst, name)
-            copyfiles(srcname, dstname, hardlink)
+            hardlink = copyfiles(srcname, dstname, hardlink)
     else:
         if hardlink:
             try:
@@ -461,6 +468,8 @@ def copyfiles(src, dst, hardlink=None):
                 shutil.copy(src, dst)
         else:
             shutil.copy(src, dst)
+
+    return hardlink
 
 class path_auditor(object):
     '''ensure that a filesystem path contains no banned components.
@@ -765,7 +774,7 @@ class atomictempfile(object):
     file.  When rename is called, the copy is renamed to the original
     name, making the changes visible.
     """
-    def __init__(self, name, mode, createmode):
+    def __init__(self, name, mode='w+b', createmode=None):
         self.__name = name
         self._fp = None
         self.temp = mktempcopy(name, emptyok=('w' in mode),
