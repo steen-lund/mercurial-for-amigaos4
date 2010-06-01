@@ -10,8 +10,8 @@ from i18n import _
 from lock import release
 import localrepo, bundlerepo, httprepo, sshrepo, statichttprepo
 import lock, util, extensions, error, encoding, node
-import merge as _merge
-import verify as _verify
+import merge as mergemod
+import verify as verifymod
 import errno, os, shutil
 
 def _local(path):
@@ -278,6 +278,7 @@ def clone(ui, source, dest=None, pull=False, rev=None, update=True,
                 raise
 
             hardlink = None
+            num = 0
             for f in src_repo.store.copylist():
                 src = os.path.join(src_repo.sharedpath, f)
                 dst = os.path.join(dest_path, f)
@@ -288,7 +289,12 @@ def clone(ui, source, dest=None, pull=False, rev=None, update=True,
                     if dst.endswith('data'):
                         # lock to avoid premature writing to the target
                         dest_lock = lock.lock(os.path.join(dstbase, "lock"))
-                    hardlink = util.copyfiles(src, dst, hardlink)
+                    hardlink, n = util.copyfiles(src, dst, hardlink)
+                    num += n
+            if hardlink:
+                ui.debug("linked %d files\n" % num)
+            else:
+                ui.debug("copied %d files\n" % num)
 
             # we need to re-init the repo after manually copying the data
             # into it
@@ -360,7 +366,7 @@ def _showstats(repo, stats):
 
 def update(repo, node):
     """update the working directory to node, merging linear changes"""
-    stats = _merge.update(repo, node, False, False, None)
+    stats = mergemod.update(repo, node, False, False, None)
     _showstats(repo, stats)
     if stats[3]:
         repo.ui.status(_("use 'hg resolve' to retry unresolved file merges\n"))
@@ -371,14 +377,14 @@ _update = update
 
 def clean(repo, node, show_stats=True):
     """forcibly switch the working directory to node, clobbering changes"""
-    stats = _merge.update(repo, node, False, True, None)
+    stats = mergemod.update(repo, node, False, True, None)
     if show_stats:
         _showstats(repo, stats)
     return stats[3] > 0
 
 def merge(repo, node, force=None, remind=True):
     """branch merge with node, resolving changes"""
-    stats = _merge.update(repo, node, True, force, False)
+    stats = mergemod.update(repo, node, True, force, False)
     _showstats(repo, stats)
     if stats[3]:
         repo.ui.status(_("use 'hg resolve' to retry unresolved file merges "
@@ -389,8 +395,8 @@ def merge(repo, node, force=None, remind=True):
 
 def revert(repo, node, choose):
     """revert changes to revision in node without updating dirstate"""
-    return _merge.update(repo, node, False, True, choose)[3] > 0
+    return mergemod.update(repo, node, False, True, choose)[3] > 0
 
 def verify(repo):
     """verify the consistency of a repository"""
-    return _verify.verify(repo)
+    return verifymod.verify(repo)

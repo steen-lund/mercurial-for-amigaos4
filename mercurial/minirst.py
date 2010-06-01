@@ -225,6 +225,8 @@ def prunecontainers(blocks, keep):
     return blocks, pruned
 
 
+_sectionre = re.compile(r"""^([-=`:.'"~^_*+#])\1+$""")
+
 def findsections(blocks):
     """Finds sections.
 
@@ -240,15 +242,30 @@ def findsections(blocks):
         # +------------------------------+
         if (block['type'] == 'paragraph' and
             len(block['lines']) == 2 and
-            block['lines'][1] == '-' * len(block['lines'][0])):
+            len(block['lines'][0]) == len(block['lines'][1]) and
+            _sectionre.match(block['lines'][1])):
+            block['underline'] = block['lines'][1][0]
             block['type'] = 'section'
+            del block['lines'][1]
     return blocks
 
 
 def inlineliterals(blocks):
     for b in blocks:
-        if b['type'] == 'paragraph':
+        if b['type'] in ('paragraph', 'section'):
             b['lines'] = [l.replace('``', '"') for l in b['lines']]
+    return blocks
+
+
+def hgrole(blocks):
+    for b in blocks:
+        if b['type'] in ('paragraph', 'section'):
+            # Turn :hg:`command` into "hg command". This also works
+            # when there is a line break in the command and relies on
+            # the fact that we have no stray back-quotes in the input
+            # (run the blocks through inlineliterals first).
+            b['lines'] = [l.replace(':hg:`', '"hg ').replace('`', '"')
+                          for l in b['lines']]
     return blocks
 
 
@@ -261,7 +278,7 @@ def addmargins(blocks):
     i = 1
     while i < len(blocks):
         if (blocks[i]['type'] == blocks[i - 1]['type'] and
-            blocks[i]['type'] in ('bullet', 'option', 'field', 'definition')):
+            blocks[i]['type'] in ('bullet', 'option', 'field')):
             i += 1
         else:
             blocks.insert(i, dict(lines=[''], indent=0, type='margin'))
@@ -280,7 +297,8 @@ def formatblock(block, width):
         indent += '  '
         return indent + ('\n' + indent).join(block['lines'])
     if block['type'] == 'section':
-        return indent + ('\n' + indent).join(block['lines'])
+        underline = len(block['lines'][0]) * block['underline']
+        return "%s%s\n%s%s" % (indent, block['lines'][0],indent, underline)
     if block['type'] == 'definition':
         term = indent + block['lines'][0]
         hang = len(block['lines'][-1]) - len(block['lines'][-1].lstrip())
@@ -289,7 +307,7 @@ def formatblock(block, width):
         return "%s\n%s" % (term, textwrap.fill(text, width=width,
                                                initial_indent=defindent,
                                                subsequent_indent=defindent))
-    initindent = subindent = indent
+    subindent = indent
     if block['type'] == 'bullet':
         if block['lines'][0].startswith('| '):
             # Remove bullet for line blocks and add no extra
@@ -321,7 +339,7 @@ def formatblock(block, width):
 
     text = ' '.join(map(str.strip, block['lines']))
     return textwrap.fill(text, width=width,
-                         initial_indent=initindent,
+                         initial_indent=indent,
                          subsequent_indent=subindent)
 
 
@@ -332,10 +350,11 @@ def format(text, width, indent=0, keep=None):
         b['indent'] += indent
     blocks = findliteralblocks(blocks)
     blocks, pruned = prunecontainers(blocks, keep or [])
+    blocks = findsections(blocks)
     blocks = inlineliterals(blocks)
+    blocks = hgrole(blocks)
     blocks = splitparagraphs(blocks)
     blocks = updatefieldlists(blocks)
-    blocks = findsections(blocks)
     blocks = addmargins(blocks)
     text = '\n'.join(formatblock(b, width) for b in blocks)
     if keep is None:
