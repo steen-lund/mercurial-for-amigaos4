@@ -83,7 +83,7 @@ def addremove(ui, repo, *pats, **opts):
     Returns 0 if all files are successfully added.
     """
     try:
-        sim = float(opts.get('similarity') or 0)
+        sim = float(opts.get('similarity') or 100)
     except ValueError:
         raise util.Abort(_('similarity must be a number'))
     if sim < 0 or sim > 100:
@@ -197,20 +197,7 @@ def archive(ui, repo, dest, **opts):
     if os.path.realpath(dest) == repo.root:
         raise util.Abort(_('repository root cannot be destination'))
 
-    def guess_type():
-        exttypes = {
-            'tar': ['.tar'],
-            'tbz2': ['.tbz2', '.tar.bz2'],
-            'tgz': ['.tgz', '.tar.gz'],
-            'zip': ['.zip'],
-        }
-
-        for type, extensions in exttypes.items():
-            if util.any(dest.endswith(ext) for ext in extensions):
-                return type
-        return None
-
-    kind = opts.get('type') or guess_type() or 'files'
+    kind = opts.get('type') or archival.guesskind(dest) or 'files'
     prefix = opts.get('prefix')
 
     if dest == '-':
@@ -1868,7 +1855,10 @@ def help_(ui, name=None, with_version=False, unknowncmd=False):
         if not doc:
             doc = _("(no help text available)")
         if hasattr(entry[0], 'definition'):  # aliased command
-            doc = _('alias for: hg %s\n\n%s') % (entry[0].definition, doc)
+            if entry[0].definition.startswith('!'):  # shell alias
+                doc = _('shell alias for::\n\n    %s') % entry[0].definition[1:]
+            else:
+                doc = _('alias for: hg %s\n\n%s') % (entry[0].definition, doc)
         if ui.quiet:
             doc = doc.splitlines()[0]
         keep = ui.verbose and ['verbose'] or []

@@ -1051,30 +1051,30 @@ def walkchangerevs(repo, match, opts, prepare):
     copies = []
 
     if not slowpath:
+        minrev, maxrev = min(revs), max(revs)
         # Only files, no patterns.  Check the history of each file.
-        def filerevgen(filelog, node):
+        def filerevgen(filelog, last):
             cl_count = len(repo)
-            if node is None:
-                last = len(filelog) - 1
-            else:
-                last = filelog.rev(node)
-            for i, window in increasing_windows(last, nullrev):
-                revs = []
-                for j in xrange(i - window, i + 1):
-                    n = filelog.node(j)
-                    revs.append((filelog.linkrev(j),
-                                 follow and filelog.renamed(n)))
-                for rev in reversed(revs):
-                    # only yield rev for which we have the changelog, it can
-                    # happen while doing "hg log" during a pull or commit
-                    if rev[0] < cl_count:
-                        yield rev
+            revs = []
+            for j in xrange(0, last+1):
+                linkrev = filelog.linkrev(j)
+                if linkrev < minrev:
+                    continue
+                # only yield rev for which we have the changelog, it can
+                # happen while doing "hg log" during a pull or commit
+                if linkrev > maxrev or linkrev >= cl_count:
+                    break
+                n = filelog.node(j)
+                revs.append((filelog.linkrev(j),
+                             follow and filelog.renamed(n)))
+
+            for rev in reversed(revs):
+                yield rev
         def iterfiles():
             for filename in match.files():
                 yield filename, None
             for filename_node in copies:
                 yield filename_node
-        minrev, maxrev = min(revs), max(revs)
         for file_, node in iterfiles():
             filelog = repo.file(file_)
             if not len(filelog):
@@ -1088,31 +1088,38 @@ def walkchangerevs(repo, match, opts, prepare):
                     break
                 else:
                     continue
-            for rev, copied in filerevgen(filelog, node):
-                if rev <= maxrev:
-                    if rev < minrev:
-                        break
-                    fncache.setdefault(rev, [])
-                    fncache[rev].append(file_)
-                    wanted.add(rev)
-                    if copied:
-                        copies.append(copied)
+
+            if node is None:
+                last = len(filelog) - 1
+            else:
+                last = filelog.rev(node)
+
+            for rev, copied in filerevgen(filelog, last):
+                fncache.setdefault(rev, [])
+                fncache[rev].append(file_)
+                wanted.add(rev)
+                if copied:
+                    copies.append(copied)
     if slowpath:
         if follow:
             raise util.Abort(_('can only follow copies/renames for explicit '
                                'filenames'))
 
         # The slow path checks files modified in every changeset.
-        def changerevgen():
-            for i, window in increasing_windows(len(repo) - 1, nullrev):
-                for j in xrange(i - window, i + 1):
-                    yield change(j)
-
-        for ctx in changerevgen():
+        if opts.get('removed'):
+            # --removed wants to yield the changes where the file
+            # was removed, this means that we have to explore all
+            # changesets, effectively ignoring the revisions that
+            # had been passed as arguments
+            revlist = xrange(nullrev, len(repo) - 1)
+        else:
+            revlist = sorted(revs)
+        for i in revlist:
+            ctx = change(i)
             matches = filter(match, ctx.files())
             if matches:
-                fncache[ctx.rev()] = matches
-                wanted.add(ctx.rev())
+                fncache[i] = matches
+                wanted.add(i)
 
     class followfilter(object):
         def __init__(self, onlyfirst=False):
