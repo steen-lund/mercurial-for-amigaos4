@@ -1223,46 +1223,34 @@ class localrepository(repo.repository):
         # unbundle assumes local user cannot lock remote repo (new ssh
         # servers, http servers).
 
-        if remote.capable('unbundle'):
-            return self.push_unbundle(remote, force, revs, newbranch)
-        return self.push_addchangegroup(remote, force, revs, newbranch)
-
-    def push_addchangegroup(self, remote, force, revs, newbranch):
-        '''Push a changegroup by locking the remote and sending the
-        addchangegroup command to it. Used for local and old SSH repos.
-        Return an integer: see push().
-        '''
-        lock = remote.lock()
+        lock = None
+        unbundle = remote.capable('unbundle')
+        if not unbundle:
+            lock = remote.lock()
         try:
             ret = discovery.prepush(self, remote, force, revs, newbranch)
-            if ret[0] is not None:
-                cg, remote_heads = ret
+            if ret[0] is None:
+                # and here we return 0 for "nothing to push" or 1 for
+                # "something to push but I refuse"
+                return ret[1]
+
+            cg, remote_heads = ret
+            if unbundle:
+                # local repo finds heads on server, finds out what revs it must
+                # push.  once revs transferred, if server finds it has
+                # different heads (someone else won commit/push race), server
+                # aborts.
+                if force:
+                    remote_heads = ['force']
+                # ssh: return remote's addchangegroup()
+                # http: return remote's addchangegroup() or 0 for error
+                return remote.unbundle(cg, remote_heads, 'push')
+            else:
                 # we return an integer indicating remote head count change
                 return remote.addchangegroup(cg, 'push', self.url(), lock=lock)
-            # and here we return 0 for "nothing to push" or 1 for
-            # "something to push but I refuse"
-            return ret[1]
         finally:
-            lock.release()
-
-    def push_unbundle(self, remote, force, revs, newbranch):
-        '''Push a changegroup by unbundling it on the remote.  Used for new
-        SSH and HTTP repos. Return an integer: see push().'''
-        # local repo finds heads on server, finds out what revs it
-        # must push.  once revs transferred, if server finds it has
-        # different heads (someone else won commit/push race), server
-        # aborts.
-
-        ret = discovery.prepush(self, remote, force, revs, newbranch)
-        if ret[0] is not None:
-            cg, remote_heads = ret
-            if force:
-                remote_heads = ['force']
-            # ssh: return remote's addchangegroup()
-            # http: return remote's addchangegroup() or 0 for error
-            return remote.unbundle(cg, remote_heads, 'push')
-        # as in push_addchangegroup()
-        return ret[1]
+            if lock is not None:
+                lock.release()
 
     def changegroupinfo(self, nodes, source):
         if self.ui.verbose or source == 'bundle':
@@ -1325,7 +1313,6 @@ class localrepository(repo.repository):
         for n in bases:
             knownheads.update(cl.parents(n))
         knownheads.discard(nullid)
-        knownheads = list(knownheads)
         if knownheads:
             # Now that we know what heads are known, we can compute which
             # changesets are known.  The recipient must know about all
