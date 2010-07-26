@@ -131,7 +131,7 @@ class lazyparser(object):
         self.dataf = dataf
         self.s = struct.calcsize(indexformatng)
         self.datasize = size
-        self.l = size / self.s
+        self.l = size // self.s
         self.index = [None] * self.l
         self.map = {nullid: nullrev}
         self.allmap = 0
@@ -176,8 +176,8 @@ class lazyparser(object):
                 # limit blocksize so that we don't get too much data.
                 blocksize = max(self.datasize - blockstart, 0)
             data = self.dataf.read(blocksize)
-        lend = len(data) / self.s
-        i = blockstart / self.s
+        lend = len(data) // self.s
+        i = blockstart // self.s
         off = 0
         # lazyindex supports __delitem__
         if lend > len(self.index) - i:
@@ -1193,14 +1193,7 @@ class revlog(object):
                 d = self.revdiff(a, b)
             yield changegroup.chunkheader(len(meta) + len(d))
             yield meta
-            if len(d) > 2**20:
-                pos = 0
-                while pos < len(d):
-                    pos2 = pos + 2 ** 18
-                    yield d[pos:pos2]
-                    pos = pos2
-            else:
-                yield d
+            yield d
 
         yield changegroup.closechunk()
 
