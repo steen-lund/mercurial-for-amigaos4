@@ -35,7 +35,9 @@ def findcommonincoming(repo, remote, base=None, heads=None, force=False):
     exist on the remote side and that no child of a node of base exists
     in both remote and repo.
     Furthermore base will be updated to include the nodes that exists
-    in repo and remote but no children exists in repo and remote.
+    in repo and remote but no children exists in both repo and remote.
+    In other words, base is the set of heads of the DAG resulting from
+    the intersection of the nodes from repo and remote.
     If a list of heads is specified, return only nodes which are heads
     or ancestors of these heads.
 
@@ -172,18 +174,17 @@ def findcommonincoming(repo, remote, base=None, heads=None, force=False):
 
     return base.keys(), list(fetch), heads
 
-def findoutgoing(repo, remote, base=None, heads=None, force=False):
+def findoutgoing(repo, remote, base=None, remoteheads=None, force=False):
     """Return list of nodes that are roots of subsets not in remote
 
     If base dict is specified, assume that these nodes and their parents
     exist on the remote side.
-    If a list of heads is specified, return only nodes which are heads
-    or ancestors of these heads, and return a second element which
-    contains all remote heads which get new children.
+    If remotehead is specified, assume it is the list of the heads from
+    the remote repository.
     """
     if base is None:
         base = {}
-        findincoming(repo, remote, base, heads, force=force)
+        findincoming(repo, remote, base, remoteheads, force=force)
 
     repo.ui.debug("common changesets up to "
                   + " ".join(map(short, base.keys())) + "\n")
@@ -203,22 +204,12 @@ def findoutgoing(repo, remote, base=None, heads=None, force=False):
     # find every node whose parents have been pruned
     subset = []
     # find every remote head that will get new children
-    updated_heads = set()
     for n in remain:
         p1, p2 = repo.changelog.parents(n)
         if p1 not in remain and p2 not in remain:
             subset.append(n)
-        if heads:
-            if p1 in heads:
-                updated_heads.add(p1)
-            if p2 in heads:
-                updated_heads.add(p2)
 
-    # this is the set of all roots we have to push
-    if heads:
-        return subset, list(updated_heads)
-    else:
-        return subset
+    return subset
 
 def prepush(repo, remote, force, revs, newbranch):
     '''Analyze the local and remote repositories and determine which
@@ -235,34 +226,18 @@ def prepush(repo, remote, force, revs, newbranch):
     successive changegroup chunks ready to be sent over the wire and
     remoteheads is the list of remote heads.'''
     common = {}
-    remote_heads = remote.heads()
-    inc = findincoming(repo, remote, common, remote_heads, force=force)
+    remoteheads = remote.heads()
+    inc = findincoming(repo, remote, common, remoteheads, force=force)
 
     cl = repo.changelog
-    update, updated_heads = findoutgoing(repo, remote, common, remote_heads)
+    update = findoutgoing(repo, remote, common, remoteheads)
     outg, bases, heads = cl.nodesbetween(update, revs)
 
     if not bases:
         repo.ui.status(_("no changes found\n"))
         return None, 1
 
-    if not force and remote_heads != [nullid]:
-
-        def fail_multiple_heads(unsynced, branch=None):
-            if branch:
-                msg = _("abort: push creates new remote heads"
-                        " on branch '%s'!\n") % branch
-            else:
-                msg = _("abort: push creates new remote heads!\n")
-            repo.ui.warn(msg)
-            if unsynced:
-                repo.ui.status(_("(you should pull and merge or"
-                                 " use push -f to force)\n"))
-            else:
-                repo.ui.status(_("(did you forget to merge?"
-                                 " use push -f to force)\n"))
-            return None, 0
-
+    if not force and remoteheads != [nullid]:
         if remote.capable('branchmap'):
             # Check for each named branch if we're creating new remote heads.
             # To be a remote head after push, node must be either:
@@ -281,12 +256,10 @@ def prepush(repo, remote, force, revs, newbranch):
             newbranches = branches - set(remotemap)
             if newbranches and not newbranch: # new branch requires --new-branch
                 branchnames = ', '.join(sorted(newbranches))
-                repo.ui.warn(_("abort: push creates "
-                               "new remote branches: %s!\n")
-                             % branchnames)
-                repo.ui.status(_("(use 'hg push --new-branch' to create new "
-                                 "remote branches)\n"))
-                return None, 0
+                raise util.Abort(_("push creates new remote branches: %s!")
+                                   % branchnames,
+                                 hint=_("use 'hg push --new-branch' to create"
+                                        " new remote branches"))
             branches.difference_update(newbranches)
 
             # 3. Construct the initial oldmap and newmap dicts.
@@ -299,11 +272,11 @@ def prepush(repo, remote, force, revs, newbranch):
             newmap = {}
             unsynced = set()
             for branch in branches:
-                remoteheads = remotemap[branch]
-                prunedheads = [h for h in remoteheads if h in cl.nodemap]
-                oldmap[branch] = prunedheads
-                newmap[branch] = list(prunedheads)
-                if len(remoteheads) > len(prunedheads):
+                remotebrheads = remotemap[branch]
+                prunedbrheads = [h for h in remotebrheads if h in cl.nodemap]
+                oldmap[branch] = prunedbrheads
+                newmap[branch] = list(prunedbrheads)
+                if len(remotebrheads) > len(prunedbrheads):
                     unsynced.add(branch)
 
             # 4. Update newmap with outgoing changes.
@@ -311,23 +284,12 @@ def prepush(repo, remote, force, revs, newbranch):
             ctxgen = (repo[n] for n in outg)
             repo._updatebranchcache(newmap, ctxgen)
 
-            # 5. Check for new heads.
-            # If there are more heads after the push than before, a suitable
-            # warning, depending on unsynced status, is displayed.
-            for branch in branches:
-                if len(newmap[branch]) > len(oldmap[branch]):
-                    return fail_multiple_heads(branch in unsynced, branch)
-
-            # 6. Check for unsynced changes on involved branches.
-            if unsynced:
-                repo.ui.warn(_("note: unsynced remote changes!\n"))
-
         else:
-            # Old servers: Check for new topological heads.
-            # Code based on _updatebranchcache.
-            newheads = set(h for h in remote_heads if h in cl.nodemap)
-            oldheadcnt = len(newheads)
-            newheads.update(outg)
+            # 1-4b. old servers: Check for new topological heads.
+            # Construct {old,new}map with branch = None (topological branch).
+            # (code based on _updatebranchcache)
+            oldheads = set(h for h in remoteheads if h in cl.nodemap)
+            newheads = oldheads.union(outg)
             if len(newheads) > 1:
                 for latest in reversed(outg):
                     if latest not in newheads:
@@ -336,10 +298,31 @@ def prepush(repo, remote, force, revs, newbranch):
                     reachable = cl.reachable(latest, cl.node(minhrev))
                     reachable.remove(latest)
                     newheads.difference_update(reachable)
-            if len(newheads) > oldheadcnt:
-                return fail_multiple_heads(inc)
-            if inc:
-                repo.ui.warn(_("note: unsynced remote changes!\n"))
+            branches = set([None])
+            newmap = {None: newheads}
+            oldmap = {None: oldheads}
+            unsynced = inc and branches or set()
+
+        # 5. Check for new heads.
+        # If there are more heads after the push than before, a suitable
+        # warning, depending on unsynced status, is displayed.
+        for branch in branches:
+            if len(newmap[branch]) > len(oldmap[branch]):
+                if branch:
+                    msg = _("push creates new remote heads "
+                            "on branch '%s'!") % branch
+                else:
+                    msg = _("push creates new remote heads!")
+
+                if branch in unsynced:
+                    hint = _("you should pull and merge or use push -f to force")
+                else:
+                    hint = _("did you forget to merge? use push -f to force")
+                raise util.Abort(msg, hint=hint)
+
+        # 6. Check for unsynced changes on involved branches.
+        if unsynced:
+            repo.ui.warn(_("note: unsynced remote changes!\n"))
 
     if revs is None:
         # use the fast path, no race possible on push
@@ -347,4 +330,4 @@ def prepush(repo, remote, force, revs, newbranch):
         cg = repo._changegroup(nodes, 'push')
     else:
         cg = repo.changegroupsubset(update, revs, 'push')
-    return cg, remote_heads
+    return cg, remoteheads

@@ -15,7 +15,7 @@ hide platform-specific details from the core.
 
 from i18n import _
 import error, osutil, encoding
-import cStringIO, errno, re, shutil, sys, tempfile, traceback
+import errno, re, shutil, sys, tempfile, traceback
 import os, stat, time, calendar, textwrap, unicodedata, signal
 import imp
 
@@ -38,9 +38,15 @@ def _fastsha1(s):
 
 import __builtin__
 
-def fakebuffer(sliceable, offset=0):
-    return sliceable[offset:]
-if not hasattr(__builtin__, 'buffer'):
+if sys.version_info[0] < 3:
+    def fakebuffer(sliceable, offset=0):
+        return sliceable[offset:]
+else:
+    def fakebuffer(sliceable, offset=0):
+        return memoryview(sliceable)[offset:]
+try:
+    buffer
+except NameError:
     __builtin__.buffer = fakebuffer
 
 import subprocess
@@ -908,27 +914,35 @@ class chunkbuffer(object):
     def __init__(self, in_iter):
         """in_iter is the iterator that's iterating over the input chunks.
         targetsize is how big a buffer to try to maintain."""
-        self.iter = iter(in_iter)
+        def splitbig(chunks):
+            for chunk in chunks:
+                if len(chunk) > 2**20:
+                    pos = 0
+                    while pos < len(chunk):
+                        end = pos + 2 ** 18
+                        yield chunk[pos:end]
+                        pos = end
+                else:
+                    yield chunk
+        self.iter = splitbig(in_iter)
         self.buf = ''
-        self.targetsize = 2**16
 
     def read(self, l):
         """Read L bytes of data from the iterator of chunks of data.
         Returns less than L bytes if the iterator runs dry."""
         if l > len(self.buf) and self.iter:
-            # Clamp to a multiple of self.targetsize
-            targetsize = max(l, self.targetsize)
-            collector = cStringIO.StringIO()
-            collector.write(self.buf)
+            # Clamp to a multiple of 2**16
+            targetsize = max(l, 2**16)
+            collector = [str(self.buf)]
             collected = len(self.buf)
             for chunk in self.iter:
-                collector.write(chunk)
+                collector.append(chunk)
                 collected += len(chunk)
                 if collected >= targetsize:
                     break
-            if collected < targetsize:
+            else:
                 self.iter = False
-            self.buf = collector.getvalue()
+            self.buf = ''.join(collector)
         if len(self.buf) == l:
             s, self.buf = str(self.buf), ''
         else:
