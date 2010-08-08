@@ -1691,11 +1691,22 @@ class queue(object):
             if existing:
                 if filename == '-':
                     raise util.Abort(_('-e is incompatible with import from -'))
-                if not patchname:
-                    patchname = normname(filename)
-                self.check_reserved_name(patchname)
-                if not os.path.isfile(self.join(patchname)):
-                    raise util.Abort(_("patch %s does not exist") % patchname)
+                filename = normname(filename)
+                self.check_reserved_name(filename)
+                originpath = self.join(filename)
+                if not os.path.isfile(originpath):
+                    raise util.Abort(_("patch %s does not exist") % filename)
+
+                if patchname:
+                    self.check_reserved_name(patchname)
+                    checkfile(patchname)
+
+                    self.ui.write(_('renaming %s to %s\n')
+                                        % (filename, patchname))
+                    util.rename(originpath, self.join(patchname))
+                else:
+                    patchname = filename
+
             else:
                 try:
                     if filename == '-':
@@ -1810,6 +1821,10 @@ def qimport(ui, repo, *filename, **opts):
     To import a patch from standard input, pass - as the patch file.
     When importing from standard input, a patch name must be specified
     using the --name flag.
+
+    To import an existing patch while renaming it::
+
+      hg qimport -e existing-patch -n new-name
     """
     q = repo.mq
     try:
@@ -2003,7 +2018,7 @@ def new(ui, repo, patch, *args, **opts):
     """
     msg = cmdutil.logmessage(opts)
     def getmsg():
-        return ui.edit(msg, ui.username())
+        return ui.edit(msg, opts['user'] or ui.username())
     q = repo.mq
     opts['msg'] = msg
     if opts.get('edit'):
@@ -2559,7 +2574,7 @@ def finish(ui, repo, *revrange, **opts):
     if not opts['applied'] and not revrange:
         raise util.Abort(_('no revisions specified'))
     elif opts['applied']:
-        revrange = ('qbase:qtip',) + revrange
+        revrange = ('qbase::qtip',) + revrange
 
     q = repo.mq
     if not q.applied:
