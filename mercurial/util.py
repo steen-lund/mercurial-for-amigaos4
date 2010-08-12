@@ -38,9 +38,15 @@ def _fastsha1(s):
 
 import __builtin__
 
-def fakebuffer(sliceable, offset=0):
-    return sliceable[offset:]
-if not hasattr(__builtin__, 'buffer'):
+if sys.version_info[0] < 3:
+    def fakebuffer(sliceable, offset=0):
+        return sliceable[offset:]
+else:
+    def fakebuffer(sliceable, offset=0):
+        return memoryview(sliceable)[offset:]
+try:
+    buffer
+except NameError:
     __builtin__.buffer = fakebuffer
 
 import subprocess
@@ -908,7 +914,17 @@ class chunkbuffer(object):
     def __init__(self, in_iter):
         """in_iter is the iterator that's iterating over the input chunks.
         targetsize is how big a buffer to try to maintain."""
-        self.iter = iter(in_iter)
+        def splitbig(chunks):
+            for chunk in chunks:
+                if len(chunk) > 2**20:
+                    pos = 0
+                    while pos < len(chunk):
+                        end = pos + 2 ** 18
+                        yield chunk[pos:end]
+                        pos = end
+                else:
+                    yield chunk
+        self.iter = splitbig(in_iter)
         self._queue = []
 
     def read(self, l):
@@ -938,8 +954,7 @@ class chunkbuffer(object):
                 buf += chunk
 
         return buf
-
-
+        
 def filechunkiter(f, size=65536, limit=None):
     """Create a generator that produces the data in the file size
     (default 65536) bytes at a time, up to optional limit (default is

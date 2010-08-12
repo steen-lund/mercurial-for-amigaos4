@@ -23,13 +23,19 @@ _compress = zlib.compress
 _decompress = zlib.decompress
 _sha = util.sha1
 
-# revlog flags
+# revlog header flags
 REVLOGV0 = 0
 REVLOGNG = 1
 REVLOGNGINLINEDATA = (1 << 16)
+REVLOGSHALLOW = (1 << 17)
 REVLOG_DEFAULT_FLAGS = REVLOGNGINLINEDATA
 REVLOG_DEFAULT_FORMAT = REVLOGNG
 REVLOG_DEFAULT_VERSION = REVLOG_DEFAULT_FORMAT | REVLOG_DEFAULT_FLAGS
+REVLOGNG_FLAGS = REVLOGNGINLINEDATA | REVLOGSHALLOW
+
+# revlog index flags
+REVIDX_PUNCHED_FLAG = 2
+REVIDX_KNOWN_FLAGS = REVIDX_PUNCHED_FLAG
 
 # amount of data read unconditionally, should be >= 4
 # when not inline: threshold for using lazy index
@@ -131,7 +137,7 @@ class lazyparser(object):
         self.dataf = dataf
         self.s = struct.calcsize(indexformatng)
         self.datasize = size
-        self.l = size / self.s
+        self.l = size // self.s
         self.index = [None] * self.l
         self.map = {nullid: nullrev}
         self.allmap = 0
@@ -176,8 +182,8 @@ class lazyparser(object):
                 # limit blocksize so that we don't get too much data.
                 blocksize = max(self.datasize - blockstart, 0)
             data = self.dataf.read(blocksize)
-        lend = len(data) / self.s
-        i = blockstart / self.s
+        lend = len(data) // self.s
+        i = blockstart // self.s
         off = 0
         # lazyindex supports __delitem__
         if lend > len(self.index) - i:
@@ -420,7 +426,7 @@ class revlog(object):
     remove data, and can use some simple techniques to avoid the need
     for locking while reading.
     """
-    def __init__(self, opener, indexfile):
+    def __init__(self, opener, indexfile, shallowroot=None):
         """
         create a revlog object
 
@@ -434,12 +440,15 @@ class revlog(object):
         self._chunkcache = (0, '')
         self.nodemap = {nullid: nullrev}
         self.index = []
+        self._shallowroot = shallowroot
 
         v = REVLOG_DEFAULT_VERSION
         if hasattr(opener, 'options') and 'defversion' in opener.options:
             v = opener.options['defversion']
             if v & REVLOGNG:
                 v |= REVLOGNGINLINEDATA
+        if shallowroot:
+            v |= REVLOGSHALLOW
 
         i = ''
         try:
@@ -456,12 +465,13 @@ class revlog(object):
 
         self.version = v
         self._inline = v & REVLOGNGINLINEDATA
+        self._shallow = v & REVLOGSHALLOW
         flags = v & ~0xFFFF
         fmt = v & 0xFFFF
         if fmt == REVLOGV0 and flags:
             raise RevlogError(_("index %s unknown flags %#04x for format v0")
                               % (self.indexfile, flags >> 16))
-        elif fmt == REVLOGNG and flags & ~REVLOGNGINLINEDATA:
+        elif fmt == REVLOGNG and flags & ~REVLOGNG_FLAGS:
             raise RevlogError(_("index %s unknown flags %#04x for revlogng")
                               % (self.indexfile, flags >> 16))
         elif fmt > REVLOGNG:
@@ -533,6 +543,8 @@ class revlog(object):
         return self.index[rev][1]
     def base(self, rev):
         return self.index[rev][3]
+    def flags(self, rev):
+        return self.index[rev][0] & 0xFFFF
 
     def size(self, rev):
         """return the length of the uncompressed text for a given revision"""
@@ -1020,9 +1032,9 @@ class revlog(object):
         base = self.base(rev)
 
         # check rev flags
-        if self.index[rev][0] & 0xFFFF:
+        if self.flags(rev) & ~REVIDX_KNOWN_FLAGS:
             raise RevlogError(_('incompatible revision flag %x') %
-                              (self.index[rev][0] & 0xFFFF))
+                              (self.flags(rev) & ~REVIDX_KNOWN_FLAGS))
 
         # do we have useful data cached?
         if self._cache and self._cache[1] >= base and self._cache[1] < rev:
@@ -1040,7 +1052,8 @@ class revlog(object):
         bins = [self._chunk(r) for r in xrange(base + 1, rev + 1)]
         text = mdiff.patches(text, bins)
         p1, p2 = self.parents(node)
-        if node != hash(text, p1, p2):
+        if (node != hash(text, p1, p2) and
+            not (self.flags(rev) & REVIDX_PUNCHED_FLAG)):
             raise RevlogError(_("integrity check failed on %s:%d")
                               % (self.indexfile, rev))
 
@@ -1126,7 +1139,9 @@ class revlog(object):
 
         # full versions are inserted when the needed deltas
         # become comparable to the uncompressed text
-        if not curr or dist > len(text) * 2:
+        # or the base revision is punched
+        if (not curr or dist > len(text) * 2 or
+            (self.flags(base) & REVIDX_PUNCHED_FLAG)):
             data = compress(text)
             l = len(data[1]) + len(data[0])
             base = curr
@@ -1196,14 +1211,7 @@ class revlog(object):
                 d = self.revdiff(a, b)
             yield changegroup.chunkheader(len(meta) + len(d))
             yield meta
-            if len(d) > 2**20:
-                pos = 0
-                while pos < len(d):
-                    pos2 = pos + 2 ** 18
-                    yield d[pos:pos2]
-                    pos = pos2
-            else:
-                yield d
+            yield d
 
         yield changegroup.closechunk()
 
