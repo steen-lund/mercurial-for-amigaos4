@@ -510,7 +510,7 @@ class localrepository(repo.repository):
     def _link(self, f):
         return os.path.islink(self.wjoin(f))
 
-    def _filter(self, filter, filename, data):
+    def _loadfilter(self, filter):
         if filter not in self.filterpats:
             l = []
             for pat, cmd in self.ui.configitems(filter):
@@ -532,6 +532,9 @@ class localrepository(repo.repository):
                     fn = lambda s, c, **kwargs: oldfn(s, c)
                 l.append((mf, fn, params))
             self.filterpats[filter] = l
+
+    def _filter(self, filter, filename, data):
+        self._loadfilter(filter)
 
         for mf, fn, cmd in self.filterpats[filter]:
             if mf(filename):
@@ -1059,16 +1062,16 @@ class localrepository(repo.repository):
                 # do a full compare of any files that might have changed
                 for f in sorted(cmp):
                     if (f not in ctx1 or ctx2.flags(f) != ctx1.flags(f)
-                        or ctx1[f].cmp(ctx2[f].data())):
+                        or ctx1[f].cmp(ctx2[f])):
                         modified.append(f)
                     else:
                         fixup.append(f)
 
-                if listclean:
-                    clean += fixup
-
                 # update dirstate for files that are actually clean
                 if fixup:
+                    if listclean:
+                        clean += fixup
+
                     try:
                         # updating the dirstate is optional
                         # so we don't wait on the lock
@@ -1103,7 +1106,7 @@ class localrepository(repo.repository):
                 if fn in mf1:
                     if (mf1.flags(fn) != mf2.flags(fn) or
                         (mf1[fn] != mf2[fn] and
-                         (mf2[fn] or ctx1[fn].cmp(ctx2[fn].data())))):
+                         (mf2[fn] or ctx1[fn].cmp(ctx2[fn])))):
                         modified.append(fn)
                     elif listclean:
                         clean.append(fn)
@@ -1223,46 +1226,34 @@ class localrepository(repo.repository):
         # unbundle assumes local user cannot lock remote repo (new ssh
         # servers, http servers).
 
-        if remote.capable('unbundle'):
-            return self.push_unbundle(remote, force, revs, newbranch)
-        return self.push_addchangegroup(remote, force, revs, newbranch)
-
-    def push_addchangegroup(self, remote, force, revs, newbranch):
-        '''Push a changegroup by locking the remote and sending the
-        addchangegroup command to it. Used for local and old SSH repos.
-        Return an integer: see push().
-        '''
-        lock = remote.lock()
+        lock = None
+        unbundle = remote.capable('unbundle')
+        if not unbundle:
+            lock = remote.lock()
         try:
             ret = discovery.prepush(self, remote, force, revs, newbranch)
-            if ret[0] is not None:
-                cg, remote_heads = ret
+            if ret[0] is None:
+                # and here we return 0 for "nothing to push" or 1 for
+                # "something to push but I refuse"
+                return ret[1]
+
+            cg, remote_heads = ret
+            if unbundle:
+                # local repo finds heads on server, finds out what revs it must
+                # push.  once revs transferred, if server finds it has
+                # different heads (someone else won commit/push race), server
+                # aborts.
+                if force:
+                    remote_heads = ['force']
+                # ssh: return remote's addchangegroup()
+                # http: return remote's addchangegroup() or 0 for error
+                return remote.unbundle(cg, remote_heads, 'push')
+            else:
                 # we return an integer indicating remote head count change
                 return remote.addchangegroup(cg, 'push', self.url(), lock=lock)
-            # and here we return 0 for "nothing to push" or 1 for
-            # "something to push but I refuse"
-            return ret[1]
         finally:
-            lock.release()
-
-    def push_unbundle(self, remote, force, revs, newbranch):
-        '''Push a changegroup by unbundling it on the remote.  Used for new
-        SSH and HTTP repos. Return an integer: see push().'''
-        # local repo finds heads on server, finds out what revs it
-        # must push.  once revs transferred, if server finds it has
-        # different heads (someone else won commit/push race), server
-        # aborts.
-
-        ret = discovery.prepush(self, remote, force, revs, newbranch)
-        if ret[0] is not None:
-            cg, remote_heads = ret
-            if force:
-                remote_heads = ['force']
-            # ssh: return remote's addchangegroup()
-            # http: return remote's addchangegroup() or 0 for error
-            return remote.unbundle(cg, remote_heads, 'push')
-        # as in push_addchangegroup()
-        return ret[1]
+            if lock is not None:
+                lock.release()
 
     def changegroupinfo(self, nodes, source):
         if self.ui.verbose or source == 'bundle':
@@ -1296,8 +1287,10 @@ class localrepository(repo.repository):
         # Set up some initial variables
         # Make it easy to refer to self.changelog
         cl = self.changelog
-        # msng is short for missing - compute the list of changesets in this
-        # changegroup.
+        # Compute the list of changesets in this changegroup.
+        # Some bases may turn out to be superfluous, and some heads may be
+        # too.  nodesbetween will return the minimal set of bases and heads
+        # necessary to re-create the changegroup.
         if not bases:
             bases = [nullid]
         msng_cl_lst, bases, heads = cl.nodesbetween(bases, heads)
@@ -1314,31 +1307,9 @@ class localrepository(repo.repository):
         self.hook('preoutgoing', throw=True, source=source)
 
         self.changegroupinfo(msng_cl_lst, source)
-        # Some bases may turn out to be superfluous, and some heads may be
-        # too.  nodesbetween will return the minimal set of bases and heads
-        # necessary to re-create the changegroup.
 
-        # Known heads are the list of heads that it is assumed the recipient
-        # of this changegroup will know about.
-        knownheads = set()
-        # We assume that all parents of bases are known heads.
-        for n in bases:
-            knownheads.update(cl.parents(n))
-        knownheads.discard(nullid)
-        knownheads = list(knownheads)
-        if knownheads:
-            # Now that we know what heads are known, we can compute which
-            # changesets are known.  The recipient must know about all
-            # changesets required to reach the known heads from the null
-            # changeset.
-            has_cl_set, junk, junk = cl.nodesbetween(None, knownheads)
-            junk = None
-            # Transform the list into a set.
-            has_cl_set = set(has_cl_set)
-        else:
-            # If there were no known heads, the recipient cannot be assumed to
-            # know about any changesets.
-            has_cl_set = set()
+        # We assume that all ancestors of bases are known
+        commonrevs = set(cl.ancestors(*[cl.rev(n) for n in bases]))
 
         # Make it easy to refer to self.manifest
         mnfst = self.manifest
@@ -1354,19 +1325,6 @@ class localrepository(repo.repository):
         # function for a changenode is identity.
         def identity(x):
             return x
-
-        # If we determine that a particular file or manifest node must be a
-        # node that the recipient of the changegroup will already have, we can
-        # also assume the recipient will have all the parents.  This function
-        # prunes them from the set of missing nodes.
-        def prune_parents(revlog, hasset, msngset):
-            for r in revlog.ancestors(*[revlog.rev(n) for n in hasset]):
-                msngset.pop(revlog.node(r), None)
-
-        # Use the information collected in collect_manifests_and_files to say
-        # which changenode any manifestnode belongs to.
-        def lookup_manifest_link(mnfstnode):
-            return msng_mnfst_set[mnfstnode]
 
         # A function generating function that sets up the initial environment
         # the inner function.
@@ -1386,10 +1344,9 @@ class localrepository(repo.repository):
                     deltamf = mnfst.readdelta(mnfstnode)
                     # For each line in the delta
                     for f, fnode in deltamf.iteritems():
-                        f = changedfiles.get(f, None)
                         # And if the file is in the list of files we care
                         # about.
-                        if f is not None:
+                        if f in changedfiles:
                             # Get the changenode this manifest belongs to
                             clnode = msng_mnfst_set[mnfstnode]
                             # Create the set of filenodes for the file if
@@ -1412,28 +1369,23 @@ class localrepository(repo.repository):
                             ndset.setdefault(fnode, clnode)
             return collect_msng_filenodes
 
-        # We have a list of filenodes we think we need for a file, lets remove
-        # all those we know the recipient must have.
-        def prune_filenodes(f, filerevlog):
-            msngset = msng_filenode_set[f]
+        # If we determine that a particular file or manifest node must be a
+        # node that the recipient of the changegroup will already have, we can
+        # also assume the recipient will have all the parents.  This function
+        # prunes them from the set of missing nodes.
+        def prune(revlog, missingnodes):
             hasset = set()
             # If a 'missing' filenode thinks it belongs to a changenode we
             # assume the recipient must have, then the recipient must have
             # that filenode.
-            for n in msngset:
-                clnode = cl.node(filerevlog.linkrev(filerevlog.rev(n)))
-                if clnode in has_cl_set:
+            for n in missingnodes:
+                clrev = revlog.linkrev(revlog.rev(n))
+                if clrev in commonrevs:
                     hasset.add(n)
-            prune_parents(filerevlog, hasset, msngset)
-
-        # A function generator function that sets up the a context for the
-        # inner function.
-        def lookup_filenode_link_func(fname):
-            msngset = msng_filenode_set[fname]
-            # Lookup the changenode the filenode belongs to.
-            def lookup_filenode_link(fnode):
-                return msngset[fnode]
-            return lookup_filenode_link
+            for n in hasset:
+                missingnodes.pop(n, None)
+            for r in revlog.ancestors(*[revlog.rev(n) for n in hasset]):
+                missingnodes.pop(revlog.node(r), None)
 
         # Add the nodes that were explicitly requested.
         def add_extra_nodes(name, nodes):
@@ -1448,45 +1400,30 @@ class localrepository(repo.repository):
         # logically divide up the task, generate the group.
         def gengroup():
             # The set of changed files starts empty.
-            changedfiles = {}
+            changedfiles = set()
             collect = changegroup.collector(cl, msng_mnfst_set, changedfiles)
 
             # Create a changenode group generator that will call our functions
             # back to lookup the owning changenode and collect information.
             group = cl.group(msng_cl_lst, identity, collect)
-            cnt = 0
-            for chnk in group:
+            for cnt, chnk in enumerate(group):
                 yield chnk
                 self.ui.progress(_('bundling changes'), cnt, unit=_('chunks'))
-                cnt += 1
             self.ui.progress(_('bundling changes'), None)
 
-
-            # Figure out which manifest nodes (of the ones we think might be
-            # part of the changegroup) the recipient must know about and
-            # remove them from the changegroup.
-            has_mnfst_set = set()
-            for n in msng_mnfst_set:
-                # If a 'missing' manifest thinks it belongs to a changenode
-                # the recipient is assumed to have, obviously the recipient
-                # must have that manifest.
-                linknode = cl.node(mnfst.linkrev(mnfst.rev(n)))
-                if linknode in has_cl_set:
-                    has_mnfst_set.add(n)
-            prune_parents(mnfst, has_mnfst_set, msng_mnfst_set)
+            prune(mnfst, msng_mnfst_set)
             add_extra_nodes(1, msng_mnfst_set)
             msng_mnfst_lst = msng_mnfst_set.keys()
             # Sort the manifestnodes by revision number.
             msng_mnfst_lst.sort(key=mnfst.rev)
             # Create a generator for the manifestnodes that calls our lookup
             # and data collection functions back.
-            group = mnfst.group(msng_mnfst_lst, lookup_manifest_link,
+            group = mnfst.group(msng_mnfst_lst,
+                                lambda mnode: msng_mnfst_set[mnode],
                                 filenode_collector(changedfiles))
-            cnt = 0
-            for chnk in group:
+            for cnt, chnk in enumerate(group):
                 yield chnk
                 self.ui.progress(_('bundling manifests'), cnt, unit=_('chunks'))
-                cnt += 1
             self.ui.progress(_('bundling manifests'), None)
 
             # These are no longer needed, dereference and toss the memory for
@@ -1499,7 +1436,7 @@ class localrepository(repo.repository):
                     if isinstance(fname, int):
                         continue
                     msng_filenode_set.setdefault(fname, {})
-                    changedfiles[fname] = 1
+                    changedfiles.add(fname)
             # Go through all our files in order sorted by name.
             cnt = 0
             for fname in sorted(changedfiles):
@@ -1508,32 +1445,27 @@ class localrepository(repo.repository):
                     raise util.Abort(_("empty or missing revlog for %s") % fname)
                 # Toss out the filenodes that the recipient isn't really
                 # missing.
-                if fname in msng_filenode_set:
-                    prune_filenodes(fname, filerevlog)
-                    add_extra_nodes(fname, msng_filenode_set[fname])
-                    msng_filenode_lst = msng_filenode_set[fname].keys()
-                else:
-                    msng_filenode_lst = []
+                missingfnodes = msng_filenode_set.pop(fname, {})
+                prune(filerevlog, missingfnodes)
+                add_extra_nodes(fname, missingfnodes)
                 # If any filenodes are left, generate the group for them,
                 # otherwise don't bother.
-                if len(msng_filenode_lst) > 0:
+                if missingfnodes:
                     yield changegroup.chunkheader(len(fname))
                     yield fname
-                    # Sort the filenodes by their revision #
-                    msng_filenode_lst.sort(key=filerevlog.rev)
+                    # Sort the filenodes by their revision # (topological order)
+                    nodeiter = list(missingfnodes)
+                    nodeiter.sort(key=filerevlog.rev)
                     # Create a group generator and only pass in a changenode
                     # lookup function as we need to collect no information
                     # from filenodes.
-                    group = filerevlog.group(msng_filenode_lst,
-                                             lookup_filenode_link_func(fname))
+                    group = filerevlog.group(nodeiter,
+                                             lambda fnode: missingfnodes[fnode])
                     for chnk in group:
                         self.ui.progress(
                             _('bundling files'), cnt, item=fname, unit=_('chunks'))
                         cnt += 1
                         yield chnk
-                if fname in msng_filenode_set:
-                    # Don't need this anymore, toss it to free memory.
-                    del msng_filenode_set[fname]
             # Signal that no more groups are left.
             yield changegroup.closechunk()
             self.ui.progress(_('bundling files'), None)
@@ -1571,31 +1503,28 @@ class localrepository(repo.repository):
                 if log.linkrev(r) in revset:
                     yield log.node(r)
 
-        def lookuprevlink_func(revlog):
-            def lookuprevlink(n):
+        def lookuplinkrev_func(revlog):
+            def lookuplinkrev(n):
                 return cl.node(revlog.linkrev(revlog.rev(n)))
-            return lookuprevlink
+            return lookuplinkrev
 
         def gengroup():
             '''yield a sequence of changegroup chunks (strings)'''
             # construct a list of all changed files
-            changedfiles = {}
+            changedfiles = set()
             mmfs = {}
             collect = changegroup.collector(cl, mmfs, changedfiles)
 
-            cnt = 0
-            for chnk in cl.group(nodes, identity, collect):
+            for cnt, chnk in enumerate(cl.group(nodes, identity, collect)):
                 self.ui.progress(_('bundling changes'), cnt, unit=_('chunks'))
-                cnt += 1
                 yield chnk
             self.ui.progress(_('bundling changes'), None)
 
             mnfst = self.manifest
             nodeiter = gennodelst(mnfst)
-            cnt = 0
-            for chnk in mnfst.group(nodeiter, lookuprevlink_func(mnfst)):
+            for cnt, chnk in enumerate(mnfst.group(nodeiter,
+                                                   lookuplinkrev_func(mnfst))):
                 self.ui.progress(_('bundling manifests'), cnt, unit=_('chunks'))
-                cnt += 1
                 yield chnk
             self.ui.progress(_('bundling manifests'), None)
 
@@ -1609,7 +1538,7 @@ class localrepository(repo.repository):
                 if nodeiter:
                     yield changegroup.chunkheader(len(fname))
                     yield fname
-                    lookup = lookuprevlink_func(filerevlog)
+                    lookup = lookuplinkrev_func(filerevlog)
                     for chnk in filerevlog.group(nodeiter, lookup):
                         self.ui.progress(
                             _('bundling files'), cnt, item=fname, unit=_('chunks'))
