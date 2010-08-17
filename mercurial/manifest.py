@@ -36,6 +36,8 @@ class manifest(revlog.revlog):
 
     def readdelta(self, node):
         r = self.rev(node)
+        if self._parentdelta:
+            return self.parse(mdiff.patchtext(self.revdiff(self.deltaparent(r), r)))
         return self.parse(mdiff.patchtext(self.revdiff(r - 1, r)))
 
     def read(self, node):
@@ -84,7 +86,7 @@ class manifest(revlog.revlog):
                 hi = start
         end = advance(lo, '\0')
         found = m[lo:end]
-        if cmp(s, found) == 0:
+        if s == found:
             # we know that after the null there are 40 bytes of sha1
             end = advance(end + 40, '\n')
             return (lo, end + 1)
