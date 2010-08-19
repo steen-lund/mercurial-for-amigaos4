@@ -36,6 +36,8 @@ class manifest(revlog.revlog):
 
     def readdelta(self, node):
         r = self.rev(node)
+        if self._parentdelta:
+            return self.parse(mdiff.patchtext(self.revdiff(self.deltaparent(r), r)))
         return self.parse(mdiff.patchtext(self.revdiff(r - 1, r)))
 
     def read(self, node):
@@ -84,7 +86,7 @@ class manifest(revlog.revlog):
                 hi = start
         end = advance(lo, '\0')
         found = m[lo:end]
-        if cmp(s, found) == 0:
+        if s == found:
             # we know that after the null there are 40 bytes of sha1
             end = advance(end + 40, '\n')
             return (lo, end + 1)
@@ -186,11 +188,7 @@ class manifest(revlog.revlog):
             if dstart != None:
                 delta.append([dstart, dend, "".join(dline)])
             # apply the delta to the addlist, and get a delta for addrevision
-            cachedelta = addlistdelta(addlist, delta)
-
-            # the delta is only valid if we've been processing the tip revision
-            if p1 != self.tip():
-                cachedelta = None
+            cachedelta = (self.rev(p1), addlistdelta(addlist, delta))
             arraytext = addlist
             text = buffer(arraytext)
 
