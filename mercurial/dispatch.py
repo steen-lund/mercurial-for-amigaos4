@@ -6,7 +6,7 @@
 # GNU General Public License version 2 or any later version.
 
 from i18n import _
-import os, sys, atexit, signal, pdb, socket, errno, shlex, time
+import os, sys, atexit, signal, pdb, socket, errno, shlex, time, traceback, re
 import util, commands, hg, fancyopts, extensions, hook, error
 import cmdutil, encoding
 import ui as uimod
@@ -23,6 +23,8 @@ def dispatch(args):
             u.setconfig('ui', 'traceback', 'on')
     except util.Abort, inst:
         sys.stderr.write(_("abort: %s\n") % inst)
+        if inst.hint:
+            sys.stderr.write(_("(%s)\n") % inst.hint)
         return -1
     except error.ParseError, inst:
         if len(inst.args) > 1:
@@ -49,6 +51,8 @@ def _runcatch(ui, args):
         try:
             # enter the debugger before command execution
             if '--debugger' in args:
+                ui.warn(_("entering debugger - "
+                        "type c to continue starting hg or h for help\n"))
                 pdb.set_trace()
             try:
                 return _dispatch(ui, args)
@@ -57,6 +61,7 @@ def _runcatch(ui, args):
         except:
             # enter the debugger when we hit an exception
             if '--debugger' in args:
+                traceback.print_exc()
                 pdb.post_mortem(sys.exc_info()[2])
             ui.traceback()
             raise
@@ -113,6 +118,8 @@ def _runcatch(ui, args):
             commands.help_(ui, 'shortlist')
     except util.Abort, inst:
         ui.warn(_("abort: %s\n") % inst)
+        if inst.hint:
+            ui.warn(_("(%s)\n") % inst.hint)
     except ImportError, inst:
         ui.warn(_("abort: %s!\n") % inst)
         m = str(inst).split()[-1]
@@ -205,9 +212,38 @@ class cmdalias(object):
 
             return
 
+        if self.definition.startswith('!'):
+            def fn(ui, *args):
+                env = {'HG_ARGS': ' '.join((self.name,) + args)}
+                def _checkvar(m):
+                    if int(m.groups()[0]) <= len(args):
+                        return m.group()
+                    else:
+                        return ''
+                cmd = re.sub(r'\$(\d+)', _checkvar, self.definition[1:])
+                replace = dict((str(i + 1), arg) for i, arg in enumerate(args))
+                replace['0'] = self.name
+                replace['@'] = ' '.join(args)
+                cmd = util.interpolate(r'\$', replace, cmd)
+                return util.system(cmd, environ=env)
+            self.fn = fn
+            return
+
         args = shlex.split(self.definition)
         cmd = args.pop(0)
         args = map(util.expandpath, args)
+
+        for invalidarg in ("--cwd", "-R", "--repository", "--repo"):
+            if _earlygetopt([invalidarg], args):
+                def fn(ui, *args):
+                    ui.warn(_("error in definition for alias '%s': %s may only "
+                              "be given on the command line\n")
+                            % (self.name, invalidarg))
+                    return 1
+
+                self.fn = fn
+                self.badalias = True
+                return
 
         try:
             tableentry = cmdutil.findcmd(cmd, cmdtable, False)[1]
@@ -248,7 +284,10 @@ class cmdalias(object):
         if self.shadows:
             ui.debug("alias '%s' shadows command\n" % self.name)
 
-        return util.checksignature(self.fn)(ui, *args, **opts)
+        if self.definition.startswith('!'):
+            return self.fn(ui, *args, **opts)
+        else:
+            return util.checksignature(self.fn)(ui, *args, **opts)
 
 def addaliases(ui, cmdtable):
     # aliases are processed after extensions have been loaded, so they
@@ -485,6 +524,8 @@ def _dispatch(ui, args):
     elif rpath:
         ui.warn(_("warning: --repository ignored\n"))
 
+    msg = ' '.join(' ' in a and repr(a) or a for a in fullargs)
+    ui.log("command", msg + "\n")
     d = lambda: util.checksignature(func)(ui, *args, **cmdoptions)
     return runcommand(lui, repo, cmd, fullargs, ui, options, d,
                       cmdpats, cmdoptions)
