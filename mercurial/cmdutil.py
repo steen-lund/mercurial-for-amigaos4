@@ -638,7 +638,7 @@ def export(repo, revs, template='hg-%h.patch', fp=None, switch_parent=False,
         fp.write("# HG changeset patch\n")
         fp.write("# User %s\n" % ctx.user())
         fp.write("# Date %d %d\n" % ctx.date())
-        if branch and (branch != 'default'):
+        if branch and branch != 'default':
             fp.write("# Branch %s\n" % branch)
         fp.write("# Node ID %s\n" % hex(node))
         fp.write("# Parent  %s\n" % hex(prev))
@@ -1052,36 +1052,53 @@ def walkchangerevs(repo, match, opts, prepare):
     fncache = {}
     change = util.cachefunc(repo.changectx)
 
+    # First step is to fill wanted, the set of revisions that we want to yield.
+    # When it does not induce extra cost, we also fill fncache for revisions in
+    # wanted: a cache of filenames that were changed (ctx.files()) and that
+    # match the file filtering conditions.
+
     if not slowpath and not match.files():
         # No files, no patterns.  Display all revs.
         wanted = set(revs)
     copies = []
 
     if not slowpath:
-        # Only files, no patterns.  Check the history of each file.
-        def filerevgen(filelog, node):
+        # We only have to read through the filelog to find wanted revisions
+
+        minrev, maxrev = min(revs), max(revs)
+        def filerevgen(filelog, last):
+            """
+            Only files, no patterns.  Check the history of each file.
+
+            Examines filelog entries within minrev, maxrev linkrev range
+            Returns an iterator yielding (linkrev, parentlinkrevs, copied)
+            tuples in backwards order
+            """
             cl_count = len(repo)
-            if node is None:
-                last = len(filelog) - 1
-            else:
-                last = filelog.rev(node)
-            for i, window in increasing_windows(last, nullrev):
-                revs = []
-                for j in xrange(i - window, i + 1):
-                    n = filelog.node(j)
-                    revs.append((filelog.linkrev(j),
-                                 follow and filelog.renamed(n)))
-                for rev in reversed(revs):
-                    # only yield rev for which we have the changelog, it can
-                    # happen while doing "hg log" during a pull or commit
-                    if rev[0] < cl_count:
-                        yield rev
+            revs = []
+            for j in xrange(0, last + 1):
+                linkrev = filelog.linkrev(j)
+                if linkrev < minrev:
+                    continue
+                # only yield rev for which we have the changelog, it can
+                # happen while doing "hg log" during a pull or commit
+                if linkrev > maxrev or linkrev >= cl_count:
+                    break
+
+                parentlinkrevs = []
+                for p in filelog.parentrevs(j):
+                    if p != nullrev:
+                        parentlinkrevs.append(filelog.linkrev(p))
+                n = filelog.node(j)
+                revs.append((linkrev, parentlinkrevs,
+                             follow and filelog.renamed(n)))
+
+            return reversed(revs)
         def iterfiles():
             for filename in match.files():
                 yield filename, None
             for filename_node in copies:
                 yield filename_node
-        minrev, maxrev = min(revs), max(revs)
         for file_, node in iterfiles():
             filelog = repo.file(file_)
             if not len(filelog):
@@ -1095,31 +1112,43 @@ def walkchangerevs(repo, match, opts, prepare):
                     break
                 else:
                     continue
-            for rev, copied in filerevgen(filelog, node):
-                if rev <= maxrev:
-                    if rev < minrev:
-                        break
-                    fncache.setdefault(rev, [])
-                    fncache[rev].append(file_)
-                    wanted.add(rev)
-                    if copied:
-                        copies.append(copied)
+
+            if node is None:
+                last = len(filelog) - 1
+            else:
+                last = filelog.rev(node)
+
+
+            # keep track of all ancestors of the file
+            ancestors = set([filelog.linkrev(last)])
+
+            # iterate from latest to oldest revision
+            for rev, flparentlinkrevs, copied in filerevgen(filelog, last):
+                if rev not in ancestors:
+                    continue
+                # XXX insert 1327 fix here
+                if flparentlinkrevs:
+                    ancestors.update(flparentlinkrevs)
+
+                fncache.setdefault(rev, []).append(file_)
+                wanted.add(rev)
+                if copied:
+                    copies.append(copied)
     if slowpath:
+        # We have to read the changelog to match filenames against
+        # changed files
+
         if follow:
             raise util.Abort(_('can only follow copies/renames for explicit '
                                'filenames'))
 
         # The slow path checks files modified in every changeset.
-        def changerevgen():
-            for i, window in increasing_windows(len(repo) - 1, nullrev):
-                for j in xrange(i - window, i + 1):
-                    yield change(j)
-
-        for ctx in changerevgen():
+        for i in sorted(revs):
+            ctx = change(i)
             matches = filter(match, ctx.files())
             if matches:
-                fncache[ctx.rev()] = matches
-                wanted.add(ctx.rev())
+                fncache[i] = matches
+                wanted.add(i)
 
     class followfilter(object):
         def __init__(self, onlyfirst=False):
@@ -1168,6 +1197,8 @@ def walkchangerevs(repo, match, opts, prepare):
             if ff.match(x):
                 wanted.discard(x)
 
+    # Now that wanted is correctly initialized, we can iterate over the
+    # revision range, yielding only revisions in wanted.
     def iterate():
         if follow and not match.files():
             ff = followfilter(onlyfirst=opts.get('follow_first'))
@@ -1178,7 +1209,6 @@ def walkchangerevs(repo, match, opts, prepare):
                 return rev in wanted
 
         for i, window in increasing_windows(0, len(revs)):
-            change = util.cachefunc(repo.changectx)
             nrevs = [rev for rev in revs[i:i + window] if want(rev)]
             for rev in sorted(nrevs):
                 fns = fncache.get(rev)
