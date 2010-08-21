@@ -299,7 +299,7 @@ def reposetup(ui, repo):
 
             self.ui.debug("checking for updated bookmarks\n")
             rb = remote.listkeys('bookmarks')
-            changes = 0
+            changed = False
             for k in rb.keys():
                 if k in self._bookmarks:
                     nr, nl = rb[k], self._bookmarks[k]
@@ -310,12 +310,12 @@ def reposetup(ui, repo):
                             continue
                         if cr in cl.descendants():
                             self._bookmarks[k] = cr.node()
-                            changes += 1
+                            changed = True
                             self.ui.status(_("updating bookmark %s\n") % k)
                         else:
                             self.ui.warn(_("not updating divergent"
                                            " bookmark %s\n") % k)
-            if changes:
+            if changed:
                 write(repo)
 
             return result
@@ -446,7 +446,8 @@ def push(oldpush, ui, repo, dest=None, **opts):
                 ui.status(_("deleting remote bookmark %s\n") % b)
                 new = '' # delete
             else:
-                ui.warn(_('bookmark %s does not exist on the local or remote repository!\n') % b)
+                ui.warn(_('bookmark %s does not exist on the local'
+                          ' or remote repository!\n') % b)
                 return 2
             old = rb.get(b, '')
             r = other.pushkey('bookmarks', b, old, new)
@@ -463,7 +464,7 @@ def diffbookmarks(ui, repo, remote):
     lmarks = repo.listkeys('bookmarks')
     rmarks = remote.listkeys('bookmarks')
 
-    diff = set(rmarks) - set(lmarks)
+    diff = sorted(set(rmarks) - set(lmarks))
     for k in diff:
         ui.write("   %-25s %s\n" % (k, rmarks[k][:12]))
 
