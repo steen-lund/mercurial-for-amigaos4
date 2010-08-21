@@ -23,13 +23,20 @@ _compress = zlib.compress
 _decompress = zlib.decompress
 _sha = util.sha1
 
-# revlog flags
+# revlog header flags
 REVLOGV0 = 0
 REVLOGNG = 1
 REVLOGNGINLINEDATA = (1 << 16)
+REVLOGSHALLOW = (1 << 17)
 REVLOG_DEFAULT_FLAGS = REVLOGNGINLINEDATA
 REVLOG_DEFAULT_FORMAT = REVLOGNG
 REVLOG_DEFAULT_VERSION = REVLOG_DEFAULT_FORMAT | REVLOG_DEFAULT_FLAGS
+REVLOGNG_FLAGS = REVLOGNGINLINEDATA | REVLOGSHALLOW
+
+# revlog index flags
+REVIDX_PARENTDELTA  = 1
+REVIDX_PUNCHED_FLAG = 2
+REVIDX_KNOWN_FLAGS = REVIDX_PUNCHED_FLAG | REVIDX_PARENTDELTA
 
 # amount of data read unconditionally, should be >= 4
 # when not inline: threshold for using lazy index
@@ -131,7 +138,7 @@ class lazyparser(object):
         self.dataf = dataf
         self.s = struct.calcsize(indexformatng)
         self.datasize = size
-        self.l = size / self.s
+        self.l = size // self.s
         self.index = [None] * self.l
         self.map = {nullid: nullrev}
         self.allmap = 0
@@ -176,8 +183,8 @@ class lazyparser(object):
                 # limit blocksize so that we don't get too much data.
                 blocksize = max(self.datasize - blockstart, 0)
             data = self.dataf.read(blocksize)
-        lend = len(data) / self.s
-        i = blockstart / self.s
+        lend = len(data) // self.s
+        i = blockstart // self.s
         off = 0
         # lazyindex supports __delitem__
         if lend > len(self.index) - i:
@@ -420,7 +427,7 @@ class revlog(object):
     remove data, and can use some simple techniques to avoid the need
     for locking while reading.
     """
-    def __init__(self, opener, indexfile):
+    def __init__(self, opener, indexfile, shallowroot=None):
         """
         create a revlog object
 
@@ -434,12 +441,19 @@ class revlog(object):
         self._chunkcache = (0, '')
         self.nodemap = {nullid: nullrev}
         self.index = []
+        self._shallowroot = shallowroot
+        self._parentdelta = 0
 
         v = REVLOG_DEFAULT_VERSION
         if hasattr(opener, 'options') and 'defversion' in opener.options:
             v = opener.options['defversion']
             if v & REVLOGNG:
                 v |= REVLOGNGINLINEDATA
+            if v & REVLOGNG and 'parentdelta' in opener.options:
+                self._parentdelta = 1
+
+        if shallowroot:
+            v |= REVLOGSHALLOW
 
         i = ''
         try:
@@ -456,12 +470,13 @@ class revlog(object):
 
         self.version = v
         self._inline = v & REVLOGNGINLINEDATA
+        self._shallow = v & REVLOGSHALLOW
         flags = v & ~0xFFFF
         fmt = v & 0xFFFF
         if fmt == REVLOGV0 and flags:
             raise RevlogError(_("index %s unknown flags %#04x for format v0")
                               % (self.indexfile, flags >> 16))
-        elif fmt == REVLOGNG and flags & ~REVLOGNGINLINEDATA:
+        elif fmt == REVLOGNG and flags & ~REVLOGNG_FLAGS:
             raise RevlogError(_("index %s unknown flags %#04x for revlogng")
                               % (self.indexfile, flags >> 16))
         elif fmt > REVLOGNG:
@@ -533,6 +548,8 @@ class revlog(object):
         return self.index[rev][1]
     def base(self, rev):
         return self.index[rev][3]
+    def flags(self, rev):
+        return self.index[rev][0] & 0xFFFF
 
     def size(self, rev):
         """return the length of the uncompressed text for a given revision"""
@@ -999,9 +1016,18 @@ class revlog(object):
     def _chunkclear(self):
         self._chunkcache = (0, '')
 
+    def deltaparent(self, rev):
+        """return previous revision or parentrev according to flags"""
+        if self.base(rev) == rev:
+            return nullrev
+        elif self.flags(rev) & REVIDX_PARENTDELTA:
+            return self.parentrevs(rev)[0]
+        else:
+            return rev - 1
+
     def revdiff(self, rev1, rev2):
         """return or calculate a delta between two revisions"""
-        if rev1 + 1 == rev2 and self.base(rev1) == self.base(rev2):
+        if rev1 != nullrev and self.deltaparent(rev2) == rev1:
             return self._chunk(rev2)
 
         return mdiff.textdiff(self.revision(self.node(rev1)),
@@ -1009,10 +1035,13 @@ class revlog(object):
 
     def revision(self, node):
         """return an uncompressed revision of a given node"""
+        cachedrev = None
         if node == nullid:
             return ""
-        if self._cache and self._cache[0] == node:
-            return self._cache[2]
+        if self._cache:
+            if self._cache[0] == node:
+                return self._cache[2]
+            cachedrev = self._cache[1]
 
         # look up what we need to read
         text = None
@@ -1020,27 +1049,42 @@ class revlog(object):
         base = self.base(rev)
 
         # check rev flags
-        if self.index[rev][0] & 0xFFFF:
+        if self.flags(rev) & ~REVIDX_KNOWN_FLAGS:
             raise RevlogError(_('incompatible revision flag %x') %
-                              (self.index[rev][0] & 0xFFFF))
+                              (self.flags(rev) & ~REVIDX_KNOWN_FLAGS))
 
-        # do we have useful data cached?
-        if self._cache and self._cache[1] >= base and self._cache[1] < rev:
-            base = self._cache[1]
+        # build delta chain
+        self._loadindex(base, rev + 1)
+        chain = []
+        index = self.index # for performance
+        iterrev = rev
+        e = index[iterrev]
+        while iterrev != base and iterrev != cachedrev:
+            chain.append(iterrev)
+            if e[0] & REVIDX_PARENTDELTA:
+                iterrev = e[5]
+            else:
+                iterrev -= 1
+            e = index[iterrev]
+        chain.reverse()
+        base = iterrev
+
+        if iterrev == cachedrev:
+            # cache hit
             text = self._cache[2]
 
         # drop cache to save memory
         self._cache = None
 
-        self._loadindex(base, rev + 1)
         self._chunkraw(base, rev)
         if text is None:
             text = self._chunk(base)
 
-        bins = [self._chunk(r) for r in xrange(base + 1, rev + 1)]
+        bins = [self._chunk(r) for r in chain]
         text = mdiff.patches(text, bins)
         p1, p2 = self.parents(node)
-        if node != hash(text, p1, p2):
+        if (node != hash(text, p1, p2) and
+            not (self.flags(rev) & REVIDX_PUNCHED_FLAG)):
             raise RevlogError(_("integrity check failed on %s:%d")
                               % (self.indexfile, rev))
 
@@ -1086,7 +1130,7 @@ class revlog(object):
         tr.replace(self.indexfile, trindex * self._io.size)
         self._chunkclear()
 
-    def addrevision(self, text, transaction, link, p1, p2, d=None):
+    def addrevision(self, text, transaction, link, p1, p2, cachedelta=None):
         """add a revision to the log
 
         text - the revision data to add
@@ -1100,38 +1144,58 @@ class revlog(object):
             dfh = self.opener(self.datafile, "a")
         ifh = self.opener(self.indexfile, "a+")
         try:
-            return self._addrevision(text, transaction, link, p1, p2, d, ifh, dfh)
+            return self._addrevision(text, transaction, link, p1, p2,
+                                     cachedelta, ifh, dfh)
         finally:
             if dfh:
                 dfh.close()
             ifh.close()
 
-    def _addrevision(self, text, transaction, link, p1, p2, d, ifh, dfh):
+    def _addrevision(self, text, transaction, link, p1, p2,
+                     cachedelta, ifh, dfh):
         node = hash(text, p1, p2)
-        if node in self.nodemap:
+        if (node in self.nodemap and
+            (not self.flags(self.rev(node)) & REVIDX_PUNCHED_FLAG)):
             return node
 
         curr = len(self)
         prev = curr - 1
-        base = self.base(prev)
+        base = curr
         offset = self.end(prev)
+        flags = 0
+        d = None
 
-        if curr:
-            if not d:
-                ptext = self.revision(self.node(prev))
+        if self._parentdelta:
+            deltarev, deltanode = self.rev(p1), p1
+            flags = REVIDX_PARENTDELTA
+        else:
+            deltarev, deltanode = prev, self.node(prev)
+
+        # should we try to build a delta?
+        if deltarev != nullrev:
+            # can we use the cached delta?
+            if cachedelta:
+                cacherev, d = cachedelta
+                if cacherev != deltarev:
+                    d = None
+            if d is None:
+                ptext = self.revision(deltanode)
                 d = mdiff.textdiff(ptext, text)
             data = compress(d)
             l = len(data[1]) + len(data[0])
+            base = self.base(deltarev)
             dist = l + offset - self.start(base)
 
         # full versions are inserted when the needed deltas
         # become comparable to the uncompressed text
-        if not curr or dist > len(text) * 2:
+        # or the base revision is punched
+        if (d is None or dist > len(text) * 2 or
+            (self.flags(base) & REVIDX_PUNCHED_FLAG)):
             data = compress(text)
             l = len(data[1]) + len(data[0])
             base = curr
 
-        e = (offset_type(offset, 0), l, len(text),
+        e = (offset_type(offset, flags), l, len(text),
              base, link, self.rev(p1), self.rev(p2), node)
         self.index.insert(-1, e)
         self.nodemap[node] = curr
@@ -1157,15 +1221,19 @@ class revlog(object):
             self._cache = (node, curr, text)
         return node
 
-    def group(self, nodelist, lookup, infocollect=None):
+    def group(self, nodelist, lookup, infocollect=None, fullrev=False):
         """Calculate a delta group, yielding a sequence of changegroup chunks
         (strings).
 
         Given a list of changeset revs, return a set of deltas and
-        metadata corresponding to nodes. the first delta is
-        parent(nodes[0]) -> nodes[0] the receiver is guaranteed to
-        have this parent as it has all history before these
-        changesets. parent is parent[0]
+        metadata corresponding to nodes. The first delta is
+        first parent(nodelist[0]) -> nodelist[0], the receiver is
+        guaranteed to have this parent as it has all history before
+        these changesets. In the case firstparent is nullrev the
+        changegroup starts with a full revision.
+        fullrev forces the insertion of the full revision, necessary
+        in the case of shallow clones where the first parent might
+        not exist at the reciever.
         """
 
         revs = [self.rev(n) for n in nodelist]
@@ -1178,6 +1246,8 @@ class revlog(object):
         # add the parent of the first rev
         p = self.parentrevs(revs[0])[0]
         revs.insert(0, p)
+        if p == nullrev:
+            fullrev = True
 
         # build deltas
         for d in xrange(len(revs) - 1):
@@ -1189,21 +1259,15 @@ class revlog(object):
 
             p = self.parents(nb)
             meta = nb + p[0] + p[1] + lookup(nb)
-            if a == -1:
+            if fullrev:
                 d = self.revision(nb)
                 meta += mdiff.trivialdiffheader(len(d))
+                fullrev = False
             else:
                 d = self.revdiff(a, b)
             yield changegroup.chunkheader(len(meta) + len(d))
             yield meta
-            if len(d) > 2**20:
-                pos = 0
-                while pos < len(d):
-                    pos2 = pos + 2 ** 18
-                    yield d[pos:pos2]
-                    pos = pos2
-            else:
-                yield d
+            yield d
 
         yield changegroup.closechunk()
 
@@ -1242,7 +1306,8 @@ class revlog(object):
             for chunk in revs:
                 node, p1, p2, cs = struct.unpack("20s20s20s20s", chunk[:80])
                 link = linkmapper(cs)
-                if node in self.nodemap:
+                if (node in self.nodemap and
+                    (not self.flags(self.rev(node)) & REVIDX_PUNCHED_FLAG)):
                     # this can happen if two branches make the same change
                     chain = node
                     continue
@@ -1251,7 +1316,21 @@ class revlog(object):
 
                 for p in (p1, p2):
                     if not p in self.nodemap:
-                        raise LookupError(p, self.indexfile, _('unknown parent'))
+                        if self._shallow:
+                            # add null entries for missing parents
+                            if base == nullrev:
+                                base = len(self)
+                            e = (offset_type(end, REVIDX_PUNCHED_FLAG),
+                                 0, 0, base, nullrev, nullrev, nullrev, p)
+                            self.index.insert(-1, e)
+                            self.nodemap[p] = r
+                            entry = self._io.packentry(e, self.node,
+                                                       self.version, r)
+                            ifh.write(entry)
+                            t, r = r, r + 1
+                        else:
+                            raise LookupError(p, self.indexfile,
+                                              _('unknown parent'))
 
                 if not chain:
                     # retrieve the parent revision of the delta chain
@@ -1278,6 +1357,7 @@ class revlog(object):
                     text = self.revision(chain)
                     if len(text) == 0:
                         # skip over trivial delta header
+                        # text == '' in the case of nullrev or punched revision
                         text = buffer(delta, 12)
                     else:
                         text = mdiff.patches(text, [delta])

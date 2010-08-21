@@ -73,7 +73,7 @@ class mergestate(object):
 def _checkunknown(wctx, mctx):
     "check for collisions between unknown files and files in mctx"
     for f in wctx.unknown():
-        if f in mctx and mctx[f].cmp(wctx[f].data()):
+        if f in mctx and mctx[f].cmp(wctx[f]):
             raise util.Abort(_("untracked file in working directory differs"
                                " from file in requested revision: '%s'") % f)
 
@@ -117,7 +117,7 @@ def _forgetremoved(wctx, mctx, branchmerge):
 
 def manifestmerge(repo, p1, p2, pa, overwrite, partial):
     """
-    Merge p1 and p2 with ancestor ma and generate merge action list
+    Merge p1 and p2 with ancestor pa and generate merge action list
 
     overwrite = whether we clobber working files
     partial = function to filter file lists
