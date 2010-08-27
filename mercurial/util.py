@@ -38,9 +38,15 @@ def _fastsha1(s):
 
 import __builtin__
 
-def fakebuffer(sliceable, offset=0):
-    return sliceable[offset:]
-if not hasattr(__builtin__, 'buffer'):
+if sys.version_info[0] < 3:
+    def fakebuffer(sliceable, offset=0):
+        return sliceable[offset:]
+else:
+    def fakebuffer(sliceable, offset=0):
+        return memoryview(sliceable)[offset:]
+try:
+    buffer
+except NameError:
     __builtin__.buffer = fakebuffer
 
 import subprocess
@@ -424,15 +430,6 @@ def checksignature(func):
             raise
 
     return check
-
-# os.path.lexists is not available on python2.3
-def lexists(filename):
-    "test whether a file with this name exists. does not follow symlinks"
-    try:
-        os.lstat(filename)
-    except:
-        return False
-    return True
 
 def unlink(f):
     """unlink and remove the directory if it is empty"""
@@ -908,7 +905,17 @@ class chunkbuffer(object):
     def __init__(self, in_iter):
         """in_iter is the iterator that's iterating over the input chunks.
         targetsize is how big a buffer to try to maintain."""
-        self.iter = iter(in_iter)
+        def splitbig(chunks):
+            for chunk in chunks:
+                if len(chunk) > 2**20:
+                    pos = 0
+                    while pos < len(chunk):
+                        end = pos + 2 ** 18
+                        yield chunk[pos:end]
+                        pos = end
+                else:
+                    yield chunk
+        self.iter = splitbig(in_iter)
         self._queue = []
 
     def read(self, l):
@@ -938,8 +945,7 @@ class chunkbuffer(object):
                 buf += chunk
 
         return buf
-
-
+        
 def filechunkiter(f, size=65536, limit=None):
     """Create a generator that produces the data in the file size
     (default 65536) bytes at a time, up to optional limit (default is
@@ -1393,3 +1399,18 @@ def termwidth():
         except ValueError:
             pass
     return termwidth_()
+
+def interpolate(prefix, mapping, s, fn=None):
+    """Return the result of interpolating items in the mapping into string s.
+
+    prefix is a single character string, or a two character string with
+    a backslash as the first character if the prefix needs to be escaped in
+    a regular expression.
+
+    fn is an optional function that will be applied to the replacement text
+    just before replacement.
+    """
+    fn = fn or (lambda s: s)
+    r = re.compile(r'%s(%s)' % (prefix, '|'.join(mapping.keys())))
+    return r.sub(lambda x: fn(mapping[x.group()[1:]]), s)
+
