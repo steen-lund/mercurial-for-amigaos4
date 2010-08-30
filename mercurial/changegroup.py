@@ -61,8 +61,7 @@ def collector(cl, mmfs, files):
     # We want to gather manifests needed and filelogs affected.
     def collect(node):
         c = cl.read(node)
-        for fn in c[3]:
-            files.setdefault(fn, fn)
+        files.update(c[3])
         mmfs.setdefault(c[0], node)
     return collect
 
@@ -121,34 +120,51 @@ def writebundle(cg, filename, bundletype):
         if cleanup is not None:
             os.unlink(cleanup)
 
-def unbundle(header, fh):
-    if header == 'HG10UN':
+def decompressor(fh, alg):
+    if alg == 'UN':
         return fh
-    elif not header.startswith('HG'):
-        # old client with uncompressed bundle
-        def generator(f):
-            yield header
-            for chunk in f:
-                yield chunk
-    elif header == 'HG10GZ':
+    elif alg == 'GZ':
         def generator(f):
             zd = zlib.decompressobj()
             for chunk in f:
                 yield zd.decompress(chunk)
-    elif header == 'HG10BZ':
+    elif alg == 'BZ':
         def generator(f):
             zd = bz2.BZ2Decompressor()
             zd.decompress("BZ")
             for chunk in util.filechunkiter(f, 4096):
                 yield zd.decompress(chunk)
-    return util.chunkbuffer(generator(fh))
+    else:
+        raise util.Abort("unknown bundle compression '%s'" % alg)
+    return generator(fh)
+
+class unbundle10(object):
+    def __init__(self, fh, alg):
+        self._stream = util.chunkbuffer(decompressor(fh, alg))
+        self._type = alg
+    def compressed(self):
+        return self._type != 'UN'
+    def read(self, l):
+        return self._stream.read(l)
 
 def readbundle(fh, fname):
     header = fh.read(6)
-    if not header.startswith('HG'):
-        raise util.Abort(_('%s: not a Mercurial bundle file') % fname)
-    if not header.startswith('HG10'):
-        raise util.Abort(_('%s: unknown bundle version') % fname)
-    elif header not in bundletypes:
-        raise util.Abort(_('%s: unknown bundle compression type') % fname)
-    return unbundle(header, fh)
+
+    if not fname:
+        fname = "stream"
+        if not header.startswith('HG') and header.startswith('\0'):
+            # headerless bundle, clean things up
+            def fixup(f, h):
+                yield h
+                for x in f:
+                    yield x
+            fh = fixup(fh, header)
+            header = "HG10UN"
+
+    magic, version, alg = header[0:2], header[2:4], header[4:6]
+
+    if magic != 'HG':
+        raise util.Abort(_('%s: not a Mercurial bundle') % fname)
+    if version != '10':
+        raise util.Abort(_('%s: unknown bundle version %s') % (fname, version))
+    return unbundle10(fh, alg)
