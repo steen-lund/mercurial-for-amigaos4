@@ -83,7 +83,7 @@ def addremove(ui, repo, *pats, **opts):
     Returns 0 if all files are successfully added.
     """
     try:
-        sim = float(opts.get('similarity') or 0)
+        sim = float(opts.get('similarity') or 100)
     except ValueError:
         raise util.Abort(_('similarity must be a number'))
     if sim < 0 or sim > 100:
@@ -197,20 +197,7 @@ def archive(ui, repo, dest, **opts):
     if os.path.realpath(dest) == repo.root:
         raise util.Abort(_('repository root cannot be destination'))
 
-    def guess_type():
-        exttypes = {
-            'tar': ['.tar'],
-            'tbz2': ['.tbz2', '.tar.bz2'],
-            'tgz': ['.tgz', '.tar.gz'],
-            'zip': ['.zip'],
-        }
-
-        for type, extensions in exttypes.items():
-            if util.any(dest.endswith(ext) for ext in extensions):
-                return type
-        return None
-
-    kind = opts.get('type') or guess_type() or 'files'
+    kind = opts.get('type') or archival.guesskind(dest) or 'files'
     prefix = opts.get('prefix')
 
     if dest == '-':
@@ -525,16 +512,22 @@ def branches(ui, repo, active=False, closed=False):
             else:
                 hn = repo.lookup(node)
                 if isactive:
+                    label = 'branches.active'
                     notice = ''
                 elif hn not in repo.branchheads(tag, closed=False):
                     if not closed:
                         continue
+                    label = 'branches.closed'
                     notice = _(' (closed)')
                 else:
+                    label = 'branches.inactive'
                     notice = _(' (inactive)')
+                if tag == repo.dirstate.branch():
+                    label = 'branches.current'
                 rev = str(node).rjust(31 - encoding.colwidth(encodedtag))
-                data = encodedtag, rev, hexfunc(hn), notice
-                ui.write("%s %s:%s%s\n" % data)
+                rev = ui.label('%s:%s' % (rev, hexfunc(hn)), 'log.changeset')
+                encodedtag = ui.label(encodedtag, label)
+                ui.write("%s %s%s\n" % (encodedtag, rev, notice))
 
 def bundle(ui, repo, fname, dest=None, **opts):
     """create a changegroup file
@@ -905,7 +898,7 @@ def debugbuilddag(ui, repo, text,
         # we don't want to fail in merges during buildup
         os.environ['HGMERGE'] = 'internal:local'
 
-    def writefile(fname, text, fmode="w"):
+    def writefile(fname, text, fmode="wb"):
         f = open(fname, fmode)
         try:
             f.write(text)
@@ -940,7 +933,7 @@ def debugbuilddag(ui, repo, text,
                 merge(ui, repo, node=p2)
 
             if mergeable_file:
-                f = open("mf", "r+")
+                f = open("mf", "rb+")
                 try:
                     lines = f.read().split("\n")
                     lines[id * linesperrev] += " r%i" % id
@@ -950,7 +943,7 @@ def debugbuilddag(ui, repo, text,
                     f.close()
 
             if appended_file:
-                writefile("af", "r%i\n" % id, "a")
+                writefile("af", "r%i\n" % id, "ab")
 
             if overwritten_file:
                 writefile("of", "r%i\n" % id)
@@ -1221,9 +1214,15 @@ def debugdag(ui, repo, file_=None, *revs, **opts):
         ui.write(line)
         ui.write("\n")
 
-def debugdata(ui, file_, rev):
+def debugdata(ui, repo, file_, rev):
     """dump the contents of a data file revision"""
-    r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_[:-2] + ".i")
+    r = None
+    if repo:
+        filelog = repo.file(file_)
+        if len(filelog):
+            r = filelog
+    if not r:
+        r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_[:-2] + ".i")
     try:
         ui.write(r.revision(r.lookup(rev)))
     except KeyError:
@@ -1241,9 +1240,15 @@ def debugdate(ui, date, range=None, **opts):
         m = util.matchdate(range)
         ui.write("match: %s\n" % m(d[0]))
 
-def debugindex(ui, file_):
+def debugindex(ui, repo, file_):
     """dump the contents of an index file"""
-    r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
+    r = None
+    if repo:
+        filelog = repo.file(file_)
+        if len(filelog):
+            r = filelog
+    if not r:
+        r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
     ui.write("   rev    offset  length   base linkrev"
              " nodeid       p1           p2\n")
     for i in r:
@@ -1256,9 +1261,15 @@ def debugindex(ui, file_):
                 i, r.start(i), r.length(i), r.base(i), r.linkrev(i),
             short(node), short(pp[0]), short(pp[1])))
 
-def debugindexdot(ui, file_):
+def debugindexdot(ui, repo, file_):
     """dump an index DAG as a graphviz dot file"""
-    r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
+    r = None
+    if repo:
+        filelog = repo.file(file_)
+        if len(filelog):
+            r = filelog
+    if not r:
+        r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
     ui.write("digraph G {\n")
     for i in r:
         node = r.node(i)
@@ -1293,9 +1304,10 @@ def debuginstall(ui):
         problems += 1
 
     # compiled modules
-    ui.status(_("Checking extensions...\n"))
+    ui.status(_("Checking installed modules (%s)...\n")
+              % os.path.dirname(__file__))
     try:
-        import bdiff, mpatch, base85
+        import bdiff, mpatch, base85, osutil
     except Exception, inst:
         ui.write(" %s\n" % inst)
         ui.write(_(" One or more extensions could not be found"))
@@ -1369,7 +1381,7 @@ def debuginstall(ui):
     # check username
     ui.status(_("Checking username...\n"))
     try:
-        user = ui.username()
+        ui.username()
     except util.Abort, e:
         ui.write(" %s\n" % e)
         ui.write(_(" (specify a username in your configuration file)\n"))
@@ -1478,11 +1490,11 @@ def export(ui, repo, *changesets, **opts):
     given using a format string. The formatting rules are as follows:
 
     :``%%``: literal "%" character
-    :``%H``: changeset hash (40 bytes of hexadecimal)
+    :``%H``: changeset hash (40 hexadecimal digits)
     :``%N``: number of patches being generated
     :``%R``: changeset revision number
     :``%b``: basename of the exporting repository
-    :``%h``: short-form changeset hash (12 bytes of hexadecimal)
+    :``%h``: short-form changeset hash (12 hexadecimal digits)
     :``%n``: zero-padded sequence number, starting at 1
     :``%r``: zero-padded changeset revision number
 
@@ -1874,7 +1886,10 @@ def help_(ui, name=None, with_version=False, unknowncmd=False):
         if not doc:
             doc = _("(no help text available)")
         if hasattr(entry[0], 'definition'):  # aliased command
-            doc = _('alias for: hg %s\n\n%s') % (entry[0].definition, doc)
+            if entry[0].definition.startswith('!'):  # shell alias
+                doc = _('shell alias for::\n\n    %s') % entry[0].definition[1:]
+            else:
+                doc = _('alias for: hg %s\n\n%s') % (entry[0].definition, doc)
         if ui.quiet:
             doc = doc.splitlines()[0]
         keep = ui.verbose and ['verbose'] or []
@@ -3082,8 +3097,8 @@ def revert(ui, repo, *pats, **opts):
     Returns 0 on success.
     """
 
-    if opts["date"]:
-        if opts["rev"]:
+    if opts.get("date"):
+        if opts.get("rev"):
             raise util.Abort(_("you can't specify a revision and a date"))
         opts["rev"] = cmdutil.finddate(ui, repo, opts["date"])
 
@@ -3175,7 +3190,8 @@ def revert(ui, repo, *pats, **opts):
             target = repo.wjoin(abs)
             def handle(xlist, dobackup):
                 xlist[0].append(abs)
-                if dobackup and not opts.get('no_backup') and util.lexists(target):
+                if (dobackup and not opts.get('no_backup') and
+                    os.path.lexists(target)):
                     bakname = "%s.orig" % rel
                     ui.note(_('saving current version of %s as %s\n') %
                             (rel, bakname))
@@ -3340,7 +3356,7 @@ def serve(ui, repo, **opts):
 
     # this way we can check if something was given in the command-line
     if opts.get('port'):
-        opts['port'] = int(opts.get('port'))
+        opts['port'] = util.getport(opts.get('port'))
 
     baseui = repo and repo.baseui or ui
     optlist = ("name templates style address port prefix ipv6"
@@ -4478,7 +4494,7 @@ table = {
     "version": (version_, []),
 }
 
-norepo = ("clone init version help debugcommands debugcomplete debugdata"
-          " debugindex debugindexdot debugdate debuginstall debugfsinfo"
-          " debugpushkey")
-optionalrepo = ("identify paths serve showconfig debugancestor debugdag")
+norepo = ("clone init version help debugcommands debugcomplete"
+          " debugdate debuginstall debugfsinfo debugpushkey")
+optionalrepo = ("identify paths serve showconfig debugancestor debugdag"
+                " debugdata debugindex debugindexdot")

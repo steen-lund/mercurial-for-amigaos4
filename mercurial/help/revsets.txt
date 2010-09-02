@@ -58,8 +58,7 @@ The following predicates are supported:
   Alias for ``user(string)``.
 
 ``branch(set)``
-  The branch names are found for changesets in set, and the result is
-  all changesets belonging to one those branches.
+  All changesets belonging to the branches of changesets in set.
 
 ``children(set)``
   Child changesets of changesets in set.
@@ -74,10 +73,10 @@ The following predicates are supported:
   Changesets within the interval, see :hg:`help dates`.
 
 ``descendants(set)``
-  Changesets which are decendants of changesets in set.
+  Changesets which are descendants of changesets in set.
 
 ``file(pattern)``
-  Changesets which manually affected files matching pattern.
+  Changesets affecting files matched by pattern.
 
 ``follow()``
   An alias for ``::.`` (ancestors of the working copy's first parent).
@@ -101,14 +100,18 @@ The following predicates are supported:
 ``max(set)``
   Changeset with highest revision number in set.
 
+``min(set)``
+  Changeset with lowest revision number in set.
+
 ``merge()``
   Changeset is a merge changeset.
 
 ``modifies(pattern)``
-  Changesets which modify files matching pattern.
+  Changesets modifying files matched by pattern.
 
 ``outgoing([path])``
-  Changesets missing in path.
+  Changesets not found in the specified destination repository, or the
+  default push location.
 
 ``p1(set)``
   First parent of changesets in set.
@@ -118,6 +121,10 @@ The following predicates are supported:
 
 ``parents(set)``
   The set of all parents for all changesets in set.
+
+``present(set)``
+  An empty set, if any revision in set isn't found; otherwise,
+  all revisions in set.
 
 ``removes(pattern)``
   Changesets which remove files matching pattern.

@@ -918,7 +918,7 @@ def selectfile(afile_orig, bfile_orig, hunk, strip):
     nulla = afile_orig == "/dev/null"
     nullb = bfile_orig == "/dev/null"
     abase, afile = pathstrip(afile_orig, strip)
-    gooda = not nulla and util.lexists(afile)
+    gooda = not nulla and os.path.lexists(afile)
     bbase, bfile = pathstrip(bfile_orig, strip)
     if afile == bfile:
         goodb = gooda
@@ -927,8 +927,8 @@ def selectfile(afile_orig, bfile_orig, hunk, strip):
     createfunc = hunk.createfile
     missing = not goodb and not gooda and not createfunc()
 
-    # some diff programs apparently produce create patches where the
-    # afile is not /dev/null, but afile starts with bfile
+    # some diff programs apparently produce patches where the afile is
+    # not /dev/null, but afile starts with bfile
     abasedir = afile[:afile.rfind('/') + 1]
     bbasedir = bfile[:bfile.rfind('/') + 1]
     if missing and abasedir == bbasedir and afile.startswith(bfile):
@@ -1352,7 +1352,7 @@ def b85diff(to, tn):
     '''print base85-encoded binary diff'''
     def gitindex(text):
         if not text:
-            return '0' * 40
+            return hex(nullid)
         l = len(text)
         s = util.sha1('blob %d\0' % l)
         s.update(text)
