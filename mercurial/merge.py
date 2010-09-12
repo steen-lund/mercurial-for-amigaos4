@@ -73,7 +73,7 @@ class mergestate(object):
 def _checkunknown(wctx, mctx):
     "check for collisions between unknown files and files in mctx"
     for f in wctx.unknown():
-        if f in mctx and mctx[f].cmp(wctx[f].data()):
+        if f in mctx and mctx[f].cmp(wctx[f]):
             raise util.Abort(_("untracked file in working directory differs"
                                " from file in requested revision: '%s'") % f)
 
@@ -117,7 +117,7 @@ def _forgetremoved(wctx, mctx, branchmerge):
 
 def manifestmerge(repo, p1, p2, pa, overwrite, partial):
     """
-    Merge p1 and p2 with ancestor ma and generate merge action list
+    Merge p1 and p2 with ancestor pa and generate merge action list
 
     overwrite = whether we clobber working files
     partial = function to filter file lists
@@ -282,7 +282,7 @@ def applyupdates(repo, action, wctx, mctx, actx):
 
     # remove renamed files after safely stored
     for f in moves:
-        if util.lexists(repo.wjoin(f)):
+        if os.path.lexists(repo.wjoin(f)):
             repo.ui.debug("removing %s\n" % f)
             os.unlink(repo.wjoin(f))
 
@@ -320,7 +320,7 @@ def applyupdates(repo, action, wctx, mctx, actx):
                 else:
                     merged += 1
             util.set_flags(repo.wjoin(fd), 'l' in flags, 'x' in flags)
-            if f != fd and move and util.lexists(repo.wjoin(f)):
+            if f != fd and move and os.path.lexists(repo.wjoin(f)):
                 repo.ui.debug("removing %s\n" % f)
                 os.unlink(repo.wjoin(f))
         elif m == "g": # get

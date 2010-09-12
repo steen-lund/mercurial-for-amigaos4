@@ -918,7 +918,7 @@ def selectfile(afile_orig, bfile_orig, hunk, strip):
     nulla = afile_orig == "/dev/null"
     nullb = bfile_orig == "/dev/null"
     abase, afile = pathstrip(afile_orig, strip)
-    gooda = not nulla and util.lexists(afile)
+    gooda = not nulla and os.path.lexists(afile)
     bbase, bfile = pathstrip(bfile_orig, strip)
     if afile == bfile:
         goodb = gooda
@@ -927,8 +927,8 @@ def selectfile(afile_orig, bfile_orig, hunk, strip):
     createfunc = hunk.createfile
     missing = not goodb and not gooda and not createfunc()
 
-    # some diff programs apparently produce create patches where the
-    # afile is not /dev/null, but afile starts with bfile
+    # some diff programs apparently produce patches where the afile is
+    # not /dev/null, but afile starts with bfile
     abasedir = afile[:afile.rfind('/') + 1]
     bbasedir = bfile[:bfile.rfind('/') + 1]
     if missing and abasedir == bbasedir and afile.startswith(bfile):
@@ -1352,7 +1352,7 @@ def b85diff(to, tn):
     '''print base85-encoded binary diff'''
     def gitindex(text):
         if not text:
-            return '0' * 40
+            return hex(nullid)
         l = len(text)
         s = util.sha1('blob %d\0' % l)
         s.update(text)
@@ -1404,7 +1404,7 @@ def diffopts(ui, opts=None, untrusted=False):
         context=get('unified', getter=ui.config))
 
 def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None,
-         losedatafn=None):
+         losedatafn=None, prefix=''):
     '''yields diff of changes to files between two nodes, or node and
     working directory.
 
@@ -1418,6 +1418,9 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None,
     called with the name of current file being diffed as 'fn'. If set
     to None, patches will always be upgraded to git format when
     necessary.
+
+    prefix is a filename prefix that is prepended to all filenames on
+    display (used for subrepos).
     '''
 
     if opts is None:
@@ -1462,7 +1465,7 @@ def diff(repo, node1=None, node2=None, match=None, changes=None, opts=None,
         copy = copies.copies(repo, ctx1, ctx2, repo[nullid])[0]
 
     difffn = lambda opts, losedata: trydiff(repo, revs, ctx1, ctx2,
-                 modified, added, removed, copy, getfilectx, opts, losedata)
+                 modified, added, removed, copy, getfilectx, opts, losedata, prefix)
     if opts.upgrade and not opts.git:
         try:
             def losedata(fn):
@@ -1518,7 +1521,10 @@ def _addmodehdr(header, omode, nmode):
         header.append('new mode %s\n' % nmode)
 
 def trydiff(repo, revs, ctx1, ctx2, modified, added, removed,
-            copy, getfilectx, opts, losedatafn):
+            copy, getfilectx, opts, losedatafn, prefix):
+
+    def join(f):
+        return os.path.join(prefix, f)
 
     date1 = util.datestr(ctx1.date())
     man1 = ctx1.manifest()
@@ -1557,8 +1563,8 @@ def trydiff(repo, revs, ctx1, ctx2, modified, added, removed,
                             gone.add(a)
                         else:
                             op = 'copy'
-                        header.append('%s from %s\n' % (op, a))
-                        header.append('%s to %s\n' % (op, f))
+                        header.append('%s from %s\n' % (op, join(a)))
+                        header.append('%s to %s\n' % (op, join(f)))
                         to = getfilectx(a, ctx1).data()
                     else:
                         losedatafn(f)
@@ -1600,7 +1606,7 @@ def trydiff(repo, revs, ctx1, ctx2, modified, added, removed,
                 elif binary or nflag != oflag:
                     losedatafn(f)
             if opts.git:
-                header.insert(0, mdiff.diffline(revs, a, b, opts))
+                header.insert(0, mdiff.diffline(revs, join(a), join(b), opts))
 
         if dodiff:
             if dodiff == 'binary':
@@ -1609,7 +1615,7 @@ def trydiff(repo, revs, ctx1, ctx2, modified, added, removed,
                 text = mdiff.unidiff(to, date1,
                                     # ctx2 date may be dynamic
                                     tn, util.datestr(ctx2.date()),
-                                    a, b, revs, opts=opts)
+                                    join(a), join(b), revs, opts=opts)
             if header and (text or len(header) > 1):
                 yield ''.join(header)
             if text:
