@@ -28,9 +28,46 @@ echo %% switch queue
 hg qqueue foo
 hg qqueue
 
+echo %% list queues, quiet
+hg qqueue --quiet
+
 echo %% fail creating queue with already existing name
 hg qqueue --create foo
 hg qqueue
+
+echo %% create new queue for rename
+hg qqueue --create bar
+hg qqueue
+
+echo %% rename queue, same name
+hg qqueue --rename bar
+
+echo %% rename queue to existing
+hg qqueue --rename foo
+
+echo %% rename queue
+hg qqueue --rename buz
+hg qqueue
+
+echo %% switch back to previous queue
+hg qqueue foo
+hg qqueue --delete buz
+hg qqueue
+
+echo %% create queue for purge
+hg qqueue --create purge-me
+hg qqueue
+
+echo %% create patch for purge
+hg qnew patch-purge-me
+ls -1d .hg/patches-purge-me 2>/dev/null || true
+hg qpop -a
+
+echo %% purge queue
+hg qqueue foo
+hg qqueue --purge purge-me
+hg qqueue
+ls -1d .hg/patches-purge-me 2>/dev/null || true
 
 echo %% unapplied patches
 hg qun
