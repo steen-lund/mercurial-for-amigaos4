@@ -8,7 +8,7 @@
 
 import os
 from mercurial import ui, hg, hook, error, encoding, templater
-from common import get_mtime, ErrorResponse, permhooks
+from common import get_mtime, ErrorResponse, permhooks, caching
 from common import HTTP_OK, HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_SERVER_ERROR
 from request import wsgirequest
 import webcommands, protocol, webutil
@@ -112,24 +112,18 @@ class hgweb(object):
         # and the clients always use the old URL structure
 
         cmd = req.form.get('cmd', [''])[0]
-        if cmd and cmd in protocol.__all__:
+        if protocol.iscmd(cmd):
             if query:
                 raise ErrorResponse(HTTP_NOT_FOUND)
-            try:
-                if cmd in perms:
-                    try:
-                        self.check_perm(req, perms[cmd])
-                    except ErrorResponse, inst:
-                        if cmd == 'unbundle':
-                            req.drain()
-                        raise
-                method = getattr(protocol, cmd)
-                return method(self.repo, req)
-            except ErrorResponse, inst:
-                req.respond(inst, protocol.HGTYPE)
-                if not inst.message:
-                    return []
-                return '0\n%s\n' % inst.message,
+            if cmd in perms:
+                try:
+                    self.check_perm(req, perms[cmd])
+                except ErrorResponse, inst:
+                    if cmd == 'unbundle':
+                        req.drain()
+                    req.respond(inst, protocol.HGTYPE)
+                    return '0\n%s\n' % inst.message
+            return protocol.call(self.repo, req, cmd)
 
         # translate user-visible url structure to internal structure
 
@@ -184,6 +178,7 @@ class hgweb(object):
                 req.form['cmd'] = [tmpl.cache['default']]
                 cmd = req.form['cmd'][0]
 
+            caching(self, req) # sets ETag header or raises NOT_MODIFIED
             if cmd not in webcommands.__all__:
                 msg = 'no such method: %s' % cmd
                 raise ErrorResponse(HTTP_BAD_REQUEST, msg)
