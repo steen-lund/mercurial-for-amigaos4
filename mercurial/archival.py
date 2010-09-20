@@ -150,6 +150,13 @@ class zipit(object):
         self.z = zipfile.ZipFile(dest, 'w',
                                  compress and zipfile.ZIP_DEFLATED or
                                  zipfile.ZIP_STORED)
+
+        # Python's zipfile module emits deprecation warnings if we try
+        # to store files with a date before 1980.
+        epoch = 315532800 # calendar.timegm((1980, 1, 1, 0, 0, 0, 1, 1, 0))
+        if mtime < epoch:
+            mtime = epoch
+
         self.date_time = time.gmtime(mtime)[:6]
 
     def addfile(self, name, mode, islink, data):
@@ -198,7 +205,7 @@ archivers = {
     }
 
 def archive(repo, dest, node, kind, decode=True, matchfn=None,
-            prefix=None, mtime=None):
+            prefix=None, mtime=None, subrepos=False):
     '''create archive of repo as it was at node.
 
     dest can be name of directory, name of archive file, or file
@@ -256,4 +263,10 @@ def archive(repo, dest, node, kind, decode=True, matchfn=None,
     for f in ctx:
         ff = ctx.flags(f)
         write(f, 'x' in ff and 0755 or 0644, 'l' in ff, ctx[f].data)
+
+    if subrepos:
+        for subpath in ctx.substate:
+            sub = ctx.sub(subpath)
+            sub.archive(archiver, prefix)
+
     archiver.done()
