@@ -9,7 +9,7 @@ from node import hex, nullid, nullrev, short
 from lock import release
 from i18n import _, gettext
 import os, re, sys, difflib, time, tempfile
-import hg, util, revlog, bundlerepo, extensions, copies, error
+import hg, util, revlog, extensions, copies, error
 import patch, help, mdiff, url, encoding, templatekw, discovery
 import archival, changegroup, cmdutil, sshserver, hbisect, hgweb, hgweb.server
 import merge as mergemod
@@ -46,21 +46,10 @@ def add(ui, repo, *pats, **opts):
     Returns 0 if all files are successfully added.
     """
 
-    bad = []
-    names = []
     m = cmdutil.match(repo, pats, opts)
-    oldbad = m.bad
-    m.bad = lambda x, y: bad.append(x) or oldbad(x, y)
-
-    for f in repo.walk(m):
-        exact = m.exact(f)
-        if exact or f not in repo.dirstate:
-            names.append(f)
-            if ui.verbose or not exact:
-                ui.status(_('adding %s\n') % m.rel(f))
-    if not opts.get('dry_run'):
-        bad += [f for f in repo[None].add(names) if f in m.files()]
-    return bad and 1 or 0
+    rejected = cmdutil.add(ui, repo, m, opts.get('dry_run'),
+                           opts.get('subrepos'), prefix="")
+    return rejected and 1 or 0
 
 def addremove(ui, repo, *pats, **opts):
     """add all new files, delete all missing files
@@ -83,7 +72,7 @@ def addremove(ui, repo, *pats, **opts):
     Returns 0 if all files are successfully added.
     """
     try:
-        sim = float(opts.get('similarity') or 0)
+        sim = float(opts.get('similarity') or 100)
     except ValueError:
         raise util.Abort(_('similarity must be a number'))
     if sim < 0 or sim > 100:
@@ -197,20 +186,7 @@ def archive(ui, repo, dest, **opts):
     if os.path.realpath(dest) == repo.root:
         raise util.Abort(_('repository root cannot be destination'))
 
-    def guess_type():
-        exttypes = {
-            'tar': ['.tar'],
-            'tbz2': ['.tbz2', '.tar.bz2'],
-            'tgz': ['.tgz', '.tar.gz'],
-            'zip': ['.zip'],
-        }
-
-        for type, extensions in exttypes.items():
-            if util.any(dest.endswith(ext) for ext in extensions):
-                return type
-        return None
-
-    kind = opts.get('type') or guess_type() or 'files'
+    kind = opts.get('type') or archival.guesskind(dest) or 'files'
     prefix = opts.get('prefix')
 
     if dest == '-':
@@ -223,7 +199,7 @@ def archive(ui, repo, dest, **opts):
     prefix = cmdutil.make_filename(repo, prefix, node)
     matchfn = cmdutil.match(repo, [], opts)
     archival.archive(repo, dest, node, kind, not opts.get('no_decode'),
-                     matchfn, prefix)
+                     matchfn, prefix, subrepos=opts.get('subrepos'))
 
 def backout(ui, repo, node=None, rev=None, **opts):
     '''reverse effect of earlier changeset
@@ -348,6 +324,15 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
             else:
                 ui.write(_("The first bad revision is:\n"))
             displayer.show(repo[nodes[0]])
+            parents = repo[nodes[0]].parents()
+            if len(parents) > 1:
+                side = good and state['bad'] or state['good']
+                num = len(set(i.node() for i in parents) & set(side))
+                if num == 1:
+                    common = parents[0].ancestor(parents[1])
+                    ui.write(_('Not all ancestors of this changeset have been'
+                               ' checked.\nTo check the other ancestors, start'
+                               ' from the common ancestor, %s.\n' % common))
         else:
             # multiple possible revisions
             if good:
@@ -423,14 +408,19 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
         return
 
     # update state
-    node = repo.lookup(rev or '.')
+
+    if rev:
+        nodes = [repo.lookup(i) for i in cmdutil.revrange(repo, [rev])]
+    else:
+        nodes = [repo.lookup('.')]
+
     if good or bad or skip:
         if good:
-            state['good'].append(node)
+            state['good'] += nodes
         elif bad:
-            state['bad'].append(node)
+            state['bad'] += nodes
         elif skip:
-            state['skip'].append(node)
+            state['skip'] += nodes
         hbisect.save_state(repo, state)
 
     if not check_state(state):
@@ -525,16 +515,22 @@ def branches(ui, repo, active=False, closed=False):
             else:
                 hn = repo.lookup(node)
                 if isactive:
+                    label = 'branches.active'
                     notice = ''
                 elif hn not in repo.branchheads(tag, closed=False):
                     if not closed:
                         continue
+                    label = 'branches.closed'
                     notice = _(' (closed)')
                 else:
+                    label = 'branches.inactive'
                     notice = _(' (inactive)')
+                if tag == repo.dirstate.branch():
+                    label = 'branches.current'
                 rev = str(node).rjust(31 - encoding.colwidth(encodedtag))
-                data = encodedtag, rev, hexfunc(hn), notice
-                ui.write("%s %s:%s%s\n" % data)
+                rev = ui.label('%s:%s' % (rev, hexfunc(hn)), 'log.changeset')
+                encodedtag = ui.label(encodedtag, label)
+                ui.write("%s %s%s\n" % (encodedtag, rev, notice))
 
 def bundle(ui, repo, fname, dest=None, **opts):
     """create a changegroup file
@@ -905,7 +901,7 @@ def debugbuilddag(ui, repo, text,
         # we don't want to fail in merges during buildup
         os.environ['HGMERGE'] = 'internal:local'
 
-    def writefile(fname, text, fmode="w"):
+    def writefile(fname, text, fmode="wb"):
         f = open(fname, fmode)
         try:
             f.write(text)
@@ -940,7 +936,7 @@ def debugbuilddag(ui, repo, text,
                 merge(ui, repo, node=p2)
 
             if mergeable_file:
-                f = open("mf", "r+")
+                f = open("mf", "rb+")
                 try:
                     lines = f.read().split("\n")
                     lines[id * linesperrev] += " r%i" % id
@@ -950,7 +946,7 @@ def debugbuilddag(ui, repo, text,
                     f.close()
 
             if appended_file:
-                writefile("af", "r%i\n" % id, "a")
+                writefile("af", "r%i\n" % id, "ab")
 
             if overwritten_file:
                 writefile("of", "r%i\n" % id)
@@ -1221,9 +1217,15 @@ def debugdag(ui, repo, file_=None, *revs, **opts):
         ui.write(line)
         ui.write("\n")
 
-def debugdata(ui, file_, rev):
+def debugdata(ui, repo, file_, rev):
     """dump the contents of a data file revision"""
-    r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_[:-2] + ".i")
+    r = None
+    if repo:
+        filelog = repo.file(file_)
+        if len(filelog):
+            r = filelog
+    if not r:
+        r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_[:-2] + ".i")
     try:
         ui.write(r.revision(r.lookup(rev)))
     except KeyError:
@@ -1241,9 +1243,15 @@ def debugdate(ui, date, range=None, **opts):
         m = util.matchdate(range)
         ui.write("match: %s\n" % m(d[0]))
 
-def debugindex(ui, file_):
+def debugindex(ui, repo, file_):
     """dump the contents of an index file"""
-    r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
+    r = None
+    if repo:
+        filelog = repo.file(file_)
+        if len(filelog):
+            r = filelog
+    if not r:
+        r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
     ui.write("   rev    offset  length   base linkrev"
              " nodeid       p1           p2\n")
     for i in r:
@@ -1256,9 +1264,15 @@ def debugindex(ui, file_):
                 i, r.start(i), r.length(i), r.base(i), r.linkrev(i),
             short(node), short(pp[0]), short(pp[1])))
 
-def debugindexdot(ui, file_):
+def debugindexdot(ui, repo, file_):
     """dump an index DAG as a graphviz dot file"""
-    r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
+    r = None
+    if repo:
+        filelog = repo.file(file_)
+        if len(filelog):
+            r = filelog
+    if not r:
+        r = revlog.revlog(util.opener(os.getcwd(), audit=False), file_)
     ui.write("digraph G {\n")
     for i in r:
         node = r.node(i)
@@ -1293,9 +1307,10 @@ def debuginstall(ui):
         problems += 1
 
     # compiled modules
-    ui.status(_("Checking extensions...\n"))
+    ui.status(_("Checking installed modules (%s)...\n")
+              % os.path.dirname(__file__))
     try:
-        import bdiff, mpatch, base85
+        import bdiff, mpatch, base85, osutil
     except Exception, inst:
         ui.write(" %s\n" % inst)
         ui.write(_(" One or more extensions could not be found"))
@@ -1369,7 +1384,7 @@ def debuginstall(ui):
     # check username
     ui.status(_("Checking username...\n"))
     try:
-        user = ui.username()
+        ui.username()
     except util.Abort, e:
         ui.write(" %s\n" % e)
         ui.write(_(" (specify a username in your configuration file)\n"))
@@ -1459,7 +1474,8 @@ def diff(ui, repo, *pats, **opts):
 
     diffopts = patch.diffopts(ui, opts)
     m = cmdutil.match(repo, pats, opts)
-    cmdutil.diffordiffstat(ui, repo, diffopts, node1, node2, m, stat=stat)
+    cmdutil.diffordiffstat(ui, repo, diffopts, node1, node2, m, stat=stat,
+                           listsubrepos=opts.get('subrepos'))
 
 def export(ui, repo, *changesets, **opts):
     """dump the header and diffs for one or more changesets
@@ -1478,11 +1494,11 @@ def export(ui, repo, *changesets, **opts):
     given using a format string. The formatting rules are as follows:
 
     :``%%``: literal "%" character
-    :``%H``: changeset hash (40 bytes of hexadecimal)
+    :``%H``: changeset hash (40 hexadecimal digits)
     :``%N``: number of patches being generated
     :``%R``: changeset revision number
     :``%b``: basename of the exporting repository
-    :``%h``: short-form changeset hash (12 bytes of hexadecimal)
+    :``%h``: short-form changeset hash (12 hexadecimal digits)
     :``%n``: zero-padded sequence number, starting at 1
     :``%r``: zero-padded changeset revision number
 
@@ -1874,7 +1890,10 @@ def help_(ui, name=None, with_version=False, unknowncmd=False):
         if not doc:
             doc = _("(no help text available)")
         if hasattr(entry[0], 'definition'):  # aliased command
-            doc = _('alias for: hg %s\n\n%s') % (entry[0].definition, doc)
+            if entry[0].definition.startswith('!'):  # shell alias
+                doc = _('shell alias for::\n\n    %s') % entry[0].definition[1:]
+            else:
+                doc = _('alias for: hg %s\n\n%s') % (entry[0].definition, doc)
         if ui.quiet:
             doc = doc.splitlines()[0]
         keep = ui.verbose and ['verbose'] or []
@@ -2270,8 +2289,8 @@ def import_(ui, repo, patch1, *patches, **opts):
                 patch.patch(tmpname, ui, strip=strip, cwd=repo.root,
                             files=files, eolmode=None)
             finally:
-                files = patch.updatedir(ui, repo, files,
-                                        similarity=sim / 100.0)
+                files = cmdutil.updatedir(ui, repo, files,
+                                          similarity=sim / 100.0)
             if not opts.get('no_commit'):
                 if opts.get('exact'):
                     m = None
@@ -2338,66 +2357,16 @@ def incoming(ui, repo, source="default", **opts):
 
     Returns 0 if there are incoming changes, 1 otherwise.
     """
-    limit = cmdutil.loglimit(opts)
-    source, branches = hg.parseurl(ui.expandpath(source), opts.get('branch'))
-    other = hg.repository(hg.remoteui(repo, opts), source)
-    ui.status(_('comparing with %s\n') % url.hidepassword(source))
-    revs, checkout = hg.addbranchrevs(repo, other, branches, opts.get('rev'))
-    if revs:
-        revs = [other.lookup(rev) for rev in revs]
+    if opts.get('bundle') and opts.get('subrepos'):
+        raise util.Abort(_('cannot combine --bundle and --subrepos'))
 
-    tmp = discovery.findcommonincoming(repo, other, heads=revs,
-                                       force=opts.get('force'))
-    common, incoming, rheads = tmp
-    if not incoming:
-        try:
-            os.unlink(opts["bundle"])
-        except:
-            pass
-        ui.status(_("no changes found\n"))
-        return 1
-
-    cleanup = None
-    try:
-        fname = opts["bundle"]
-        if fname or not other.local():
-            # create a bundle (uncompressed if other repo is not local)
-
-            if revs is None and other.capable('changegroupsubset'):
-                revs = rheads
-
-            if revs is None:
-                cg = other.changegroup(incoming, "incoming")
-            else:
-                cg = other.changegroupsubset(incoming, revs, 'incoming')
-            bundletype = other.local() and "HG10BZ" or "HG10UN"
-            fname = cleanup = changegroup.writebundle(cg, fname, bundletype)
-            # keep written bundle?
-            if opts["bundle"]:
-                cleanup = None
-            if not other.local():
-                # use the created uncompressed bundlerepo
-                other = bundlerepo.bundlerepository(ui, repo.root, fname)
-
-        o = other.changelog.nodesbetween(incoming, revs)[0]
-        if opts.get('newest_first'):
-            o.reverse()
-        displayer = cmdutil.show_changeset(ui, other, opts)
-        count = 0
-        for n in o:
-            if limit is not None and count >= limit:
-                break
-            parents = [p for p in other.changelog.parents(n) if p != nullid]
-            if opts.get('no_merges') and len(parents) == 2:
-                continue
-            count += 1
-            displayer.show(other[n])
-        displayer.close()
-    finally:
-        if hasattr(other, 'close'):
-            other.close()
-        if cleanup:
-            os.unlink(cleanup)
+    ret = hg.incoming(ui, repo, source, opts)
+    if opts.get('subrepos'):
+        ctx = repo[None]
+        for subpath in sorted(ctx.substate):
+            sub = ctx.sub(subpath)
+            ret = min(ret, sub.incoming(ui, source, opts))
+    return ret
 
 def init(ui, dest=".", **opts):
     """create a new repository in the given directory
@@ -2657,33 +2626,13 @@ def outgoing(ui, repo, dest=None, **opts):
 
     Returns 0 if there are outgoing changes, 1 otherwise.
     """
-    limit = cmdutil.loglimit(opts)
-    dest = ui.expandpath(dest or 'default-push', dest or 'default')
-    dest, branches = hg.parseurl(dest, opts.get('branch'))
-    revs, checkout = hg.addbranchrevs(repo, repo, branches, opts.get('rev'))
-    if revs:
-        revs = [repo.lookup(rev) for rev in revs]
-
-    other = hg.repository(hg.remoteui(repo, opts), dest)
-    ui.status(_('comparing with %s\n') % url.hidepassword(dest))
-    o = discovery.findoutgoing(repo, other, force=opts.get('force'))
-    if not o:
-        ui.status(_("no changes found\n"))
-        return 1
-    o = repo.changelog.nodesbetween(o, revs)[0]
-    if opts.get('newest_first'):
-        o.reverse()
-    displayer = cmdutil.show_changeset(ui, repo, opts)
-    count = 0
-    for n in o:
-        if limit is not None and count >= limit:
-            break
-        parents = [p for p in repo.changelog.parents(n) if p != nullid]
-        if opts.get('no_merges') and len(parents) == 2:
-            continue
-        count += 1
-        displayer.show(repo[n])
-    displayer.close()
+    ret = hg.outgoing(ui, repo, dest, opts)
+    if opts.get('subrepos'):
+        ctx = repo[None]
+        for subpath in sorted(ctx.substate):
+            sub = ctx.sub(subpath)
+            ret = min(ret, sub.outgoing(ui, dest, opts))
+    return ret
 
 def parents(ui, repo, file_=None, **opts):
     """show the parents of the working directory or revision
@@ -3045,6 +2994,8 @@ def resolve(ui, repo, *pats, **opts):
 
                 # replace filemerge's .orig file with our resolve file
                 util.rename(a + ".resolve", a + ".orig")
+
+    ms.commit()
     return ret
 
 def revert(ui, repo, *pats, **opts):
@@ -3086,8 +3037,8 @@ def revert(ui, repo, *pats, **opts):
     Returns 0 on success.
     """
 
-    if opts["date"]:
-        if opts["rev"]:
+    if opts.get("date"):
+        if opts.get("rev"):
             raise util.Abort(_("you can't specify a revision and a date"))
         opts["rev"] = cmdutil.finddate(ui, repo, opts["date"])
 
@@ -3179,7 +3130,8 @@ def revert(ui, repo, *pats, **opts):
             target = repo.wjoin(abs)
             def handle(xlist, dobackup):
                 xlist[0].append(abs)
-                if dobackup and not opts.get('no_backup') and util.lexists(target):
+                if (dobackup and not opts.get('no_backup') and
+                    os.path.lexists(target)):
                     bakname = "%s.orig" % rel
                     ui.note(_('saving current version of %s as %s\n') %
                             (rel, bakname))
@@ -3344,7 +3296,7 @@ def serve(ui, repo, **opts):
 
     # this way we can check if something was given in the command-line
     if opts.get('port'):
-        opts['port'] = int(opts.get('port'))
+        opts['port'] = util.getport(opts.get('port'))
 
     baseui = repo and repo.baseui or ui
     optlist = ("name templates style address port prefix ipv6"
@@ -3466,7 +3418,8 @@ def status(ui, repo, *pats, **opts):
         show = ui.quiet and states[:4] or states[:5]
 
     stat = repo.status(node1, node2, cmdutil.match(repo, pats, opts),
-                       'ignored' in show, 'clean' in show, 'unknown' in show)
+                       'ignored' in show, 'clean' in show, 'unknown' in show,
+                       opts.get('subrepos'))
     changestates = zip(states, 'MAR!?IC', stat)
 
     if (opts.get('all') or opts.get('copies')) and not opts.get('no_status'):
@@ -3979,8 +3932,14 @@ similarityopts = [
      _('guess renamed files by similarity (0<=s<=100)'), _('SIMILARITY'))
 ]
 
+subrepoopts = [
+    ('S', 'subrepos', None,
+     _('recurse into subrepositories'))
+]
+
 table = {
-    "^add": (add, walkopts + dryrunopts, _('[OPTION]... [FILE]...')),
+    "^add": (add, walkopts + subrepoopts + dryrunopts,
+             _('[OPTION]... [FILE]...')),
     "addremove":
         (addremove, similarityopts + walkopts + dryrunopts,
          _('[OPTION]... [FILE]...')),
@@ -4010,7 +3969,7 @@ table = {
            _('revision to distribute'), _('REV')),
           ('t', 'type', '',
            _('type of distribution to create'), _('TYPE')),
-         ] + walkopts,
+         ] + subrepoopts + walkopts,
          _('[OPTION]... DEST')),
     "backout":
         (backout,
@@ -4165,7 +4124,7 @@ table = {
            _('revision'), _('REV')),
           ('c', 'change', '',
            _('change made by revision'), _('REV'))
-         ] + diffopts + diffopts2 + walkopts,
+         ] + diffopts + diffopts2 + walkopts + subrepoopts,
          _('[OPTION]... ([-c REV] | [-r REV1 [-r REV2]]) [FILE]...')),
     "^export":
         (export,
@@ -4247,7 +4206,7 @@ table = {
            _('a remote changeset intended to be added'), _('REV')),
           ('b', 'branch', [],
            _('a specific branch you would like to pull'), _('BRANCH')),
-         ] + logopts + remoteopts,
+         ] + logopts + remoteopts + subrepoopts,
          _('[-p] [-n] [-M] [-f] [-r REV]...'
            ' [--bundle FILENAME] [SOURCE]')),
     "^init":
@@ -4314,7 +4273,7 @@ table = {
           ('n', 'newest-first', None, _('show newest record first')),
           ('b', 'branch', [],
            _('a specific branch you would like to push'), _('BRANCH')),
-         ] + logopts + remoteopts,
+         ] + logopts + remoteopts + subrepoopts,
          _('[-M] [-p] [-n] [-f] [-r REV]... [DEST]')),
     "parents":
         (parents,
@@ -4442,7 +4401,7 @@ table = {
            _('show difference from revision'), _('REV')),
           ('', 'change', '',
            _('list the changed files of a revision'), _('REV')),
-         ] + walkopts,
+         ] + walkopts + subrepoopts,
          _('[OPTION]... [FILE]...')),
     "tag":
         (tag,
@@ -4482,7 +4441,7 @@ table = {
     "version": (version_, []),
 }
 
-norepo = ("clone init version help debugcommands debugcomplete debugdata"
-          " debugindex debugindexdot debugdate debuginstall debugfsinfo"
-          " debugpushkey")
-optionalrepo = ("identify paths serve showconfig debugancestor debugdag")
+norepo = ("clone init version help debugcommands debugcomplete"
+          " debugdate debuginstall debugfsinfo debugpushkey")
+optionalrepo = ("identify paths serve showconfig debugancestor debugdag"
+                " debugdata debugindex debugindexdot")

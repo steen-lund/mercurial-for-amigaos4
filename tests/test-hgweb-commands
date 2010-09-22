@@ -46,11 +46,11 @@ echo % capabilities
 echo % heads
 "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=heads'
 echo % lookup
-"$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=lookup&node=1'
+"$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=lookup&key=1'
 echo % branches
-"$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=branches'
+"$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=branches&nodes=0000000000000000000000000000000000000000'
 echo % changegroup
-"$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=changegroup' \
+"$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=changegroup&roots=0000000000000000000000000000000000000000' \
     | $TESTDIR/printrepr.py
 echo % stream_out
 "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=stream_out'

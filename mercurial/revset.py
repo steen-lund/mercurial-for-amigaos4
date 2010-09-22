@@ -7,7 +7,7 @@
 
 import re
 import parser, util, error, discovery
-import match as _match
+import match as matchmod
 from i18n import _
 
 elements = {
@@ -195,6 +195,14 @@ def maxrev(repo, subset, x):
             return [m]
     return []
 
+def minrev(repo, subset, x):
+    s = getset(repo, subset, x)
+    if s:
+        m = min(s)
+        if m in subset:
+            return [m]
+    return []
+
 def limit(repo, subset, x):
     l = getargs(x, 2, 2, _("limit wants two arguments"))
     try:
@@ -287,7 +295,7 @@ def author(repo, subset, x):
 
 def hasfile(repo, subset, x):
     pat = getstring(x, _("file wants a pattern"))
-    m = _match.match(repo.root, repo.getcwd(), [pat])
+    m = matchmod.match(repo.root, repo.getcwd(), [pat])
     s = []
     for r in subset:
         for f in repo[r].files():
@@ -298,7 +306,7 @@ def hasfile(repo, subset, x):
 
 def contains(repo, subset, x):
     pat = getstring(x, _("contains wants a pattern"))
-    m = _match.match(repo.root, repo.getcwd(), [pat])
+    m = matchmod.match(repo.root, repo.getcwd(), [pat])
     s = []
     if m.files() == [pat]:
         for r in subset:
@@ -314,7 +322,7 @@ def contains(repo, subset, x):
     return s
 
 def checkstatus(repo, subset, pat, field):
-    m = _match.match(repo.root, repo.getcwd(), [pat])
+    m = matchmod.match(repo.root, repo.getcwd(), [pat])
     s = []
     fast = (m.files() == [pat])
     for r in subset:
@@ -372,6 +380,12 @@ def reverse(repo, subset, x):
     l = getset(repo, subset, x)
     l.reverse()
     return l
+
+def present(repo, subset, x):
+    try:
+        return getset(repo, subset, x)
+    except error.RepoLookupError:
+        return []
 
 def sort(repo, subset, x):
     l = getargs(x, 1, 2, _("sort wants one or two arguments"))
@@ -469,12 +483,14 @@ symbols = {
     "keyword": keyword,
     "limit": limit,
     "max": maxrev,
+    "min": minrev,
     "merge": merge,
     "modifies": modifies,
     "outgoing": outgoing,
     "p1": p1,
     "p2": p2,
     "parents": parents,
+    "present": present,
     "removes": removes,
     "reverse": reverse,
     "roots": roots,
@@ -546,9 +562,9 @@ def optimize(x, small):
     elif op == 'func':
         f = getstring(x[1], _("not a symbol"))
         wa, ta = optimize(x[2], small)
-        if f in "grep date user author keyword branch file":
+        if f in "grep date user author keyword branch file outgoing":
             w = 10 # slow
-        elif f in "modifies adds removes outgoing":
+        elif f in "modifies adds removes":
             w = 30 # slower
         elif f == "contains":
             w = 100 # very slow
