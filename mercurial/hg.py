@@ -8,8 +8,10 @@
 
 from i18n import _
 from lock import release
+from node import hex, nullid, nullrev, short
 import localrepo, bundlerepo, httprepo, sshrepo, statichttprepo
 import lock, util, extensions, error, encoding, node
+import cmdutil, discovery, url, changegroup
 import merge as mergemod
 import verify as verifymod
 import errno, os, shutil
@@ -311,7 +313,8 @@ def clone(ui, source, dest=None, pull=False, rev=None, update=True,
             # we need to re-init the repo after manually copying the data
             # into it
             dest_repo = repository(ui, dest)
-            src_repo.hook('outgoing', source='clone', node='0'*40)
+            src_repo.hook('outgoing', source='clone',
+                          node=node.hex(node.nullid))
         else:
             try:
                 dest_repo = repository(ui, dest, create=True)
@@ -400,10 +403,124 @@ def merge(repo, node, force=None, remind=True):
     _showstats(repo, stats)
     if stats[3]:
         repo.ui.status(_("use 'hg resolve' to retry unresolved file merges "
-                         "or 'hg update -C' to abandon\n"))
+                         "or 'hg update -C .' to abandon\n"))
     elif remind:
         repo.ui.status(_("(branch merge, don't forget to commit)\n"))
     return stats[3] > 0
+
+def incoming(ui, repo, source, opts):
+    def recurse():
+        ret = 1
+        if opts.get('subrepos'):
+            ctx = repo[None]
+            for subpath in sorted(ctx.substate):
+                sub = ctx.sub(subpath)
+                ret = min(ret, sub.incoming(ui, source, opts))
+        return ret
+
+    limit = cmdutil.loglimit(opts)
+    source, branches = parseurl(ui.expandpath(source), opts.get('branch'))
+    other = repository(remoteui(repo, opts), source)
+    ui.status(_('comparing with %s\n') % url.hidepassword(source))
+    revs, checkout = addbranchrevs(repo, other, branches, opts.get('rev'))
+    if revs:
+        revs = [other.lookup(rev) for rev in revs]
+
+    tmp = discovery.findcommonincoming(repo, other, heads=revs,
+                                       force=opts.get('force'))
+    common, incoming, rheads = tmp
+    if not incoming:
+        try:
+            os.unlink(opts["bundle"])
+        except:
+            pass
+        ui.status(_("no changes found\n"))
+        return recurse()
+
+    cleanup = None
+    try:
+        fname = opts["bundle"]
+        if fname or not other.local():
+            # create a bundle (uncompressed if other repo is not local)
+
+            if revs is None and other.capable('changegroupsubset'):
+                revs = rheads
+
+            if revs is None:
+                cg = other.changegroup(incoming, "incoming")
+            else:
+                cg = other.changegroupsubset(incoming, revs, 'incoming')
+            bundletype = other.local() and "HG10BZ" or "HG10UN"
+            fname = cleanup = changegroup.writebundle(cg, fname, bundletype)
+            # keep written bundle?
+            if opts["bundle"]:
+                cleanup = None
+            if not other.local():
+                # use the created uncompressed bundlerepo
+                other = bundlerepo.bundlerepository(ui, repo.root, fname)
+
+        o = other.changelog.nodesbetween(incoming, revs)[0]
+        if opts.get('newest_first'):
+            o.reverse()
+        displayer = cmdutil.show_changeset(ui, other, opts)
+        count = 0
+        for n in o:
+            if limit is not None and count >= limit:
+                break
+            parents = [p for p in other.changelog.parents(n) if p != nullid]
+            if opts.get('no_merges') and len(parents) == 2:
+                continue
+            count += 1
+            displayer.show(other[n])
+        displayer.close()
+    finally:
+        if hasattr(other, 'close'):
+            other.close()
+        if cleanup:
+            os.unlink(cleanup)
+    recurse()
+    return 0 # exit code is zero since we found incoming changes
+
+def outgoing(ui, repo, dest, opts):
+    def recurse():
+        ret = 1
+        if opts.get('subrepos'):
+            ctx = repo[None]
+            for subpath in sorted(ctx.substate):
+                sub = ctx.sub(subpath)
+                ret = min(ret, sub.outgoing(ui, dest, opts))
+        return ret
+
+    limit = cmdutil.loglimit(opts)
+    dest = ui.expandpath(dest or 'default-push', dest or 'default')
+    dest, branches = parseurl(dest, opts.get('branch'))
+    revs, checkout = addbranchrevs(repo, repo, branches, opts.get('rev'))
+    if revs:
+        revs = [repo.lookup(rev) for rev in revs]
+
+    other = repository(remoteui(repo, opts), dest)
+    ui.status(_('comparing with %s\n') % url.hidepassword(dest))
+    o = discovery.findoutgoing(repo, other, force=opts.get('force'))
+    if not o:
+        ui.status(_("no changes found\n"))
+        return recurse()
+
+    o = repo.changelog.nodesbetween(o, revs)[0]
+    if opts.get('newest_first'):
+        o.reverse()
+    displayer = cmdutil.show_changeset(ui, repo, opts)
+    count = 0
+    for n in o:
+        if limit is not None and count >= limit:
+            break
+        parents = [p for p in repo.changelog.parents(n) if p != nullid]
+        if opts.get('no_merges') and len(parents) == 2:
+            continue
+        count += 1
+        displayer.show(repo[n])
+    displayer.close()
+    recurse()
+    return 0 # exit code is zero since we found outgoing changes
 
 def revert(repo, node, choose):
     """revert changes to revision in node without updating dirstate"""
