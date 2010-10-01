@@ -17,6 +17,7 @@ from mercurial.i18n import _
 import os, tempfile
 from mercurial import bundlerepo, changegroup, cmdutil, hg, merge, match
 from mercurial import patch, revlog, util, error, discovery
+from mercurial import revset, help
 
 class transplantentry(object):
     def __init__(self, lnode, rnode):
@@ -31,7 +32,7 @@ class transplants(object):
 
         if not opener:
             self.opener = util.opener(self.path)
-        self.transplants = []
+        self.transplants = {}
         self.dirty = False
         self.read()
 
@@ -40,29 +41,34 @@ class transplants(object):
         if self.transplantfile and os.path.exists(abspath):
             for line in self.opener(self.transplantfile).read().splitlines():
                 lnode, rnode = map(revlog.bin, line.split(':'))
-                self.transplants.append(transplantentry(lnode, rnode))
+                list = self.transplants.setdefault(rnode, [])
+                list.append(transplantentry(lnode, rnode))
 
     def write(self):
         if self.dirty and self.transplantfile:
             if not os.path.isdir(self.path):
                 os.mkdir(self.path)
             fp = self.opener(self.transplantfile, 'w')
-            for c in self.transplants:
-                l, r = map(revlog.hex, (c.lnode, c.rnode))
-                fp.write(l + ':' + r + '\n')
+            for list in self.transplants.itervalues():
+                for t in list:
+                    l, r = map(revlog.hex, (t.lnode, t.rnode))
+                    fp.write(l + ':' + r + '\n')
             fp.close()
         self.dirty = False
 
     def get(self, rnode):
-        return [t for t in self.transplants if t.rnode == rnode]
+        return self.transplants.get(rnode) or []
 
     def set(self, lnode, rnode):
-        self.transplants.append(transplantentry(lnode, rnode))
+        list = self.transplants.setdefault(rnode, [])
+        list.append(transplantentry(lnode, rnode))
         self.dirty = True
 
     def remove(self, transplant):
-        del self.transplants[self.transplants.index(transplant)]
-        self.dirty = True
+        list = self.transplants.get(transplant.rnode)
+        if list:
+            del list[list.index(transplant)]
+            self.dirty = True
 
 class transplanter(object):
     def __init__(self, ui, repo):
@@ -225,7 +231,7 @@ class transplanter(object):
                                      % revlog.hex(node))
                         return None
                 finally:
-                    files = patch.updatedir(self.ui, repo, files)
+                    files = cmdutil.updatedir(self.ui, repo, files)
             except Exception, inst:
                 seriespath = os.path.join(self.path, 'series')
                 if os.path.exists(seriespath):
@@ -597,6 +603,30 @@ def transplant(ui, repo, *revs, **opts):
         if bundle:
             source.close()
             os.unlink(bundle)
+
+def revsettransplanted(repo, subset, x):
+    if x:
+      s = revset.getset(repo, subset, x)
+    else:
+      s = subset
+    cs = set()
+    for r in xrange(0, len(repo)):
+      if repo[r].extra().get('transplant_source'):
+        cs.add(r)
+    return [r for r in s if r in cs]
+
+def revsetdoc():
+    doc = help.loaddoc('revsets')()
+    doc += _('\nAdded by the transplant extension:\n\n'
+           '``transplanted(set)``\n'
+           '  Transplanted changesets in set.\n')
+    return doc
+
+def uisetup(ui):
+    'Add the transplanted revset predicate'
+    for i in (i for i, x in enumerate(help.helptable) if x[0] == ['revsets']):
+        help.helptable[i] = (['revsets'], _("Specifying Revision Sets"), revsetdoc)
+    revset.symbols['transplanted'] = revsettransplanted
 
 cmdtable = {
     "transplant":
