@@ -52,8 +52,9 @@ Example::
     # prefer svn- over cvs-like default keywordmaps
     svn = True
 
-NOTE: the more specific you are in your filename patterns the less you
-lose speed in huge repositories.
+.. note::
+   The more specific you are in your filename patterns the less you
+   lose speed in huge repositories.
 
 For [keywordmaps] template mapping and expansion demonstration and
 control run :hg:`kwdemo`. See :hg:`help templates` for a list of
@@ -91,8 +92,7 @@ commands.optionalrepo += ' kwdemo'
 
 # hg commands that do not act on keywords
 nokwcommands = ('add addremove annotate bundle copy export grep incoming init'
-                ' log outgoing push rename rollback tip verify'
-                ' convert email glog')
+                ' log outgoing push rename tip verify convert email glog')
 
 # hg commands that trigger expansion only when writing to working dir,
 # not when reading filelog, and unexpand when reading from working dir
@@ -161,9 +161,9 @@ class kwtemplater(object):
         kwpat = r'\$(%s)(: [^$\n\r]*? )??\$' % '|'.join(escaped)
         self.re_kw = re.compile(kwpat)
 
-        templatefilters.filters['utcdate'] = utcdate
-        templatefilters.filters['svnisodate'] = svnisodate
-        templatefilters.filters['svnutcdate'] = svnutcdate
+        templatefilters.filters.update({'utcdate': utcdate,
+                                        'svnisodate': svnisodate,
+                                        'svnutcdate': svnutcdate})
 
     def substitute(self, data, path, ctx, subfunc):
         '''Replaces keywords in data with expanded template.'''
@@ -191,18 +191,20 @@ class kwtemplater(object):
         Caveat: localrepository._link fails on Windows.'''
         return self.match(path) and not 'l' in flagfunc(path)
 
-    def overwrite(self, ctx, candidates, iswctx, expand):
+    def overwrite(self, ctx, candidates, iswctx, expand, cfiles):
         '''Overwrites selected files expanding/shrinking keywords.'''
-        if self.record:
-            candidates = [f for f in ctx.files() if f in ctx]
+        if cfiles is not None:
+            candidates = [f for f in candidates if f in cfiles]
         candidates = [f for f in candidates if self.iskwfile(f, ctx.flags)]
         if candidates:
+            restrict = self.restrict
             self.restrict = True        # do not expand when reading
+            rollback = kwtools['hgcmd'] == 'rollback'
             mf = ctx.manifest()
             msg = (expand and _('overwriting %s expanding keywords\n')
                    or _('overwriting %s shrinking keywords\n'))
             for f in candidates:
-                if not self.record:
+                if not self.record and not rollback:
                     data = self.repo.file(f).read(mf[f])
                 else:
                     data = self.repo.wread(f)
@@ -218,11 +220,11 @@ class kwtemplater(object):
                 if found:
                     self.ui.note(msg % f)
                     self.repo.wwrite(f, data, mf.flags(f))
-                    if iswctx:
+                    if iswctx and not rollback:
                         self.repo.dirstate.normal(f)
                     elif self.record:
                         self.repo.dirstate.normallookup(f)
-            self.restrict = False
+            self.restrict = restrict
 
     def shrinktext(self, text):
         '''Unconditionally removes all keyword substitutions from text.'''
@@ -297,7 +299,7 @@ def _kwfwrite(ui, repo, expand, *pats, **opts):
         modified, added, removed, deleted, unknown, ignored, clean = status
         if modified or added or removed or deleted:
             raise util.Abort(_('outstanding uncommitted changes'))
-        kwt.overwrite(wctx, clean, True, expand)
+        kwt.overwrite(wctx, clean, True, expand, None)
     finally:
         wlock.release()
 
@@ -501,8 +503,23 @@ def reposetup(ui, repo):
             # no lock needed, only called from repo.commit() which already locks
             if not kwt.record:
                 kwt.overwrite(self[n], sorted(ctx.added() + ctx.modified()),
-                              False, True)
+                              False, True, None)
             return n
+
+        def rollback(self, dryrun=False):
+            wlock = repo.wlock()
+            try:
+                if not dryrun:
+                    cfiles = self['.'].files()
+                ret = super(kwrepo, self).rollback(dryrun)
+                if not dryrun:
+                    ctx = self['.']
+                    modified, added = super(kwrepo, self).status()[:2]
+                    kwt.overwrite(ctx, added, True, False, cfiles)
+                    kwt.overwrite(ctx, modified, True, True, cfiles)
+                return ret
+            finally:
+                wlock.release()
 
     # monkeypatches
     def kwpatchfile_init(orig, self, ui, fname, opener,
@@ -514,14 +531,10 @@ def reposetup(ui, repo):
         self.lines = kwt.shrinklines(self.fname, self.lines)
 
     def kw_diff(orig, repo, node1=None, node2=None, match=None, changes=None,
-                opts=None):
-        '''Monkeypatch patch.diff to avoid expansion except when
-        comparing against working dir.'''
-        if node2 is not None:
-            kwt.match = util.never
-        elif node1 is not None and node1 != repo['.'].node():
-            kwt.restrict = True
-        return orig(repo, node1, node2, match, changes, opts)
+                opts=None, prefix=''):
+        '''Monkeypatch patch.diff to avoid expansion.'''
+        kwt.restrict = True
+        return orig(repo, node1, node2, match, changes, opts, prefix)
 
     def kwweb_skip(orig, web, req, tmpl):
         '''Wraps webcommands.x turning off keyword expansion.'''
@@ -538,7 +551,8 @@ def reposetup(ui, repo):
             ret = orig(ui, repo, commitfunc, *pats, **opts)
             recordctx = repo['.']
             if ctx != recordctx:
-                kwt.overwrite(recordctx, None, False, True)
+                kwt.overwrite(recordctx, recordctx.files(),
+                              False, True, recordctx)
             return ret
         finally:
             wlock.release()
@@ -546,8 +560,7 @@ def reposetup(ui, repo):
     repo.__class__ = kwrepo
 
     extensions.wrapfunction(patch.patchfile, '__init__', kwpatchfile_init)
-    if not kwt.restrict:
-        extensions.wrapfunction(patch, 'diff', kw_diff)
+    extensions.wrapfunction(patch, 'diff', kw_diff)
     for c in 'annotate changeset rev filediff diff'.split():
         extensions.wrapfunction(webcommands, c, kwweb_skip)
     for name in recordextensions.split():
