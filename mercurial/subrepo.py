@@ -5,7 +5,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-import errno, os, re, xml.dom.minidom, shutil, urlparse, posixpath
+import errno, os, re, xml.dom.minidom, shutil, subprocess, urlparse, posixpath
 from i18n import _
 import config, util, node, error, cmdutil
 hg = None
@@ -576,7 +576,199 @@ class svnsubrepo(abstractsubrepo):
         return self._svncommand(['cat'], name)
 
 
+class gitsubrepo(object):
+    def __init__(self, ctx, path, state):
+        # TODO add git version check.
+        self._state = state
+        self._ctx = ctx
+        self._relpath = path
+        self._path = ctx._repo.wjoin(path)
+        self._ui = ctx._repo.ui
+
+    def _gitcommand(self, commands):
+        return self._gitdir(commands)[0]
+
+    def _gitdir(self, commands):
+        commands = ['--no-pager', '--git-dir=%s/.git' % self._path,
+                    '--work-tree=%s' % self._path] + commands
+        return self._gitnodir(commands)
+
+    def _gitnodir(self, commands):
+        """Calls the git command
+
+        The methods tries to call the git command. versions previor to 1.6.0
+        are not supported and very probably fail.
+        """
+        cmd = ['git'] + commands
+        cmd = [util.shellquote(arg) for arg in cmd]
+        cmd = util.quotecommand(' '.join(cmd))
+
+        # print git's stderr, which is mostly progress and useful info
+        p = subprocess.Popen(cmd, shell=True, bufsize=-1,
+                             close_fds=(os.name == 'posix'),
+                             stdout=subprocess.PIPE)
+        retdata = p.stdout.read()
+        # wait for the child to exit to avoid race condition.
+        p.wait()
+
+        if p.returncode != 0:
+            # there are certain error codes that are ok
+            command = None
+            for arg in commands:
+                if not arg.startswith('-'):
+                    command = arg
+                    break
+            if command == 'cat-file':
+                return retdata, p.returncode
+            if command in ('commit', 'status') and p.returncode == 1:
+                return retdata, p.returncode
+            # for all others, abort
+            raise util.Abort('git %s error %d' % (command, p.returncode))
+
+        return retdata, p.returncode
+
+    def _gitstate(self):
+        return self._gitcommand(['rev-parse', 'HEAD']).strip()
+
+    def _githavelocally(self, revision):
+        out, code = self._gitdir(['cat-file', '-e', revision])
+        return code == 0
+
+    def _gitbranchmap(self):
+        'returns the current branch and a map from git revision to branch[es]'
+        bm = {}
+        redirects = {}
+        current = None
+        out = self._gitcommand(['branch', '-a', '--no-color',
+                                '--verbose', '--abbrev=40'])
+        for line in out.split('\n'):
+            if not line:
+                continue
+            if line[2:].startswith('(no branch)'):
+                continue
+            branch, revision = line[2:].split()[:2]
+            if revision == '->':
+                continue # ignore remote/HEAD redirects
+            if line[0] == '*':
+                current = branch
+            bm.setdefault(revision, []).append(branch)
+        return current, bm
+
+    def _fetch(self, source, revision):
+        if not os.path.exists('%s/.git' % self._path):
+            self._ui.status(_('cloning subrepo %s\n') % self._relpath)
+            self._gitnodir(['clone', source, self._path])
+        if self._githavelocally(revision):
+            return
+        self._ui.status(_('pulling subrepo %s\n') % self._relpath)
+        self._gitcommand(['fetch', '--all', '-q'])
+        if not self._githavelocally(revision):
+            raise util.Abort(_("revision %s does not exist in subrepo %s\n") %
+                               (revision, self._path))
+
+    def dirty(self):
+        if self._state[1] != self._gitstate(): # version checked out changed?
+            return True
+        # check for staged changes or modified files; ignore untracked files
+        # docs say --porcelain flag is future-proof format
+        changed = self._gitcommand(['status', '--porcelain',
+                                    '--untracked-files=no'])
+        return bool(changed.strip())
+
+    def get(self, state):
+        source, revision, kind = state
+        self._fetch(source, revision)
+        # if the repo was set to be bare, unbare it
+        if self._gitcommand(['config', '--get', 'core.bare']
+                            ).strip() == 'true':
+            self._gitcommand(['config', 'core.bare', 'false'])
+            if self._gitstate() == revision:
+                self._gitcommand(['reset', '--hard', 'HEAD'])
+                return
+        elif self._gitstate() == revision:
+            return
+        current, bm = self._gitbranchmap()
+        if revision not in bm:
+            # no branch to checkout, check it out with no branch
+            self._ui.warn(_('checking out detached HEAD in subrepo %s\n') %
+                          self._relpath)
+            self._ui.warn(_('check out a git branch if you intend '
+                            'to make changes\n'))
+            self._gitcommand(['checkout', '-q', revision])
+            return
+        branches = bm[revision]
+        firstlocalbranch = None
+        for b in branches:
+            if b == 'master':
+                # master trumps all other branches
+                self._gitcommand(['checkout', 'master'])
+                return
+            if not firstlocalbranch and not b.startswith('remotes/'):
+                firstlocalbranch = b
+        if firstlocalbranch:
+            self._gitcommand(['checkout', firstlocalbranch])
+        else:
+            remote = branches[0]
+            local = remote.split('/')[-1]
+            self._gitcommand(['checkout', '-b', local, remote])
+
+    def commit(self, text, user, date):
+        cmd = ['commit', '-a', '-m', text]
+        if user:
+            cmd += ['--author', user]
+        if date:
+            # git's date parser silently ignores when seconds < 1e9
+            # convert to ISO8601
+            cmd += ['--date', util.datestr(date, '%Y-%m-%dT%H:%M:%S %1%2')]
+        self._gitcommand(cmd)
+        # make sure commit works otherwise HEAD might not exist under certain
+        # circumstances
+        return self._gitstate()
+
+    def merge(self, state):
+        source, revision, kind = state
+        self._fetch(source, revision)
+        base = self._gitcommand(['merge-base', revision,
+                                 self._state[1]]).strip()
+        if base == revision:
+            self.get(state) # fast forward merge
+        elif base != self._state[1]:
+            self._gitcommand(['merge', '--no-commit', revision])
+
+    def push(self, force):
+        cmd = ['push']
+        if force:
+            cmd.append('--force')
+        # push the currently checked out branch
+        current, bm = self._gitbranchmap()
+        if current:
+            self._gitcommand(cmd + ['origin', current, '-q'])
+            return True
+        else:
+            self._ui.warn(_('no branch checked out in subrepo %s\n'
+                            'nothing to push') % self._relpath)
+            return False
+
+    def remove(self):
+        if self.dirty():
+            self._ui.warn(_('not removing repo %s because '
+                            'it has changes.\n') % self._path)
+            return
+        # we can't fully delete the repository as it may contain
+        # local-only history
+        self._ui.note(_('removing subrepo %s\n') % self._path)
+        self._gitcommand(['config', 'core.bare', 'true'])
+        for f in os.listdir(self._path):
+            if f == '.git':
+                continue
+            path = os.path.join(self._path, f)
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+
 types = {
     'hg': hgsubrepo,
     'svn': svnsubrepo,
+    'git': gitsubrepo,
     }
