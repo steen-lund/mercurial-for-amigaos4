@@ -64,6 +64,7 @@ testpats = [
     ('^([^"\']|("[^"]*")|(\'[^\']*\'))*\\^', "^ must be quoted"),
     (r'^source\b', "don't use 'source', use '.'"),
     (r'touch -d', "don't use 'touch -d', use 'touch -t' instead"),
+    (r'ls\s+[^-]+\s+-', "options to 'ls' must come before filenames"),
 ]
 
 testfilters = [
@@ -118,6 +119,9 @@ pypats = [
      "linebreak after :"),
     (r'class\s[^(]:', "old-style class, use class foo(object)"),
     (r'^\s+del\(', "del isn't a function"),
+    (r'\band\(', "and isn't a function"),
+    (r'\bor\(', "or isn't a function"),
+    (r'\bnot\(', "not isn't a function"),
     (r'^\s+except\(', "except isn't a function"),
     (r',]', "unneeded trailing ',' in list"),
 #    (r'class\s[A-Z][^\(]*\((?!Exception)',
@@ -145,6 +149,7 @@ pypats = [
     (r'raise Exception', "don't raise generic exceptions"),
     (r'ui\.(status|progress|write|note|warn)\([\'\"]x',
      "warning: unwrapped ui message"),
+    (r' is\s+(not\s+)?["\'0-9-]', "object comparison with literal"),
 ]
 
 pyfilters = [
