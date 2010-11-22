@@ -202,9 +202,13 @@ def rev(repo, subset, x):
     return [r for r in subset if r == l]
 
 def p1(repo, subset, x):
-    """``p1(set)``
-    First parent of changesets in set.
+    """``p1([set])``
+    First parent of changesets in set, or the working directory.
     """
+    if x is None:
+        p = repo[x].parents()[0].rev()
+        return [r for r in subset if r == p]
+
     ps = set()
     cl = repo.changelog
     for r in getset(repo, range(len(repo)), x):
@@ -212,9 +216,17 @@ def p1(repo, subset, x):
     return [r for r in subset if r in ps]
 
 def p2(repo, subset, x):
-    """``p2(set)``
-    Second parent of changesets in set.
+    """``p2([set])``
+    Second parent of changesets in set, or the working directory.
     """
+    if x is None:
+        ps = repo[x].parents()
+        try:
+            p = ps[1].rev()
+            return [r for r in subset if r == p]
+        except IndexError:
+            return []
+
     ps = set()
     cl = repo.changelog
     for r in getset(repo, range(len(repo)), x):
@@ -222,9 +234,13 @@ def p2(repo, subset, x):
     return [r for r in subset if r in ps]
 
 def parents(repo, subset, x):
-    """``parents(set)``
-    The set of all parents for all changesets in set.
+    """``parents([set])``
+    The set of all parents for all changesets in set, or the working directory.
     """
+    if x is None:
+        ps = tuple(p.rev() for p in repo[x].parents())
+        return [r for r in subset if r in ps]
+
     ps = set()
     cl = repo.changelog
     for r in getset(repo, range(len(repo)), x):
@@ -699,7 +715,7 @@ methods = {
 }
 
 def optimize(x, small):
-    if x == None:
+    if x is None:
         return 0, x
 
     smallbonus = 1
