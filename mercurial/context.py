@@ -603,6 +603,9 @@ class workingctx(changectx):
     def __str__(self):
         return str(self._parents[0]) + "+"
 
+    def __repr__(self):
+        return "<workingctx %s>" % str(self)
+
     def __nonzero__(self):
         return True
 
@@ -901,6 +904,9 @@ class workingfilectx(filectx):
 
     def __str__(self):
         return "%s@%s" % (self.path(), self._changectx)
+
+    def __repr__(self):
+        return "<workingfilectx %s>" % str(self)
 
     def data(self):
         return self._repo.wread(self._path)
