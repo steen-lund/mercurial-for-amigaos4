@@ -137,7 +137,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False, rename=No
         write(repo)
         return
 
-    if mark != None:
+    if mark is not None:
         if "\n" in mark:
             raise util.Abort(_("bookmark name cannot contain newlines"))
         mark = mark.strip()
@@ -348,14 +348,12 @@ def reposetup(ui, repo):
             return result
 
         def addchangegroup(self, *args, **kwargs):
-            parents = self.dirstate.parents()
-
             result = super(bookmark_repo, self).addchangegroup(*args, **kwargs)
             if result > 1:
                 # We have more heads than before
                 return result
             node = self.changelog.tip()
-
+            parents = self.dirstate.parents()
             self._bookmarksupdate(parents, node)
             return result
 
