@@ -178,7 +178,19 @@ class localrepository(repo.repository):
 
     @propertycache
     def dirstate(self):
-        return dirstate.dirstate(self.opener, self.ui, self.root)
+        warned = [0]
+        def validate(node):
+            try:
+                r = self.changelog.rev(node)
+                return node
+            except error.LookupError:
+                if not warned[0]:
+                    warned[0] = True
+                    self.ui.warn(_("warning: ignoring unknown"
+                                   " working parent %s!\n") % short(node))
+                return nullid
+
+        return dirstate.dirstate(self.opener, self.ui, self.root, validate)
 
     def __getitem__(self, changeid):
         if changeid is None:
@@ -1207,8 +1219,7 @@ class localrepository(repo.repository):
     def heads(self, start=None):
         heads = self.changelog.heads(start)
         # sort the output in rev descending order
-        heads = [(-self.changelog.rev(h), h) for h in heads]
-        return [n for (r, n) in sorted(heads)]
+        return  sorted(heads, key=self.changelog.rev, reverse=True)
 
     def branchheads(self, branch=None, start=None, closed=False):
         '''return a (possibly filtered) list of heads for the given branch

@@ -1006,7 +1006,7 @@ class queue(object):
         raise util.Abort(_("patch %s not in series") % patch)
 
     def push(self, repo, patch=None, force=False, list=False,
-             mergeq=None, all=False, move=False):
+             mergeq=None, all=False, move=False, exact=False):
         diffopts = self.diffopts()
         wlock = repo.wlock()
         try:
@@ -1015,7 +1015,7 @@ class queue(object):
                 heads += ls
             if not heads:
                 heads = [nullid]
-            if repo.dirstate.parents()[0] not in heads:
+            if repo.dirstate.parents()[0] not in heads and not exact:
                 self.ui.status(_("(working directory not at a head)\n"))
 
             if not self.series:
@@ -1061,6 +1061,18 @@ class queue(object):
                 return 1
             if not force:
                 self.check_localchanges(repo)
+
+            if exact:
+                if move:
+                    raise util.Abort(_("cannot use --exact and --move together"))
+                if self.applied:
+                    raise util.Abort(_("cannot push --exact with applied patches"))
+                root = self.series[start]
+                target = patchheader(self.join(root), self.plainmode).parent
+                if not target:
+                    raise util.Abort(_("%s does not have a parent recorded" % root))
+                if not repo[target] == repo['.']:
+                    hg.update(repo, target)
 
             if move:
                 if not patch:
@@ -1270,10 +1282,10 @@ class queue(object):
             # and then commit.
             #
             # this should really read:
-            #   mm, dd, aa, aa2 = repo.status(tip, patchparent)[:4]
+            #   mm, dd, aa = repo.status(top, patchparent)[:3]
             # but we do it backwards to take advantage of manifest/chlog
             # caching against the next repo.status call
-            mm, aa, dd, aa2 = repo.status(patchparent, top)[:4]
+            mm, aa, dd = repo.status(patchparent, top)[:3]
             changes = repo.changelog.read(top)
             man = repo.manifest.read(changes[0])
             aaa = aa[:]
@@ -1289,6 +1301,9 @@ class queue(object):
             else:
                 match = cmdutil.matchall(repo)
             m, a, r, d = repo.status(match=match)[:4]
+            mm = set(mm)
+            aa = set(aa)
+            dd = set(dd)
 
             # we might end up with files that were added between
             # qtip and the dirstate parent, but then changed in the
@@ -1299,7 +1314,7 @@ class queue(object):
                     self.ui.warn(_('warning: not refreshing %s\n') % x)
                     continue
                 if x not in aa:
-                    mm.append(x)
+                    mm.add(x)
             # we might end up with files added by the local dirstate that
             # were deleted by the patch.  In this case, they should only
             # show up in the changed section.
@@ -1308,10 +1323,10 @@ class queue(object):
                     self.ui.warn(_('warning: not adding %s\n') % x)
                     continue
                 if x in dd:
-                    del dd[dd.index(x)]
-                    mm.append(x)
+                    dd.remove(x)
+                    mm.add(x)
                 else:
-                    aa.append(x)
+                    aa.add(x)
             # make sure any files deleted in the local dirstate
             # are not in the add or change column of the patch
             forget = []
@@ -1320,16 +1335,16 @@ class queue(object):
                     self.ui.warn(_('warning: not removing %s\n') % x)
                     continue
                 if x in aa:
-                    del aa[aa.index(x)]
+                    aa.remove(x)
                     forget.append(x)
                     continue
-                elif x in mm:
-                    del mm[mm.index(x)]
-                dd.append(x)
+                else:
+                    mm.discard(x)
+                dd.add(x)
 
-            m = list(set(mm))
-            r = list(set(dd))
-            a = list(set(aa))
+            m = list(mm)
+            r = list(dd)
+            a = list(aa)
             c = [filter(matchfn, l) for l in (m, a, r)]
             match = cmdutil.matchfiles(repo, set(c[0] + c[1] + c[2]))
             chunks = patch.diff(repo, patchparent, match=match,
@@ -1529,7 +1544,7 @@ class queue(object):
                 l = line.rstrip()
                 l = l[10:].split(' ')
                 qpp = [bin(x) for x in l]
-            elif datastart != None:
+            elif datastart is not None:
                 l = line.rstrip()
                 n, name = l.split(':', 1)
                 if n:
@@ -2344,7 +2359,8 @@ def push(ui, repo, patch=None, **opts):
         mergeq = queue(ui, repo.join(""), newpath)
         ui.warn(_("merging with queue at: %s\n") % mergeq.path)
     ret = q.push(repo, patch, force=opts.get('force'), list=opts.get('list'),
-                 mergeq=mergeq, all=opts.get('all'), move=opts.get('move'))
+                 mergeq=mergeq, all=opts.get('all'), move=opts.get('move'),
+                 exact=opts.get('exact'))
     return ret
 
 def pop(ui, repo, patch=None, **opts):
@@ -3120,6 +3136,7 @@ cmdtable = {
     "^qpush":
         (push,
          [('f', 'force', None, _('apply on top of local changes')),
+          ('e', 'exact', None, _('apply the target patch to its recorded parent')),
           ('l', 'list', None, _('list patch name in commit text')),
           ('a', 'all', None, _('apply all patches')),
           ('m', 'merge', None, _('merge from another queue (DEPRECATED)')),
