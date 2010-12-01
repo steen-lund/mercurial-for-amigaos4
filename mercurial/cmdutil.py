@@ -147,6 +147,11 @@ def revrange(repo, revs):
         # attempt to parse old-style ranges first to deal with
         # things like old-tag which contain query metacharacters
         try:
+            if isinstance(spec, int):
+                seen.add(spec)
+                l.append(spec)
+                continue
+
             if revrangesep in spec:
                 start, end = spec.split(revrangesep, 1)
                 start = revfix(repo, start, 0)
@@ -796,7 +801,6 @@ class changeset_printer(object):
         branch = ctx.branch()
         # don't show the default branch name
         if branch != 'default':
-            branch = encoding.tolocal(branch)
             self.ui.write(_("branch:      %s\n") % branch,
                           label='log.branch')
         for tag in self.repo.nodetags(changenode):
@@ -1352,8 +1356,7 @@ def commitforceeditor(repo, ctx, subs):
     if ctx.p2():
         edittext.append(_("HG: branch merge"))
     if ctx.branch():
-        edittext.append(_("HG: branch '%s'")
-                        % encoding.tolocal(ctx.branch()))
+        edittext.append(_("HG: branch '%s'") % ctx.branch())
     edittext.extend([_("HG: subrepo %s") % s for s in subs])
     edittext.extend([_("HG: added %s") % f for f in added])
     edittext.extend([_("HG: changed %s") % f for f in modified])

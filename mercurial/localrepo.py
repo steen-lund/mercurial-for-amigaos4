@@ -105,7 +105,7 @@ class localrepository(repo.repository):
         self._tags = None
         self._tagtypes = None
 
-        self._branchcache = None  # in UTF-8
+        self._branchcache = None
         self._branchcachetip = None
         self.nodetagscache = None
         self.filterpats = {}
@@ -178,7 +178,19 @@ class localrepository(repo.repository):
 
     @propertycache
     def dirstate(self):
-        return dirstate.dirstate(self.opener, self.ui, self.root)
+        warned = [0]
+        def validate(node):
+            try:
+                r = self.changelog.rev(node)
+                return node
+            except error.LookupError:
+                if not warned[0]:
+                    warned[0] = True
+                    self.ui.warn(_("warning: ignoring unknown"
+                                   " working parent %s!\n") % short(node))
+                return nullid
+
+        return dirstate.dirstate(self.opener, self.ui, self.root, validate)
 
     def __getitem__(self, changeid):
         if changeid is None:
@@ -423,7 +435,6 @@ class localrepository(repo.repository):
             bt[bn] = tip
         return bt
 
-
     def _readbranchcache(self):
         partial = {}
         try:
@@ -443,7 +454,8 @@ class localrepository(repo.repository):
                 if not l:
                     continue
                 node, label = l.split(" ", 1)
-                partial.setdefault(label.strip(), []).append(bin(node))
+                label = encoding.tolocal(label.strip())
+                partial.setdefault(label, []).append(bin(node))
         except KeyboardInterrupt:
             raise
         except Exception, inst:
@@ -458,7 +470,7 @@ class localrepository(repo.repository):
             f.write("%s %s\n" % (hex(tip), tiprev))
             for label, nodes in branches.iteritems():
                 for node in nodes:
-                    f.write("%s %s\n" % (hex(node), label))
+                    f.write("%s %s\n" % (hex(node), encoding.fromlocal(label)))
             f.rename()
         except (IOError, OSError):
             pass
@@ -647,7 +659,8 @@ class localrepository(repo.repository):
         except IOError:
             ds = ""
         self.opener("journal.dirstate", "w").write(ds)
-        self.opener("journal.branch", "w").write(self.dirstate.branch())
+        self.opener("journal.branch", "w").write(
+            encoding.fromlocal(self.dirstate.branch()))
         self.opener("journal.desc", "w").write("%d\n%s\n" % (len(self), desc))
 
         renames = [(self.sjoin("journal"), self.sjoin("undo")),
@@ -705,7 +718,7 @@ class localrepository(repo.repository):
                 except IOError:
                     self.ui.warn(_("Named branch could not be reset, "
                                    "current branch still is: %s\n")
-                                 % encoding.tolocal(self.dirstate.branch()))
+                                 % self.dirstate.branch())
                 self.invalidate()
                 self.dirstate.invalidate()
                 self.destroyed()
@@ -1207,8 +1220,7 @@ class localrepository(repo.repository):
     def heads(self, start=None):
         heads = self.changelog.heads(start)
         # sort the output in rev descending order
-        heads = [(-self.changelog.rev(h), h) for h in heads]
-        return [n for (r, n) in sorted(heads)]
+        return  sorted(heads, key=self.changelog.rev, reverse=True)
 
     def branchheads(self, branch=None, start=None, closed=False):
         '''return a (possibly filtered) list of heads for the given branch

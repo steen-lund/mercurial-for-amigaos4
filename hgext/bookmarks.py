@@ -31,7 +31,7 @@ branching.
 from mercurial.i18n import _
 from mercurial.node import nullid, nullrev, bin, hex, short
 from mercurial import util, commands, repair, extensions, pushkey, hg, url
-from mercurial import revset
+from mercurial import revset, encoding
 import os
 
 def write(repo):
@@ -52,7 +52,7 @@ def write(repo):
     try:
         file = repo.opener('bookmarks', 'w', atomictemp=True)
         for refspec, node in refs.iteritems():
-            file.write("%s %s\n" % (hex(node), refspec))
+            file.write("%s %s\n" % (hex(node), encoding.fromlocal(refspec)))
         file.rename()
 
         # touch 00changelog.i so hgweb reloads bookmarks (no lock needed)
@@ -137,7 +137,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False, rename=No
         write(repo)
         return
 
-    if mark != None:
+    if mark is not None:
         if "\n" in mark:
             raise util.Abort(_("bookmark name cannot contain newlines"))
         mark = mark.strip()
@@ -233,6 +233,7 @@ def reposetup(ui, repo):
                 bookmarks = {}
                 for line in self.opener('bookmarks'):
                     sha, refspec = line.strip().split(' ', 1)
+                    refspec = encoding.tolocal(refspec)
                     bookmarks[refspec] = self.changelog.lookup(sha)
             except:
                 pass
@@ -333,7 +334,7 @@ def reposetup(ui, repo):
             rb = remote.listkeys('bookmarks')
             for k in rb.keys():
                 if k in self._bookmarks:
-                    nr, nl = rb[k], self._bookmarks[k]
+                    nr, nl = rb[k], hex(self._bookmarks[k])
                     if nr in self:
                         cr = self[nr]
                         cl = self[nl]
@@ -348,14 +349,12 @@ def reposetup(ui, repo):
             return result
 
         def addchangegroup(self, *args, **kwargs):
-            parents = self.dirstate.parents()
-
             result = super(bookmark_repo, self).addchangegroup(*args, **kwargs)
             if result > 1:
                 # We have more heads than before
                 return result
             node = self.changelog.tip()
-
+            parents = self.dirstate.parents()
             self._bookmarksupdate(parents, node)
             return result
 
