@@ -10,7 +10,7 @@
 from mercurial.i18n import gettext, _
 from mercurial import cmdutil, commands, extensions, hg, mdiff, patch
 from mercurial import util
-import copy, cStringIO, errno, os, re, tempfile
+import copy, cStringIO, errno, os, re, shutil, tempfile
 
 lines_re = re.compile(r'@@ -(\d+),(\d+) \+(\d+),(\d+) @@\s*(.*)')
 
@@ -344,10 +344,10 @@ def filterpatch(ui, chunks):
             # new hunk
             if resp_file[0] is None and resp_all[0] is None:
                 chunk.pretty(ui)
-            r = total == 1 and prompt(_('record this change to %r?') %
-                                      chunk.filename()) \
-                           or  prompt(_('record change %d/%d to %r?') %
-                                      (pos, total, chunk.filename()))
+            r = (total == 1
+                 and prompt(_('record this change to %r?') % chunk.filename())
+                 or prompt(_('record change %d/%d to %r?') %
+                           (pos, total, chunk.filename())))
             if r:
                 if fixoffset:
                     chunk = copy.copy(chunk)
@@ -429,7 +429,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
         merge = len(repo[None].parents()) > 1
         if merge:
             raise util.Abort(_('cannot partially commit a merge '
-                               '(use hg commit instead)'))
+                               '(use "hg commit" instead)'))
 
         changes = repo.status(match=match)[:3]
         diffopts = mdiff.diffopts(git=True, nodates=True)
@@ -475,6 +475,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 os.close(fd)
                 ui.debug('backup %r as %r\n' % (f, tmpname))
                 util.copyfile(repo.wjoin(f), tmpname)
+                shutil.copystat(repo.wjoin(f), tmpname)
                 backups[f] = tmpname
 
             fp = cStringIO.StringIO()
@@ -521,6 +522,14 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 for realname, tmpname in backups.iteritems():
                     ui.debug('restoring %r to %r\n' % (tmpname, realname))
                     util.copyfile(tmpname, repo.wjoin(realname))
+                    # Our calls to copystat() here and above are a
+                    # hack to trick any editors that have f open that
+                    # we haven't modified them.
+                    #
+                    # Also note that this racy as an editor could
+                    # notice the file's mtime before we've finished
+                    # writing it.
+                    shutil.copystat(tmpname, repo.wjoin(realname))
                     os.unlink(tmpname)
                 os.rmdir(backupdir)
             except OSError:

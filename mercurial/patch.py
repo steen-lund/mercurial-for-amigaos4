@@ -976,7 +976,7 @@ def scangitpatch(lr, firstline):
     fp.seek(pos)
     return gitpatches
 
-def iterhunks(ui, fp, sourcefile=None):
+def iterhunks(ui, fp):
     """Read a patch and yield the following events:
     - ("file", afile, bfile, firsthunk): select a new target file.
     - ("hunk", hunk): a new hunk is ready to be applied, follows a
@@ -997,10 +997,6 @@ def iterhunks(ui, fp, sourcefile=None):
     BFILE = 1
     context = None
     lr = linereader(fp)
-    # gitworkdone is True if a git operation (copy, rename, ...) was
-    # performed already for the current file. Useful when the file
-    # section may have no hunk.
-    gitworkdone = False
 
     while True:
         newfile = newgitfile = False
@@ -1012,7 +1008,7 @@ def iterhunks(ui, fp, sourcefile=None):
                 current_hunk.fix_newline()
             yield 'hunk', current_hunk
             current_hunk = None
-        if ((sourcefile or state == BFILE) and ((not context and x[0] == '@') or
+        if (state == BFILE and ((not context and x[0] == '@') or
             ((context is not False) and x.startswith('***************')))):
             if context is None and x.startswith('***************'):
                 context = True
@@ -1034,7 +1030,6 @@ def iterhunks(ui, fp, sourcefile=None):
         elif x.startswith('diff --git'):
             # check for git diff, scanning the whole patch file if needed
             m = gitre.match(x)
-            gitworkdone = False
             if m:
                 afile, bfile = m.group(1, 2)
                 if not git:
@@ -1049,7 +1044,6 @@ def iterhunks(ui, fp, sourcefile=None):
                 if gp and (gp.op in ('COPY', 'DELETE', 'RENAME', 'ADD')
                            or gp.mode):
                     afile = bfile
-                    gitworkdone = True
                 newgitfile = True
         elif x.startswith('---'):
             # check for a unified diff
@@ -1077,9 +1071,6 @@ def iterhunks(ui, fp, sourcefile=None):
             afile = parsefilename(x)
             bfile = parsefilename(l2)
 
-        if newfile:
-            gitworkdone = False
-
         if newgitfile or newfile:
             emitfile = True
             state = BFILE
@@ -1091,7 +1082,7 @@ def iterhunks(ui, fp, sourcefile=None):
             raise PatchError(_("malformed patch %s %s") % (afile,
                              current_hunk.desc))
 
-def applydiff(ui, fp, changed, strip=1, sourcefile=None, eolmode='strict'):
+def applydiff(ui, fp, changed, strip=1, eolmode='strict'):
     """Reads a patch from fp and tries to apply it.
 
     The dict 'changed' is filled in with all of the filenames changed
@@ -1105,13 +1096,10 @@ def applydiff(ui, fp, changed, strip=1, sourcefile=None, eolmode='strict'):
     Callers probably want to call 'cmdutil.updatedir' after this to
     apply certain categories of changes not done by this function.
     """
-    return _applydiff(
-        ui, fp, patchfile, copyfile,
-        changed, strip=strip, sourcefile=sourcefile, eolmode=eolmode)
+    return _applydiff(ui, fp, patchfile, copyfile, changed, strip=strip,
+                      eolmode=eolmode)
 
-
-def _applydiff(ui, fp, patcher, copyfn, changed, strip=1,
-               sourcefile=None, eolmode='strict'):
+def _applydiff(ui, fp, patcher, copyfn, changed, strip=1, eolmode='strict'):
     rejects = 0
     err = 0
     current_file = None
@@ -1126,7 +1114,7 @@ def _applydiff(ui, fp, patcher, copyfn, changed, strip=1,
         current_file.write_rej()
         return len(current_file.rej)
 
-    for state, values in iterhunks(ui, fp, sourcefile):
+    for state, values in iterhunks(ui, fp):
         if state == 'hunk':
             if not current_file:
                 continue
@@ -1139,14 +1127,10 @@ def _applydiff(ui, fp, patcher, copyfn, changed, strip=1,
             rejects += closefile()
             afile, bfile, first_hunk = values
             try:
-                if sourcefile:
-                    current_file = patcher(ui, sourcefile, opener,
-                                           eolmode=eolmode)
-                else:
-                    current_file, missing = selectfile(afile, bfile,
-                                                       first_hunk, strip)
-                    current_file = patcher(ui, current_file, opener,
-                                           missing=missing, eolmode=eolmode)
+                current_file, missing = selectfile(afile, bfile,
+                                                   first_hunk, strip)
+                current_file = patcher(ui, current_file, opener,
+                                       missing=missing, eolmode=eolmode)
             except PatchError, err:
                 ui.warn(str(err) + '\n')
                 current_file = None
