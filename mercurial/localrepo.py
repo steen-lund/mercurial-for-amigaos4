@@ -105,7 +105,7 @@ class localrepository(repo.repository):
         self._tags = None
         self._tagtypes = None
 
-        self._branchcache = None  # in UTF-8
+        self._branchcache = None
         self._branchcachetip = None
         self.nodetagscache = None
         self.filterpats = {}
@@ -178,7 +178,19 @@ class localrepository(repo.repository):
 
     @propertycache
     def dirstate(self):
-        return dirstate.dirstate(self.opener, self.ui, self.root)
+        warned = [0]
+        def validate(node):
+            try:
+                r = self.changelog.rev(node)
+                return node
+            except error.LookupError:
+                if not warned[0]:
+                    warned[0] = True
+                    self.ui.warn(_("warning: ignoring unknown"
+                                   " working parent %s!\n") % short(node))
+                return nullid
+
+        return dirstate.dirstate(self.opener, self.ui, self.root, validate)
 
     def __getitem__(self, changeid):
         if changeid is None:
@@ -423,7 +435,6 @@ class localrepository(repo.repository):
             bt[bn] = tip
         return bt
 
-
     def _readbranchcache(self):
         partial = {}
         try:
@@ -443,7 +454,8 @@ class localrepository(repo.repository):
                 if not l:
                     continue
                 node, label = l.split(" ", 1)
-                partial.setdefault(label.strip(), []).append(bin(node))
+                label = encoding.tolocal(label.strip())
+                partial.setdefault(label, []).append(bin(node))
         except KeyboardInterrupt:
             raise
         except Exception, inst:
@@ -458,7 +470,7 @@ class localrepository(repo.repository):
             f.write("%s %s\n" % (hex(tip), tiprev))
             for label, nodes in branches.iteritems():
                 for node in nodes:
-                    f.write("%s %s\n" % (hex(node), label))
+                    f.write("%s %s\n" % (hex(node), encoding.fromlocal(label)))
             f.rename()
         except (IOError, OSError):
             pass
@@ -617,10 +629,6 @@ class localrepository(repo.repository):
 
     def wwrite(self, filename, data, flags):
         data = self._filter(self._decodefilterpats, filename, data)
-        try:
-            os.unlink(self.wjoin(filename))
-        except OSError:
-            pass
         if 'l' in flags:
             self.wopener.symlink(data, filename)
         else:
@@ -647,7 +655,8 @@ class localrepository(repo.repository):
         except IOError:
             ds = ""
         self.opener("journal.dirstate", "w").write(ds)
-        self.opener("journal.branch", "w").write(self.dirstate.branch())
+        self.opener("journal.branch", "w").write(
+            encoding.fromlocal(self.dirstate.branch()))
         self.opener("journal.desc", "w").write("%d\n%s\n" % (len(self), desc))
 
         renames = [(self.sjoin("journal"), self.sjoin("undo")),
@@ -705,7 +714,7 @@ class localrepository(repo.repository):
                 except IOError:
                     self.ui.warn(_("Named branch could not be reset, "
                                    "current branch still is: %s\n")
-                                 % encoding.tolocal(self.dirstate.branch()))
+                                 % self.dirstate.branch())
                 self.invalidate()
                 self.dirstate.invalidate()
                 self.destroyed()
@@ -1207,8 +1216,7 @@ class localrepository(repo.repository):
     def heads(self, start=None):
         heads = self.changelog.heads(start)
         # sort the output in rev descending order
-        heads = [(-self.changelog.rev(h), h) for h in heads]
-        return [n for (r, n) in sorted(heads)]
+        return sorted(heads, key=self.changelog.rev, reverse=True)
 
     def branchheads(self, branch=None, start=None, closed=False):
         '''return a (possibly filtered) list of heads for the given branch
@@ -1493,8 +1501,13 @@ class localrepository(repo.repository):
             group = cl.group(msng_cl_lst, identity, collect)
             for cnt, chnk in enumerate(group):
                 yield chnk
-                self.ui.progress(_('bundling changes'), cnt, unit=_('chunks'))
-            self.ui.progress(_('bundling changes'), None)
+                # revlog.group yields three entries per node, so
+                # dividing by 3 gives an approximation of how many
+                # nodes have been processed.
+                self.ui.progress(_('bundling'), cnt / 3,
+                                 unit=_('changesets'))
+            changecount = cnt / 3
+            self.ui.progress(_('bundling'), None)
 
             prune(mnfst, msng_mnfst_set)
             add_extra_nodes(1, msng_mnfst_set)
@@ -1506,10 +1519,17 @@ class localrepository(repo.repository):
             group = mnfst.group(msng_mnfst_lst,
                                 lambda mnode: msng_mnfst_set[mnode],
                                 filenode_collector(changedfiles))
+            efiles = {}
             for cnt, chnk in enumerate(group):
+                if cnt % 3 == 1:
+                    mnode = chnk[:20]
+                    efiles.update(mnfst.readdelta(mnode))
                 yield chnk
-                self.ui.progress(_('bundling manifests'), cnt, unit=_('chunks'))
-            self.ui.progress(_('bundling manifests'), None)
+                # see above comment for why we divide by 3
+                self.ui.progress(_('bundling'), cnt / 3,
+                                 unit=_('manifests'), total=changecount)
+            self.ui.progress(_('bundling'), None)
+            efiles = len(efiles)
 
             # These are no longer needed, dereference and toss the memory for
             # them.
@@ -1523,8 +1543,7 @@ class localrepository(repo.repository):
                     msng_filenode_set.setdefault(fname, {})
                     changedfiles.add(fname)
             # Go through all our files in order sorted by name.
-            cnt = 0
-            for fname in sorted(changedfiles):
+            for idx, fname in enumerate(sorted(changedfiles)):
                 filerevlog = self.file(fname)
                 if not len(filerevlog):
                     raise util.Abort(_("empty or missing revlog for %s") % fname)
@@ -1547,13 +1566,16 @@ class localrepository(repo.repository):
                     group = filerevlog.group(nodeiter,
                                              lambda fnode: missingfnodes[fnode])
                     for chnk in group:
+                        # even though we print the same progress on
+                        # most loop iterations, put the progress call
+                        # here so that time estimates (if any) can be updated
                         self.ui.progress(
-                            _('bundling files'), cnt, item=fname, unit=_('chunks'))
-                        cnt += 1
+                            _('bundling'), idx, item=fname,
+                            unit=_('files'), total=efiles)
                         yield chnk
             # Signal that no more groups are left.
             yield changegroup.closechunk()
-            self.ui.progress(_('bundling files'), None)
+            self.ui.progress(_('bundling'), None)
 
             if msng_cl_lst:
                 self.hook('outgoing', node=hex(msng_cl_lst[0]), source=source)
@@ -1601,20 +1623,30 @@ class localrepository(repo.repository):
             collect = changegroup.collector(cl, mmfs, changedfiles)
 
             for cnt, chnk in enumerate(cl.group(nodes, identity, collect)):
-                self.ui.progress(_('bundling changes'), cnt, unit=_('chunks'))
+                # revlog.group yields three entries per node, so
+                # dividing by 3 gives an approximation of how many
+                # nodes have been processed.
+                self.ui.progress(_('bundling'), cnt / 3, unit=_('changesets'))
                 yield chnk
-            self.ui.progress(_('bundling changes'), None)
+            changecount = cnt / 3
+            self.ui.progress(_('bundling'), None)
 
             mnfst = self.manifest
             nodeiter = gennodelst(mnfst)
+            efiles = {}
             for cnt, chnk in enumerate(mnfst.group(nodeiter,
                                                    lookuplinkrev_func(mnfst))):
-                self.ui.progress(_('bundling manifests'), cnt, unit=_('chunks'))
+                if cnt % 3 == 1:
+                    mnode = chnk[:20]
+                    efiles.update(mnfst.readdelta(mnode))
+                # see above comment for why we divide by 3
+                self.ui.progress(_('bundling'), cnt / 3,
+                                 unit=_('manifests'), total=changecount)
                 yield chnk
-            self.ui.progress(_('bundling manifests'), None)
+            efiles = len(efiles)
+            self.ui.progress(_('bundling'), None)
 
-            cnt = 0
-            for fname in sorted(changedfiles):
+            for idx, fname in enumerate(sorted(changedfiles)):
                 filerevlog = self.file(fname)
                 if not len(filerevlog):
                     raise util.Abort(_("empty or missing revlog for %s") % fname)
@@ -1626,10 +1658,10 @@ class localrepository(repo.repository):
                     lookup = lookuplinkrev_func(filerevlog)
                     for chnk in filerevlog.group(nodeiter, lookup):
                         self.ui.progress(
-                            _('bundling files'), cnt, item=fname, unit=_('chunks'))
-                        cnt += 1
+                            _('bundling'), idx, item=fname,
+                            total=efiles, unit=_('files'))
                         yield chnk
-            self.ui.progress(_('bundling files'), None)
+            self.ui.progress(_('bundling'), None)
 
             yield changegroup.closechunk()
 
