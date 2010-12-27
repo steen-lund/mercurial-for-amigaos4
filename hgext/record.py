@@ -10,7 +10,7 @@
 from mercurial.i18n import gettext, _
 from mercurial import cmdutil, commands, extensions, hg, mdiff, patch
 from mercurial import util
-import copy, cStringIO, errno, os, re, tempfile
+import copy, cStringIO, errno, os, re, shutil, tempfile
 
 lines_re = re.compile(r'@@ -(\d+),(\d+) \+(\d+),(\d+) @@\s*(.*)')
 
@@ -42,7 +42,7 @@ def scanpatch(fp):
         line = lr.readline()
         if not line:
             break
-        if line.startswith('diff --git a/'):
+        if line.startswith('diff --git a/') or line.startswith('diff -r '):
             def notheader(line):
                 s = line.split(None, 1)
                 return not s or s[0] not in ('---', 'diff')
@@ -70,7 +70,8 @@ class header(object):
 
     XXX shoudn't we move this to mercurial/patch.py ?
     """
-    diff_re = re.compile('diff --git a/(.*) b/(.*)$')
+    diffgit_re = re.compile('diff --git a/(.*) b/(.*)$')
+    diff_re = re.compile('diff -r .* (.*)$')
     allhunks_re = re.compile('(?:index|new file|deleted file) ')
     pretty_re = re.compile('(?:new file|deleted file) ')
     special_re = re.compile('(?:index|new|deleted|copy|rename) ')
@@ -110,10 +111,14 @@ class header(object):
                 return True
 
     def files(self):
-        fromfile, tofile = self.diff_re.match(self.header[0]).groups()
-        if fromfile == tofile:
-            return [fromfile]
-        return [fromfile, tofile]
+        match = self.diffgit_re.match(self.header[0])
+        if match:
+            fromfile, tofile = match.groups()
+            if fromfile == tofile:
+                return [fromfile]
+            return [fromfile, tofile]
+        else:
+            return self.diff_re.match(self.header[0]).groups()
 
     def filename(self):
         return self.files()[-1]
@@ -344,10 +349,10 @@ def filterpatch(ui, chunks):
             # new hunk
             if resp_file[0] is None and resp_all[0] is None:
                 chunk.pretty(ui)
-            r = total == 1 and prompt(_('record this change to %r?') %
-                                      chunk.filename()) \
-                           or  prompt(_('record change %d/%d to %r?') %
-                                      (pos, total, chunk.filename()))
+            r = (total == 1
+                 and prompt(_('record this change to %r?') % chunk.filename())
+                 or prompt(_('record change %d/%d to %r?') %
+                           (pos, total, chunk.filename())))
             if r:
                 if fixoffset:
                     chunk = copy.copy(chunk)
@@ -429,7 +434,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
         merge = len(repo[None].parents()) > 1
         if merge:
             raise util.Abort(_('cannot partially commit a merge '
-                               '(use hg commit instead)'))
+                               '(use "hg commit" instead)'))
 
         changes = repo.status(match=match)[:3]
         diffopts = mdiff.diffopts(git=True, nodates=True)
@@ -475,6 +480,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 os.close(fd)
                 ui.debug('backup %r as %r\n' % (f, tmpname))
                 util.copyfile(repo.wjoin(f), tmpname)
+                shutil.copystat(repo.wjoin(f), tmpname)
                 backups[f] = tmpname
 
             fp = cStringIO.StringIO()
@@ -521,6 +527,14 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 for realname, tmpname in backups.iteritems():
                     ui.debug('restoring %r to %r\n' % (tmpname, realname))
                     util.copyfile(tmpname, repo.wjoin(realname))
+                    # Our calls to copystat() here and above are a
+                    # hack to trick any editors that have f open that
+                    # we haven't modified them.
+                    #
+                    # Also note that this racy as an editor could
+                    # notice the file's mtime before we've finished
+                    # writing it.
+                    shutil.copystat(tmpname, repo.wjoin(realname))
                     os.unlink(tmpname)
                 os.rmdir(backupdir)
             except OSError:
