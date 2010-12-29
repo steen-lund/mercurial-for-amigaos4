@@ -10,7 +10,7 @@
 from mercurial.i18n import gettext, _
 from mercurial import cmdutil, commands, extensions, hg, mdiff, patch
 from mercurial import util
-import copy, cStringIO, errno, os, re, tempfile
+import copy, cStringIO, errno, os, re, shutil, tempfile
 
 lines_re = re.compile(r'@@ -(\d+),(\d+) \+(\d+),(\d+) @@\s*(.*)')
 
@@ -42,7 +42,7 @@ def scanpatch(fp):
         line = lr.readline()
         if not line:
             break
-        if line.startswith('diff --git a/'):
+        if line.startswith('diff --git a/') or line.startswith('diff -r '):
             def notheader(line):
                 s = line.split(None, 1)
                 return not s or s[0] not in ('---', 'diff')
@@ -70,7 +70,8 @@ class header(object):
 
     XXX shoudn't we move this to mercurial/patch.py ?
     """
-    diff_re = re.compile('diff --git a/(.*) b/(.*)$')
+    diffgit_re = re.compile('diff --git a/(.*) b/(.*)$')
+    diff_re = re.compile('diff -r .* (.*)$')
     allhunks_re = re.compile('(?:index|new file|deleted file) ')
     pretty_re = re.compile('(?:new file|deleted file) ')
     special_re = re.compile('(?:index|new|deleted|copy|rename) ')
@@ -110,10 +111,14 @@ class header(object):
                 return True
 
     def files(self):
-        fromfile, tofile = self.diff_re.match(self.header[0]).groups()
-        if fromfile == tofile:
-            return [fromfile]
-        return [fromfile, tofile]
+        match = self.diffgit_re.match(self.header[0])
+        if match:
+            fromfile, tofile = match.groups()
+            if fromfile == tofile:
+                return [fromfile]
+            return [fromfile, tofile]
+        else:
+            return self.diff_re.match(self.header[0]).groups()
 
     def filename(self):
         return self.files()[-1]
@@ -344,10 +349,10 @@ def filterpatch(ui, chunks):
             # new hunk
             if resp_file[0] is None and resp_all[0] is None:
                 chunk.pretty(ui)
-            r = total == 1 and prompt(_('record this change to %r?') %
-                                      chunk.filename()) \
-                           or  prompt(_('record change %d/%d to %r?') %
-                                      (pos, total, chunk.filename()))
+            r = (total == 1
+                 and prompt(_('record this change to %r?') % chunk.filename())
+                 or prompt(_('record change %d/%d to %r?') %
+                           (pos, total, chunk.filename())))
             if r:
                 if fixoffset:
                     chunk = copy.copy(chunk)
@@ -403,8 +408,6 @@ def qrecord(ui, repo, patch, *pats, **opts):
     def committomq(ui, repo, *pats, **opts):
         mq.new(ui, repo, patch, *pats, **opts)
 
-    opts = opts.copy()
-    opts['force'] = True    # always 'qnew -f'
     dorecord(ui, repo, committomq, *pats, **opts)
 
 
@@ -415,21 +418,22 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
     def recordfunc(ui, repo, message, match, opts):
         """This is generic record driver.
 
-        Its job is to interactively filter local changes, and accordingly
-        prepare working dir into a state, where the job can be delegated to
-        non-interactive commit command such as 'commit' or 'qrefresh'.
+        Its job is to interactively filter local changes, and
+        accordingly prepare working directory into a state in which the
+        job can be delegated to a non-interactive commit command such as
+        'commit' or 'qrefresh'.
 
-        After the actual job is done by non-interactive command, working dir
-        state is restored to original.
+        After the actual job is done by non-interactive command, the
+        working directory is restored to its original state.
 
-        In the end we'll record interesting changes, and everything else will be
-        left in place, so the user can continue his work.
+        In the end we'll record interesting changes, and everything else
+        will be left in place, so the user can continue working.
         """
 
         merge = len(repo[None].parents()) > 1
         if merge:
             raise util.Abort(_('cannot partially commit a merge '
-                               '(use hg commit instead)'))
+                               '(use "hg commit" instead)'))
 
         changes = repo.status(match=match)[:3]
         diffopts = mdiff.diffopts(git=True, nodates=True)
@@ -475,6 +479,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 os.close(fd)
                 ui.debug('backup %r as %r\n' % (f, tmpname))
                 util.copyfile(repo.wjoin(f), tmpname)
+                shutil.copystat(repo.wjoin(f), tmpname)
                 backups[f] = tmpname
 
             fp = cStringIO.StringIO()
@@ -502,11 +507,13 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                     raise util.Abort(str(err))
             del fp
 
-            # 4. We prepared working directory according to filtered patch.
-            #    Now is the time to delegate the job to commit/qrefresh or the like!
+            # 4. We prepared working directory according to filtered
+            #    patch. Now is the time to delegate the job to
+            #    commit/qrefresh or the like!
 
-            # it is important to first chdir to repo root -- we'll call a
-            # highlevel command with list of pathnames relative to repo root
+            # it is important to first chdir to repo root -- we'll call
+            # a highlevel command with list of pathnames relative to
+            # repo root
             cwd = os.getcwd()
             os.chdir(repo.root)
             try:
@@ -521,6 +528,14 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 for realname, tmpname in backups.iteritems():
                     ui.debug('restoring %r to %r\n' % (tmpname, realname))
                     util.copyfile(tmpname, repo.wjoin(realname))
+                    # Our calls to copystat() here and above are a
+                    # hack to trick any editors that have f open that
+                    # we haven't modified them.
+                    #
+                    # Also note that this racy as an editor could
+                    # notice the file's mtime before we've finished
+                    # writing it.
+                    shutil.copystat(tmpname, repo.wjoin(realname))
                     os.unlink(tmpname)
                 os.rmdir(backupdir)
             except OSError:
@@ -540,11 +555,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
 
 cmdtable = {
     "record":
-        (record,
-
-         # add commit options
-         commands.table['^commit|ci'][1],
-
+        (record, commands.table['^commit|ci'][1], # same options as commit
          _('hg record [OPTION]... [FILE]...')),
 }
 
@@ -557,11 +568,7 @@ def uisetup(ui):
 
     qcmdtable = {
     "qrecord":
-        (qrecord,
-
-         # add qnew options, except '--force'
-         [opt for opt in mq.cmdtable['^qnew'][1] if opt[1] != 'force'],
-
+        (qrecord, mq.cmdtable['^qnew'][1], # same options as qnew
          _('hg qrecord [OPTION]... PATCH [FILE]...')),
     }
 
