@@ -451,7 +451,7 @@ def copyfile(src, dest):
     else:
         try:
             shutil.copyfile(src, dest)
-            shutil.copystat(src, dest)
+            shutil.copymode(src, dest)
         except shutil.Error, inst:
             raise Abort(str(inst))
 
@@ -487,6 +487,7 @@ class path_auditor(object):
     '''ensure that a filesystem path contains no banned components.
     the following properties of a path are checked:
 
+    - ends with a directory separator
     - under top-level .hg
     - starts at the root of a windows drive
     - contains ".."
@@ -504,6 +505,9 @@ class path_auditor(object):
     def __call__(self, path):
         if path in self.audited:
             return
+        # AIX ignores "/" at end of path, others raise EISDIR.
+        if endswithsep(path):
+            raise Abort(_("path ends in directory separator: %s") % path)
         normpath = os.path.normcase(path)
         parts = splitpath(normpath)
         if (os.path.splitdrive(path)[0]
@@ -837,7 +841,7 @@ class atomictempfile(object):
             self._fp.close()
             rename(self.temp, localpath(self.__name))
 
-    def __del__(self):
+    def close(self):
         if not self._fp:
             return
         if not self._fp.closed:
@@ -845,6 +849,9 @@ class atomictempfile(object):
                 os.unlink(self.temp)
             except: pass
             self._fp.close()
+
+    def __del__(self):
+        self.close()
 
 def makedirs(name, mode=None):
     """recursive directory creation with parent mode inheritance"""
@@ -894,7 +901,6 @@ class opener(object):
             mode += "b" # for that other OS
 
         nlink = -1
-        st_mode = None
         dirname, basename = os.path.split(f)
         # If basename is empty, then the path is malformed because it points
         # to a directory. Let the posixfile() call below raise IOError.
@@ -905,7 +911,6 @@ class opener(object):
                 return atomictempfile(f, mode, self.createmode)
             try:
                 if 'w' in mode:
-                    st_mode = os.lstat(f).st_mode & 0777
                     os.unlink(f)
                     nlink = 0
                 else:
@@ -925,10 +930,7 @@ class opener(object):
                     rename(mktempcopy(f), f)
         fp = posixfile(f, mode)
         if nlink == 0:
-            if st_mode is None:
-                self._fixfilemode(f)
-            else:
-                os.chmod(f, st_mode)
+            self._fixfilemode(f)
         return fp
 
     def symlink(self, src, dst):
@@ -1073,7 +1075,7 @@ def strdate(string, format, defaults=[]):
 
     # NOTE: unixtime = localunixtime + offset
     offset, date = timezone(string), string
-    if offset != None:
+    if offset is not None:
         date = " ".join(string.split()[:-1])
 
     # add missing elements from defaults
@@ -1118,7 +1120,7 @@ def parsedate(date, formats=None, bias={}):
         now = makedate()
         defaults = {}
         nowmap = {}
-        for part in "d mb yY HI M S".split():
+        for part in ("d", "mb", "yY", "HI", "M", "S"):
             # this piece is for rounding the specific end of unknowns
             b = bias.get(part)
             if b is None:
@@ -1188,7 +1190,7 @@ def matchdate(date):
 
     def upper(date):
         d = dict(mb="12", HI="23", M="59", S="59")
-        for days in "31 30 29".split():
+        for days in ("31", "30", "29"):
             try:
                 d["d"] = days
                 return parsedate(date, extendeddateformats, d)[0]
@@ -1377,15 +1379,26 @@ def uirepr(s):
 #### naming convention of below implementation follows 'textwrap' module
 
 class MBTextWrapper(textwrap.TextWrapper):
+    """
+    Extend TextWrapper for double-width characters.
+
+    Some Asian characters use two terminal columns instead of one.
+    A good example of this behavior can be seen with u'\u65e5\u672c',
+    the two Japanese characters for "Japan":
+    len() returns 2, but when printed to a terminal, they eat 4 columns.
+
+    (Note that this has nothing to do whatsoever with unicode
+    representation, or encoding of the underlying string)
+    """
     def __init__(self, **kwargs):
         textwrap.TextWrapper.__init__(self, **kwargs)
 
     def _cutdown(self, str, space_left):
         l = 0
         ucstr = unicode(str, encoding.encoding)
-        w = unicodedata.east_asian_width
+        colwidth = unicodedata.east_asian_width
         for i in xrange(len(ucstr)):
-            l += w(ucstr[i]) in 'WFA' and 2 or 1
+            l += colwidth(ucstr[i]) in 'WFA' and 2 or 1
             if space_left < l:
                 return (ucstr[:i].encode(encoding.encoding),
                         ucstr[i:].encode(encoding.encoding))
