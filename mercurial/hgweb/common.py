@@ -73,10 +73,29 @@ class ErrorResponse(Exception):
     def __init__(self, code, message=None, headers=[]):
         if message is None:
             message = _statusmessage(code)
-        Exception.__init__(self, code, message)
+        super(Exception, self).__init__()
         self.code = code
         self.message = message
         self.headers = headers
+    def __str__(self):
+        return self.message
+
+class continuereader(object):
+    def __init__(self, f, write):
+        self.f = f
+        self._write = write
+        self.continued = False
+
+    def read(self, amt=-1):
+        if not self.continued:
+            self.continued = True
+            self._write('HTTP/1.1 100 Continue\r\n\r\n')
+        return self.f.read(amt)
+
+    def __getattr__(self, attr):
+        if attr in ('close', 'readline', 'readlines', '__iter__'):
+            return getattr(self.f, attr)
+        raise AttributeError()
 
 def _statusmessage(code):
     from BaseHTTPServer import BaseHTTPRequestHandler
