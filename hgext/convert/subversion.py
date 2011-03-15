@@ -259,6 +259,7 @@ class svn_source(converter_source):
             except ValueError:
                 raise util.Abort(_('svn: revision %s is not an integer') % rev)
 
+        self.trunkname = self.ui.config('convert', 'svn.trunk', 'trunk').strip('/')
         self.startrev = self.ui.config('convert', 'svn.startrev', default=0)
         try:
             self.startrev = int(self.startrev)
@@ -761,9 +762,8 @@ class svn_source(converter_source):
             author = author and self.recode(author) or ''
             try:
                 branch = self.module.split("/")[-1]
-                trunkname = self.ui.config('convert', 'svn.trunk', 'trunk')
-                if branch == trunkname.strip('/'):
-                    branch = ''
+                if branch == self.trunkname:
+                    branch = None
             except IndexError:
                 branch = None
 
@@ -944,6 +944,7 @@ exit 1
 
 class svn_sink(converter_sink, commandline):
     commit_re = re.compile(r'Committed revision (\d+).', re.M)
+    uuid_re = re.compile(r'Repository UUID:\s*(\S+)', re.M)
 
     def prerun(self):
         if self.wc:
@@ -964,8 +965,6 @@ class svn_sink(converter_sink, commandline):
 
     def __init__(self, ui, path):
 
-        if svn is None:
-            raise MissingTool(_('Could not load Subversion python bindings'))
         converter_sink.__init__(self, ui, path)
         commandline.__init__(self, ui, 'svn')
         self.delete = []
@@ -1012,8 +1011,8 @@ class svn_sink(converter_sink, commandline):
             fp.close()
             util.set_flags(hook, False, True)
 
-        xport = transport.SvnRaTransport(url=geturl(path))
-        self.uuid = svn.ra.get_uuid(xport.ra)
+        output = self.run0('info')
+        self.uuid = self.uuid_re.search(output).group(1).strip()
 
     def wjoin(self, *names):
         return os.path.join(self.wc, *names)
