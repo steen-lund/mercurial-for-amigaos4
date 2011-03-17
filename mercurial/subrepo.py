@@ -8,7 +8,7 @@
 import errno, os, re, xml.dom.minidom, shutil, urlparse, posixpath
 import stat, subprocess, tarfile
 from i18n import _
-import config, util, node, error, cmdutil
+import config, util, node, error, cmdutil, bookmarks
 hg = None
 
 nullstate = ('', '', 'empty')
@@ -441,6 +441,7 @@ class hgsubrepo(abstractsubrepo):
                                  % (subrelpath(self), srcurl))
             other = hg.repository(self._repo.ui, srcurl)
             self._repo.pull(other)
+            bookmarks.updatefromremote(self._repo.ui, self._repo, other)
 
     def get(self, state, overwrite=False):
         self._get(state)
@@ -714,6 +715,12 @@ class gitsubrepo(abstractsubrepo):
             current = None
         return current
 
+    def _gitremote(self, remote):
+        out = self._gitcommand(['remote', 'show', '-n', remote])
+        line = out.split('\n')[1]
+        i = line.index('URL: ') + len('URL: ')
+        return line[i:]
+
     def _githavelocally(self, revision):
         out, code = self._gitdir(['cat-file', '-e', revision])
         return code == 0
@@ -767,11 +774,14 @@ class gitsubrepo(abstractsubrepo):
 
     def _fetch(self, source, revision):
         if self._gitmissing():
-            self._ui.status(_('cloning subrepo %s\n') % self._relpath)
-            self._gitnodir(['clone', self._abssource(source), self._abspath])
+            source = self._abssource(source)
+            self._ui.status(_('cloning subrepo %s from %s\n') %
+                            (self._relpath, source))
+            self._gitnodir(['clone', source, self._abspath])
         if self._githavelocally(revision):
             return
-        self._ui.status(_('pulling subrepo %s\n') % self._relpath)
+        self._ui.status(_('pulling subrepo %s from %s\n') %
+                        (self._relpath, self._gitremote('origin')))
         # try only origin: the originally cloned repo
         self._gitcommand(['fetch'])
         if not self._githavelocally(revision):

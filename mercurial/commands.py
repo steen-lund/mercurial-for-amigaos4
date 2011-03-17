@@ -13,7 +13,7 @@ import hg, util, revlog, extensions, copies, error, bookmarks
 import patch, help, mdiff, url, encoding, templatekw, discovery
 import archival, changegroup, cmdutil, sshserver, hbisect, hgweb, hgweb.server
 import merge as mergemod
-import minirst, revset
+import minirst, revset, templatefilters
 import dagparser
 
 # Commands start here, listed alphabetically
@@ -303,7 +303,8 @@ def backout(ui, repo, node=None, rev=None, **opts):
     return 0
 
 def bisect(ui, repo, rev=None, extra=None, command=None,
-               reset=None, good=None, bad=None, skip=None, noupdate=None):
+               reset=None, good=None, bad=None, skip=None, extend=None,
+               noupdate=None):
     """subdivision search of changesets
 
     This command helps to find changesets which introduce problems. To
@@ -326,6 +327,17 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
 
     Returns 0 on success.
     """
+    def extendbisectrange(nodes, good):
+        # bisect is incomplete when it ends on a merge node and
+        # one of the parent was not checked.
+        parents = repo[nodes[0]].parents()
+        if len(parents) > 1:
+            side = good and state['bad'] or state['good']
+            num = len(set(i.node() for i in parents) & set(side))
+            if num == 1:
+                 return parents[0].ancestor(parents[1])
+        return None
+
     def print_result(nodes, good):
         displayer = cmdutil.show_changeset(ui, repo, {})
         if len(nodes) == 1:
@@ -336,14 +348,12 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
                 ui.write(_("The first bad revision is:\n"))
             displayer.show(repo[nodes[0]])
             parents = repo[nodes[0]].parents()
-            if len(parents) > 1:
-                side = good and state['bad'] or state['good']
-                num = len(set(i.node() for i in parents) & set(side))
-                if num == 1:
-                    common = parents[0].ancestor(parents[1])
-                    ui.write(_('Not all ancestors of this changeset have been'
-                               ' checked.\nTo check the other ancestors, start'
-                               ' from the common ancestor, %s.\n' % common))
+            extendnode = extendbisectrange(nodes, good)
+            if extendnode is not None:
+                ui.write(_('Not all ancestors of this changeset have been'
+                           ' checked.\nUse bisect --extend to continue the '
+                           'bisection from\nthe common ancestor, %s.\n')
+                         % short(extendnode.node()))
         else:
             # multiple possible revisions
             if good:
@@ -376,7 +386,7 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
             bad = True
         else:
             reset = True
-    elif extra or good + bad + skip + reset + bool(command) > 1:
+    elif extra or good + bad + skip + reset + extend + bool(command) > 1:
         raise util.Abort(_('incompatible arguments'))
 
     if reset:
@@ -440,6 +450,18 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
 
     # actually bisect
     nodes, changesets, good = hbisect.bisect(repo.changelog, state)
+    if extend:
+        if not changesets:
+            extendnode = extendbisectrange(nodes, good)
+            if extendnode is not None:
+                ui.write(_("Extending search to changeset %d:%s\n"
+                         % (extendnode.rev(), short(extendnode.node()))))
+                if noupdate:
+                    return
+                cmdutil.bail_if_changed(repo)
+                return hg.clean(repo, extendnode.node())
+        raise util.Abort(_("nothing to extend"))
+
     if changesets == 0:
         print_result(nodes, good)
     else:
@@ -1175,6 +1197,7 @@ def showconfig(ui, repo, *values, **opts):
         if len(items) > 1 or items and sections:
             raise util.Abort(_('only one config item permitted'))
     for section, name, value in ui.walkconfig(untrusted=untrusted):
+        value = str(value).replace('\n', '\\n')
         sectname = section + '.' + name
         if values:
             for v in values:
@@ -1214,7 +1237,7 @@ def debugpushkey(ui, repopath, namespace, *keyinfo):
 def debugrevspec(ui, repo, expr):
     '''parse and apply a revision specification'''
     if ui.verbose:
-        tree = revset.parse(expr)
+        tree = revset.parse(expr)[0]
         ui.note(tree, "\n")
     func = revset.match(expr)
     for c in func(repo, range(len(repo))):
@@ -1595,7 +1618,7 @@ def diff(ui, repo, *pats, **opts):
         msg = _('cannot specify --rev and --change at the same time')
         raise util.Abort(msg)
     elif change:
-        node2 = repo.lookup(change)
+        node2 = cmdutil.revsingle(repo, change, None).node()
         node1 = repo[node2].parents()[0].node()
     else:
         node1, node2 = cmdutil.revpair(repo, revs)
@@ -1962,7 +1985,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False):
     Returns 0 if successful.
     """
     option_lists = []
-    textwidth = ui.termwidth() - 2
+    textwidth = min(ui.termwidth(), 80) - 2
 
     def addglobalopts(aliases):
         if ui.verbose:
@@ -2141,6 +2164,8 @@ def help_(ui, name=None, with_version=False, unknowncmd=False):
                    'extensions\n'))
 
     help.addtopichook('revsets', revset.makedoc)
+    help.addtopichook('templates', templatekw.makedoc)
+    help.addtopichook('templates', templatefilters.makedoc)
 
     if name and name != 'shortlist':
         i = None
@@ -2267,6 +2292,7 @@ def identify(ui, repo, source=None, rev=None,
     output = []
 
     revs = []
+    bms = []
     if source:
         source, branches = hg.parseurl(ui.expandpath(source))
         repo = hg.repository(ui, source)
@@ -2277,10 +2303,19 @@ def identify(ui, repo, source=None, rev=None,
             rev = revs[0]
         if not rev:
             rev = "tip"
-        if num or branch or tags or bookmarks:
-            raise util.Abort(_("can't query remote revision number,"
-                             " branch, tags, or bookmarks"))
-        output = [hexfunc(repo.lookup(rev))]
+        if num or branch or tags:
+            raise util.Abort(
+                _("can't query remote revision number, branch, or tags"))
+
+        remoterev = repo.lookup(rev)
+        if default or id:
+            output = [hexfunc(remoterev)]
+
+        if 'bookmarks' in repo.listkeys('namespaces'):
+            hexremoterev = hex(remoterev)
+            bms = [bm for bm, bmrev in repo.listkeys('bookmarks').iteritems()
+                   if bmrev == hexremoterev]
+
     elif not rev:
         ctx = repo[None]
         parents = ctx.parents()
@@ -2300,6 +2335,9 @@ def identify(ui, repo, source=None, rev=None,
         if num:
             output.append(str(ctx.rev()))
 
+    if repo.local():
+        bms = ctx.bookmarks()
+
     if repo.local() and default and not ui.quiet:
         b = ctx.branch()
         if b != 'default':
@@ -2310,8 +2348,9 @@ def identify(ui, repo, source=None, rev=None,
         if t:
             output.append(t)
 
+    if default and not ui.quiet:
         # multiple bookmarks for a single parent separated by '/'
-        bm = '/'.join(ctx.bookmarks())
+        bm = '/'.join(bms)
         if bm:
             output.append(bm)
 
@@ -2322,7 +2361,7 @@ def identify(ui, repo, source=None, rev=None,
         output.extend(ctx.tags())
 
     if bookmarks:
-        output.extend(ctx.bookmarks())
+        output.extend(bms)
 
     ui.write("%s\n" % ' '.join(output))
 
@@ -2938,6 +2977,7 @@ def pull(ui, repo, source="default", **opts):
             raise util.Abort(err)
 
     modheads = repo.pull(other, heads=revs, force=opts.get('force'))
+    bookmarks.updatefromremote(ui, repo, other)
     if checkout:
         checkout = str(repo.changelog.rev(other.lookup(checkout)))
     repo._subtoppath = source
@@ -3998,15 +4038,16 @@ def unbundle(ui, repo, fname1, *fnames, **opts):
     fnames = (fname1,) + fnames
 
     lock = repo.lock()
+    wc = repo['.']
     try:
         for fname in fnames:
             f = url.open(ui, fname)
             gen = changegroup.readbundle(f, fname)
             modheads = repo.addchangegroup(gen, 'unbundle', 'bundle:' + fname,
                                            lock=lock)
+        bookmarks.updatecurrentbookmark(repo, wc.node(), wc.branch())
     finally:
         lock.release()
-
     return postincoming(ui, repo, modheads, opts.get('update'), None)
 
 def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
@@ -4053,7 +4094,7 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
     if rev and node:
         raise util.Abort(_("please specify just one revision"))
 
-    if not rev:
+    if rev is None or rev == '':
         rev = node
 
     # if we defined a bookmark, we have to remember the original bookmark name
@@ -4269,6 +4310,7 @@ table = {
           ('g', 'good', False, _('mark changeset good')),
           ('b', 'bad', False, _('mark changeset bad')),
           ('s', 'skip', False, _('skip testing changeset')),
+          ('e', 'extend', False, _('extend the bisect range')),
           ('c', 'command', '',
            _('use command to check changeset state'), _('CMD')),
           ('U', 'noupdate', False, _('do not update to target'))],
