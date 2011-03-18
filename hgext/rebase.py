@@ -90,13 +90,18 @@ def rebase(ui, repo, **opts):
         contf = opts.get('continue')
         abortf = opts.get('abort')
         collapsef = opts.get('collapse', False)
-        extrafn = opts.get('extrafn')
+        collapsemsg = cmdutil.logmessage(opts)
+        extrafn = opts.get('extrafn') # internal, used by e.g. hgsubversion
         keepf = opts.get('keep', False)
         keepbranchesf = opts.get('keepbranches', False)
         detachf = opts.get('detach', False)
         # keepopen is not meant for use on the command line, but by
         # other extensions
         keepopen = opts.get('keepopen', False)
+
+        if collapsemsg and not collapsef:
+            raise util.Abort(
+                _('message can only be specified with collapse'))
 
         if contf or abortf:
             if contf and abortf:
@@ -138,8 +143,7 @@ def rebase(ui, repo, **opts):
                     external = checkexternal(repo, state, targetancestors)
 
         if keepbranchesf:
-            if extrafn:
-                raise util.Abort(_('cannot use both keepbranches and extrafn'))
+            assert not extrafn, 'cannot use both keepbranches and extrafn'
             def extrafn(ctx, extra):
                 extra['branch'] = ctx.branch()
 
@@ -190,11 +194,14 @@ def rebase(ui, repo, **opts):
         if collapsef and not keepopen:
             p1, p2 = defineparents(repo, min(state), target,
                                                         state, targetancestors)
-            commitmsg = 'Collapsed revision'
-            for rebased in state:
-                if rebased not in skipped and state[rebased] != nullmerge:
-                    commitmsg += '\n* %s' % repo[rebased].description()
-            commitmsg = ui.edit(commitmsg, repo.ui.username())
+            if collapsemsg:
+                commitmsg = collapsemsg
+            else:
+                commitmsg = 'Collapsed revision'
+                for rebased in state:
+                    if rebased not in skipped and state[rebased] != nullmerge:
+                        commitmsg += '\n* %s' % repo[rebased].description()
+                commitmsg = ui.edit(commitmsg, repo.ui.username())
             newrev = concludenode(repo, rev, p1, external, commitmsg=commitmsg,
                                   extrafn=extrafn)
 
@@ -565,6 +572,10 @@ cmdtable = {
         ('d', 'dest', '',
          _('rebase onto the specified changeset'), _('REV')),
         ('', 'collapse', False, _('collapse the rebased changesets')),
+        ('m', 'message', '',
+         _('use text as collapse commit message'), _('TEXT')),
+        ('l', 'logfile', '',
+         _('read collapse commit message from file'), _('FILE')),
         ('', 'keep', False, _('keep original changesets')),
         ('', 'keepbranches', False, _('keep original branch names')),
         ('', 'detach', False, _('force detaching of source from its original '

@@ -40,9 +40,10 @@ def findrepos(paths):
 def urlrepos(prefix, roothead, paths):
     """yield url paths and filesystem paths from a list of repo paths
 
-    >>> list(urlrepos('hg', '/opt', ['/opt/r', '/opt/r/r', '/opt']))
+    >>> conv = lambda seq: [(v, util.pconvert(p)) for v,p in seq]
+    >>> conv(urlrepos('hg', '/opt', ['/opt/r', '/opt/r/r', '/opt']))
     [('hg/r', '/opt/r'), ('hg/r/r', '/opt/r/r'), ('hg', '/opt')]
-    >>> list(urlrepos('', '/opt', ['/opt/r', '/opt/r/r', '/opt']))
+    >>> conv(urlrepos('', '/opt', ['/opt/r', '/opt/r/r', '/opt']))
     [('r', '/opt/r'), ('r/r', '/opt/r/r'), ('', '/opt')]
     """
     for path in paths:
@@ -76,7 +77,10 @@ class hgwebdir(object):
             if not os.path.exists(self.conf):
                 raise util.Abort(_('config file %s not found!') % self.conf)
             u.readconfig(self.conf, remap=map, trust=True)
-            paths = u.configitems('hgweb-paths')
+            paths = []
+            for name, ignored in u.configitems('hgweb-paths'):
+                for path in u.configlist('hgweb-paths', name):
+                    paths.append((name, path))
         elif isinstance(self.conf, (list, tuple)):
             paths = self.conf
         elif isinstance(self.conf, dict):
