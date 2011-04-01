@@ -90,13 +90,18 @@ def rebase(ui, repo, **opts):
         contf = opts.get('continue')
         abortf = opts.get('abort')
         collapsef = opts.get('collapse', False)
-        extrafn = opts.get('extrafn')
+        collapsemsg = cmdutil.logmessage(opts)
+        extrafn = opts.get('extrafn') # internal, used by e.g. hgsubversion
         keepf = opts.get('keep', False)
         keepbranchesf = opts.get('keepbranches', False)
         detachf = opts.get('detach', False)
         # keepopen is not meant for use on the command line, but by
         # other extensions
         keepopen = opts.get('keepopen', False)
+
+        if collapsemsg and not collapsef:
+            raise util.Abort(
+                _('message can only be specified with collapse'))
 
         if contf or abortf:
             if contf and abortf:
@@ -138,8 +143,7 @@ def rebase(ui, repo, **opts):
                     external = checkexternal(repo, state, targetancestors)
 
         if keepbranchesf:
-            if extrafn:
-                raise util.Abort(_('cannot use both keepbranches and extrafn'))
+            assert not extrafn, 'cannot use both keepbranches and extrafn'
             def extrafn(ctx, extra):
                 extra['branch'] = ctx.branch()
 
@@ -190,11 +194,14 @@ def rebase(ui, repo, **opts):
         if collapsef and not keepopen:
             p1, p2 = defineparents(repo, min(state), target,
                                                         state, targetancestors)
-            commitmsg = 'Collapsed revision'
-            for rebased in state:
-                if rebased not in skipped and state[rebased] != nullmerge:
-                    commitmsg += '\n* %s' % repo[rebased].description()
-            commitmsg = ui.edit(commitmsg, repo.ui.username())
+            if collapsemsg:
+                commitmsg = collapsemsg
+            else:
+                commitmsg = 'Collapsed revision'
+                for rebased in state:
+                    if rebased not in skipped and state[rebased] != nullmerge:
+                        commitmsg += '\n* %s' % repo[rebased].description()
+                commitmsg = ui.edit(commitmsg, repo.ui.username())
             newrev = concludenode(repo, rev, p1, external, commitmsg=commitmsg,
                                   extrafn=extrafn)
 
@@ -270,7 +277,7 @@ def updatedirstate(repo, rev, p1, p2):
         if k in m1:
             if v in m1 or v in m2:
                 repo.dirstate.copy(v, k)
-                if v in m2 and v not in m1:
+                if v in m2 and v not in m1 and k in m2:
                     repo.dirstate.remove(v)
 
 def concludenode(repo, rev, p1, p2, commitmsg=None, extrafn=None):
@@ -354,6 +361,8 @@ def updatemq(repo, state, skipped, **opts):
     'Update rebased mq patches - finalize and then import them'
     mqrebase = {}
     mq = repo.mq
+    original_series = mq.full_series[:]
+
     for p in mq.applied:
         rev = repo[p.node].rev()
         if rev in state:
@@ -371,6 +380,15 @@ def updatemq(repo, state, skipped, **opts):
                 repo.ui.debug('import mq patch %d (%s)\n' % (state[rev], name))
                 mq.qimport(repo, (), patchname=name, git=isgit,
                                 rev=[str(state[rev])])
+
+        # Restore missing guards
+        for s in original_series:
+            pname = mq.guard_re.split(s, 1)[0]
+            if pname in mq.full_series:
+                repo.ui.debug('restoring guard for patch %s' % (pname))
+                mq.full_series.remove(pname)
+                mq.full_series.append(s)
+                mq.series_dirty = True
         mq.save_dirty()
 
 def storestatus(repo, originalwd, target, state, collapse, keep, keepbranches,
@@ -475,9 +493,10 @@ def buildstate(repo, dest, src, base, detach):
 
     if src:
         commonbase = repo[src].ancestor(repo[dest])
+        samebranch = repo[src].branch() == repo[dest].branch()
         if commonbase == repo[src]:
             raise util.Abort(_('source is ancestor of destination'))
-        if commonbase == repo[dest]:
+        if samebranch and commonbase == repo[dest]:
             raise util.Abort(_('source is descendant of destination'))
         source = repo[src].rev()
         if detach:
@@ -565,6 +584,10 @@ cmdtable = {
         ('d', 'dest', '',
          _('rebase onto the specified changeset'), _('REV')),
         ('', 'collapse', False, _('collapse the rebased changesets')),
+        ('m', 'message', '',
+         _('use text as collapse commit message'), _('TEXT')),
+        ('l', 'logfile', '',
+         _('read collapse commit message from file'), _('FILE')),
         ('', 'keep', False, _('keep original changesets')),
         ('', 'keepbranches', False, _('keep original branch names')),
         ('', 'detach', False, _('force detaching of source from its original '

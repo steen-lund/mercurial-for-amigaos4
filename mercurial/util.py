@@ -438,6 +438,9 @@ def checksignature(func):
 
     return check
 
+def makedir(path, notindexed):
+    os.mkdir(path)
+
 def unlinkpath(f):
     """unlink and remove the directory if it is empty"""
     os.unlink(f)
@@ -769,7 +772,18 @@ def splitpath(path):
 
 def gui():
     '''Are we running in a GUI?'''
-    return os.name == "nt" or os.name == "mac" or os.environ.get("DISPLAY")
+    if sys.platform == 'darwin':
+        if 'SSH_CONNECTION' in os.environ:
+            # handle SSH access to a box where the user is logged in
+            return False
+        elif getattr(osutil, 'isgui', None):
+            # check if a CoreGraphics session is available
+            return osutil.isgui()
+        else:
+            # pure build; use a safe default
+            return True
+    else:
+        return os.name == "nt" or os.environ.get("DISPLAY")
 
 def mktempcopy(name, emptyok=False, createmode=None):
     """Create a temporary file with the same contents from name
@@ -1204,7 +1218,10 @@ def matchdate(date):
         return parsedate(date, extendeddateformats, d)[0]
 
     date = date.strip()
-    if date[0] == "<":
+
+    if not date:
+        raise Abort(_("dates cannot consist entirely of whitespace"))
+    elif date[0] == "<":
         when = upper(date[1:])
         return lambda x: x <= when
     elif date[0] == ">":
@@ -1366,26 +1383,6 @@ def bytecount(nbytes):
         if nbytes >= divisor * multiplier:
             return format % (nbytes / float(divisor))
     return units[-1][2] % nbytes
-
-def drop_scheme(scheme, path):
-    sc = scheme + ':'
-    if path.startswith(sc):
-        path = path[len(sc):]
-        if path.startswith('//'):
-            if scheme == 'file':
-                i = path.find('/', 2)
-                if i == -1:
-                    return ''
-                # On Windows, absolute paths are rooted at the current drive
-                # root. On POSIX they are rooted at the file system root.
-                if os.name == 'nt':
-                    droot = os.path.splitdrive(os.getcwd())[0] + '/'
-                    path = os.path.join(droot, path[i + 1:])
-                else:
-                    path = path[i:]
-            else:
-                path = path[2:]
-    return path
 
 def uirepr(s):
     # Avoid double backslash in Windows path repr()

@@ -7,7 +7,7 @@
 
 from i18n import _
 import errno, getpass, os, socket, sys, tempfile, traceback
-import config, util, error
+import config, util, error, url
 
 class ui(object):
     def __init__(self, src=None):
@@ -111,7 +111,7 @@ class ui(object):
                                   % (n, p, self.configsource('paths', n)))
                         p = p.replace('%%', '%')
                     p = util.expandpath(p)
-                    if '://' not in p and not os.path.isabs(p):
+                    if not url.hasscheme(p) and not os.path.isabs(p):
                         p = os.path.normpath(os.path.join(root, p))
                     c.set("paths", n, p)
 
@@ -273,7 +273,7 @@ class ui(object):
         cfg = self._data(untrusted)
         for section in cfg.sections():
             for name, value in self.configitems(section, untrusted):
-                yield section, name, str(value).replace('\n', '\\n')
+                yield section, name, value
 
     def plain(self):
         '''is plain mode active?
@@ -325,7 +325,7 @@ class ui(object):
 
     def expandpath(self, loc, default=None):
         """Return repository location relative to cwd or from [paths]"""
-        if "://" in loc or os.path.isdir(os.path.join(loc, '.hg')):
+        if url.hasscheme(loc) or os.path.isdir(os.path.join(loc, '.hg')):
             return loc
 
         path = self.config('paths', loc)
@@ -483,7 +483,7 @@ class ui(object):
             self.write(msg, ' ', default, "\n")
             return default
         try:
-            r = self._readline(msg + ' ')
+            r = self._readline(self.label(msg, 'ui.prompt') + ' ')
             if not r:
                 return default
             return r

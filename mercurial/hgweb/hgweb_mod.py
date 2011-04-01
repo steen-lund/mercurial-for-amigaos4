@@ -17,6 +17,7 @@ import webcommands, protocol, webutil
 perms = {
     'changegroup': 'pull',
     'changegroupsubset': 'pull',
+    'getbundle': 'pull',
     'stream_out': 'pull',
     'listkeys': 'pull',
     'unbundle': 'push',
@@ -121,7 +122,11 @@ class hgweb(object):
                     self.check_perm(req, perms[cmd])
                 return protocol.call(self.repo, req, cmd)
             except ErrorResponse, inst:
-                if cmd == 'unbundle':
+                # A client that sends unbundle without 100-continue will
+                # break if we respond early.
+                if (cmd == 'unbundle' and
+                    req.env.get('HTTP_EXPECT',
+                                '').lower() != '100-continue'):
                     req.drain()
                 req.respond(inst, protocol.HGTYPE)
                 return '0\n%s\n' % inst.message

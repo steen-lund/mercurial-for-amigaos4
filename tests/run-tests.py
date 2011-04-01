@@ -227,8 +227,8 @@ def parseargs():
                 continue
 
             for line in f.readlines():
-                line = line.strip()
-                if line and not line.startswith('#'):
+                line = line.split('#', 1)[0].strip()
+                if line:
                     blacklist[line] = filename
 
             f.close()
@@ -694,7 +694,9 @@ def runone(options, test, skips, fails):
         runner = shtest
 
     # Make a tmp subdirectory to work in
-    testtmp = os.environ["TESTTMP"] = os.path.join(HGTMP, test)
+    testtmp = os.environ["TESTTMP"] = os.environ["HOME"] = \
+        os.path.join(HGTMP, test)
+
     os.mkdir(testtmp)
     os.chdir(testtmp)
 
