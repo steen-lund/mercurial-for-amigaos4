@@ -109,11 +109,26 @@ colortable = {
 }
 
 # date like in cvs' $Date
-utcdate = lambda x: util.datestr((x[0], 0), '%Y/%m/%d %H:%M:%S')
+def utcdate(text):
+    ''':utcdate: Date. Returns a UTC-date in this format: "2009/08/18 11:00:13".
+    '''
+    return util.datestr((text[0], 0), '%Y/%m/%d %H:%M:%S')
 # date like in svn's $Date
-svnisodate = lambda x: util.datestr(x, '%Y-%m-%d %H:%M:%S %1%2 (%a, %d %b %Y)')
+def svnisodate(text):
+    ''':svnisodate: Date. Returns a date in this format: "2009-08-18 13:00:13
+    +0200 (Tue, 18 Aug 2009)".
+    '''
+    return util.datestr(text, '%Y-%m-%d %H:%M:%S %1%2 (%a, %d %b %Y)')
 # date like in svn's $Id
-svnutcdate = lambda x: util.datestr((x[0], 0), '%Y-%m-%d %H:%M:%SZ')
+def svnutcdate(text):
+    ''':svnutcdate: Date. Returns a UTC-date in this format: "2009-08-18
+    11:00:13Z".
+    '''
+    return util.datestr((text[0], 0), '%Y-%m-%d %H:%M:%SZ')
+
+templatefilters.filters.update({'utcdate': utcdate,
+                                'svnisodate': svnisodate,
+                                'svnutcdate': svnutcdate})
 
 # make keyword tools accessible
 kwtools = {'templater': None, 'hgcmd': ''}
@@ -176,9 +191,6 @@ class kwtemplater(object):
                                   for k, v in kwmaps)
         else:
             self.templates = _defaultkwmaps(self.ui)
-        templatefilters.filters.update({'utcdate': utcdate,
-                                        'svnisodate': svnisodate,
-                                        'svnutcdate': svnutcdate})
 
     @util.propertycache
     def escape(self):

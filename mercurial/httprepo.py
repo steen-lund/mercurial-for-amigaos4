@@ -9,7 +9,7 @@
 from node import nullid
 from i18n import _
 import changegroup, statichttprepo, error, url, util, wireproto
-import os, urllib, urllib2, urlparse, zlib, httplib
+import os, urllib, urllib2, zlib, httplib
 import errno, socket
 
 def zgenerator(f):
@@ -28,13 +28,13 @@ class httprepository(wireproto.wirerepository):
         self.path = path
         self.caps = None
         self.handler = None
-        scheme, netloc, urlpath, query, frag = urlparse.urlsplit(path)
-        if query or frag:
+        u = url.url(path)
+        if u.query or u.fragment:
             raise util.Abort(_('unsupported URL component: "%s"') %
-                             (query or frag))
+                             (u.query or u.fragment))
 
         # urllib cannot handle URLs with embedded user or passwd
-        self._url, authinfo = url.getauthinfo(path)
+        self._url, authinfo = u.authinfo()
 
         self.ui = ui
         self.ui.debug('using %s\n' % self._url)
@@ -52,10 +52,13 @@ class httprepository(wireproto.wirerepository):
 
     # look up capabilities only when needed
 
+    def _fetchcaps(self):
+        self.caps = set(self._call('capabilities').split())
+
     def get_caps(self):
         if self.caps is None:
             try:
-                self.caps = set(self._call('capabilities').split())
+                self._fetchcaps()
             except error.RepoError:
                 self.caps = set()
             self.ui.debug('capabilities: %s\n' %
@@ -73,8 +76,7 @@ class httprepository(wireproto.wirerepository):
         data = args.pop('data', None)
         headers = args.pop('headers', {})
         self.ui.debug("sending %s command\n" % cmd)
-        q = {"cmd": cmd}
-        q.update(args)
+        q = [('cmd', cmd)] + sorted(args.items())
         qs = '?%s' % urllib.urlencode(q)
         cu = "%s%s" % (self._url, qs)
         req = urllib2.Request(cu, data, headers)
@@ -196,7 +198,13 @@ def instance(ui, path, create):
             inst = httpsrepository(ui, path)
         else:
             inst = httprepository(ui, path)
-        inst.between([(nullid, nullid)])
+        try:
+            # Try to do useful work when checking compatibility.
+            # Usually saves a roundtrip since we want the caps anyway.
+            inst._fetchcaps()
+        except error.RepoError:
+            # No luck, try older compatibility check.
+            inst.between([(nullid, nullid)])
         return inst
     except error.RepoError:
         ui.note('(falling back to static-http)\n')
