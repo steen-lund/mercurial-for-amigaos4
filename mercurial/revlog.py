@@ -399,11 +399,12 @@ class revlog(object):
                     yield i
                     break
 
-    def findmissing(self, common=None, heads=None):
-        """Return the ancestors of heads that are not ancestors of common.
+    def findcommonmissing(self, common=None, heads=None):
+        """Return a tuple of the ancestors of common and the ancestors of heads
+        that are not ancestors of common.
 
-        More specifically, return a list of nodes N such that every N
-        satisfies the following constraints:
+        More specifically, the second element is a list of nodes N such that
+        every N satisfies the following constraints:
 
           1. N is an ancestor of some node in 'heads'
           2. N is not an ancestor of any node in 'common'
@@ -441,7 +442,25 @@ class revlog(object):
                         visit.append(p)
         missing = list(missing)
         missing.sort()
-        return [self.node(r) for r in missing]
+        return has, [self.node(r) for r in missing]
+
+    def findmissing(self, common=None, heads=None):
+        """Return the ancestors of heads that are not ancestors of common.
+
+        More specifically, return a list of nodes N such that every N
+        satisfies the following constraints:
+
+          1. N is an ancestor of some node in 'heads'
+          2. N is not an ancestor of any node in 'common'
+
+        The list is sorted by revision number, meaning it is
+        topologically sorted.
+
+        'heads' and 'common' are both lists of node IDs.  If heads is
+        not supplied, uses all of the revlog's heads.  If common is not
+        supplied, uses nullid."""
+        _common, missing = self.findcommonmissing(common, heads)
+        return missing
 
     def nodesbetween(self, roots=None, heads=None):
         """Return a topological path from 'roots' to 'heads'.
@@ -1039,7 +1058,7 @@ class revlog(object):
             self._cache = (node, curr, text)
         return node
 
-    def group(self, nodelist, lookup, infocollect=None, fullrev=False):
+    def group(self, nodelist, bundler):
         """Calculate a delta group, yielding a sequence of changegroup chunks
         (strings).
 
@@ -1049,45 +1068,35 @@ class revlog(object):
         guaranteed to have this parent as it has all history before
         these changesets. In the case firstparent is nullrev the
         changegroup starts with a full revision.
-        fullrev forces the insertion of the full revision, necessary
-        in the case of shallow clones where the first parent might
-        not exist at the reciever.
         """
 
-        revs = [self.rev(n) for n in nodelist]
+        revs = sorted([self.rev(n) for n in nodelist])
 
         # if we don't have any revisions touched by these changesets, bail
         if not revs:
-            yield changegroup.closechunk()
+            yield bundler.close()
             return
 
         # add the parent of the first rev
         p = self.parentrevs(revs[0])[0]
         revs.insert(0, p)
-        if p == nullrev:
-            fullrev = True
 
         # build deltas
-        for d in xrange(len(revs) - 1):
-            a, b = revs[d], revs[d + 1]
+        for r in xrange(len(revs) - 1):
+            a, b = revs[r], revs[r + 1]
             nb = self.node(b)
+            p1, p2 = self.parents(nb)
+            prefix = ''
 
-            if infocollect is not None:
-                infocollect(nb)
-
-            p = self.parents(nb)
-            meta = nb + p[0] + p[1] + lookup(nb)
-            if fullrev:
+            if a == nullrev:
                 d = self.revision(nb)
-                meta += mdiff.trivialdiffheader(len(d))
-                fullrev = False
+                prefix = mdiff.trivialdiffheader(len(d))
             else:
                 d = self.revdiff(a, b)
-            yield changegroup.chunkheader(len(meta) + len(d))
-            yield meta
-            yield d
+            for c in bundler.revchunk(self, nb, p1, p2, prefix, d):
+                yield c
 
-        yield changegroup.closechunk()
+        yield bundler.close()
 
     def addgroup(self, bundle, linkmapper, transaction):
         """

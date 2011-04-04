@@ -9,7 +9,7 @@
 from i18n import _
 from lock import release
 from node import hex, nullid, nullrev, short
-import localrepo, bundlerepo, httprepo, sshrepo, statichttprepo
+import localrepo, bundlerepo, httprepo, sshrepo, statichttprepo, bookmarks
 import lock, util, extensions, error, encoding, node
 import cmdutil, discovery, url
 import merge as mergemod
@@ -17,7 +17,7 @@ import verify as verifymod
 import errno, os, shutil
 
 def _local(path):
-    path = util.expandpath(util.drop_scheme('file', path))
+    path = util.expandpath(url.localpath(path))
     return (os.path.isfile(path) and bundlerepo or localrepo)
 
 def addbranchrevs(lrepo, repo, branches, revs):
@@ -51,13 +51,15 @@ def addbranchrevs(lrepo, repo, branches, revs):
             revs.append(hashbranch)
     return revs, revs[0]
 
-def parseurl(url, branches=None):
+def parseurl(path, branches=None):
     '''parse url#branch, returning (url, (branch, branches))'''
 
-    if '#' not in url:
-        return url, (None, branches or [])
-    url, branch = url.split('#', 1)
-    return url, (branch, branches or [])
+    u = url.url(path)
+    if not u.fragment:
+        return path, (None, branches or [])
+    branch = u.fragment
+    u.fragment = None
+    return str(u), (branch, branches or [])
 
 schemes = {
     'bundle': bundlerepo,
@@ -69,11 +71,8 @@ schemes = {
 }
 
 def _lookup(path):
-    scheme = 'file'
-    if path:
-        c = path.find(':')
-        if c > 0:
-            scheme = path[:c]
+    u = url.url(path)
+    scheme = u.scheme or 'file'
     thing = schemes.get(scheme) or schemes['file']
     try:
         return thing(path)
@@ -102,15 +101,6 @@ def repository(ui, path='', create=False):
 def defaultdest(source):
     '''return default destination of clone if none is given'''
     return os.path.basename(os.path.normpath(source))
-
-def localpath(path):
-    if path.startswith('file://localhost/'):
-        return path[16:]
-    if path.startswith('file://'):
-        return path[7:]
-    if path.startswith('file:'):
-        return path[5:]
-    return path
 
 def share(ui, source, dest=None, update=True):
     '''create a shared repository'''
@@ -143,7 +133,7 @@ def share(ui, source, dest=None, update=True):
 
     if not os.path.isdir(root):
         os.mkdir(root)
-    os.mkdir(roothg)
+    util.makedir(roothg, notindexed=True)
 
     requirements = ''
     try:
@@ -231,8 +221,8 @@ def clone(ui, source, dest=None, pull=False, rev=None, update=True,
     else:
         dest = ui.expandpath(dest)
 
-    dest = localpath(dest)
-    source = localpath(source)
+    dest = url.localpath(dest)
+    source = url.localpath(source)
 
     if os.path.exists(dest):
         if not os.path.isdir(dest):
@@ -258,7 +248,7 @@ def clone(ui, source, dest=None, pull=False, rev=None, update=True,
         abspath = origsource
         copy = False
         if src_repo.cancopy() and islocal(dest):
-            abspath = os.path.abspath(util.drop_scheme('file', origsource))
+            abspath = os.path.abspath(url.localpath(origsource))
             copy = not pull and not rev
 
         if copy:
@@ -281,7 +271,7 @@ def clone(ui, source, dest=None, pull=False, rev=None, update=True,
                 dir_cleanup.dir_ = hgdir
             try:
                 dest_path = hgdir
-                os.mkdir(dest_path)
+                util.makedir(dest_path, notindexed=True)
             except OSError, inst:
                 if inst.errno == errno.EEXIST:
                     dir_cleanup.close()
@@ -366,6 +356,21 @@ def clone(ui, source, dest=None, pull=False, rev=None, update=True,
                 dest_repo.ui.status(_("updating to branch %s\n") % bn)
                 _update(dest_repo, uprev)
 
+        # clone all bookmarks
+        if dest_repo.local() and src_repo.capable("pushkey"):
+            rb = src_repo.listkeys('bookmarks')
+            for k, n in rb.iteritems():
+                try:
+                    m = dest_repo.lookup(n)
+                    dest_repo._bookmarks[k] = m
+                except:
+                    pass
+            if rb:
+                bookmarks.write(dest_repo)
+        elif src_repo.local() and dest_repo.capable("pushkey"):
+            for k, n in src_repo._bookmarks.iteritems():
+                dest_repo.pushkey('bookmarks', k, '', hex(n))
+
         return src_repo, dest_repo
     finally:
         release(src_lock, dest_lock)
@@ -421,14 +426,19 @@ def _incoming(displaychlist, subreporecurse, ui, repo, source,
 
     if revs:
         revs = [other.lookup(rev) for rev in revs]
-    other, incoming, bundle = bundlerepo.getremotechanges(ui, repo, other, revs,
-                                opts["bundle"], opts["force"])
-    if incoming is None:
+    usecommon = other.capable('getbundle')
+    other, common, incoming, bundle = bundlerepo.getremotechanges(ui, repo, other,
+                                       revs, opts["bundle"], opts["force"],
+                                       usecommon=usecommon)
+    if not incoming:
         ui.status(_("no changes found\n"))
         return subreporecurse()
 
     try:
-        chlist = other.changelog.nodesbetween(incoming, revs)[0]
+        if usecommon:
+            chlist = other.changelog.findmissing(common, revs)
+        else:
+            chlist = other.changelog.nodesbetween(incoming, revs)[0]
         displayer = cmdutil.show_changeset(ui, other, opts, buffered)
 
         # XXX once graphlog extension makes it into core,
