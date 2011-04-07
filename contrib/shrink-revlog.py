@@ -102,15 +102,16 @@ def writerevs(ui, r1, r2, order, tr):
 
     ui.status(_('writing revs\n'))
 
-    count = [0]
-    def progress(*args):
-        ui.progress(_('writing'), count[0], total=len(order))
-        count[0] += 1
 
     order = [r1.node(r) for r in order]
 
     # this is a bit ugly, but it works
-    lookup = lambda x: "%020d" % r1.linkrev(r1.rev(x))
+    count = [0]
+    def lookup(x):
+        count[0] += 1
+        ui.progress(_('writing'), count[0], total=len(order))
+        return "%020d" % r1.linkrev(r1.rev(x))
+
     unlookup = lambda x: int(x, 10)
 
     try:

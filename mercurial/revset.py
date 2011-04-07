@@ -6,10 +6,10 @@
 # GNU General Public License version 2 or any later version.
 
 import re
-import parser, util, error, discovery
+import parser, util, error, discovery, help, hbisect
 import bookmarks as bookmarksmod
 import match as matchmod
-from i18n import _, gettext
+from i18n import _
 
 elements = {
     "(": (20, ("group", 1, ")"), ("func", 1, ")")),
@@ -207,7 +207,7 @@ def p1(repo, subset, x):
     First parent of changesets in set, or the working directory.
     """
     if x is None:
-        p = repo[x].parents()[0].rev()
+        p = repo[x].p1().rev()
         return [r for r in subset if r == p]
 
     ps = set()
@@ -298,9 +298,18 @@ def children(repo, subset, x):
     return [r for r in subset if r in cs]
 
 def branch(repo, subset, x):
-    """``branch(set)``
-    All changesets belonging to the branches of changesets in set.
+    """``branch(string or set)``
+    All changesets belonging to the given branch or the branches of the given
+    changesets.
     """
+    try:
+        b = getstring(x, '')
+        if b in repo.branchmap():
+            return [r for r in subset if repo[r].branch() == b]
+    except error.ParseError:
+        # not a string, but another revspec, e.g. tip()
+        pass
+
     s = getset(repo, range(len(repo)), x)
     b = set()
     for r in s:
@@ -394,7 +403,7 @@ def grep(repo, subset, x):
         for e in c.files() + [c.user(), c.description()]:
             if gr.search(e):
                 l.append(r)
-                continue
+                break
     return l
 
 def author(repo, subset, x):
@@ -423,7 +432,7 @@ def hasfile(repo, subset, x):
         for f in repo[r].files():
             if m(f):
                 s.append(r)
-                continue
+                break
     return s
 
 def contains(repo, subset, x):
@@ -438,13 +447,12 @@ def contains(repo, subset, x):
         for r in subset:
             if pat in repo[r]:
                 s.append(r)
-                continue
     else:
         for r in subset:
             for f in repo[r].manifest():
                 if m(f):
                     s.append(r)
-                    continue
+                    break
     return s
 
 def checkstatus(repo, subset, pat, field):
@@ -466,12 +474,11 @@ def checkstatus(repo, subset, pat, field):
         if fast:
             if pat in files:
                 s.append(r)
-                continue
         else:
             for f in files:
                 if m(f):
                     s.append(r)
-                    continue
+                    break
     return s
 
 def modifies(repo, subset, x):
@@ -683,12 +690,23 @@ def bookmark(repo, subset, x):
                for r in bookmarksmod.listbookmarks(repo).values()])
     return [r for r in subset if r in bms]
 
+def bisected(repo, subset, x):
+    """``bisected(string)``
+    Changesets marked in the specified bisect state (good, bad, skip).
+    """
+    state = getstring(x, _("bisect requires a string")).lower()
+    if state not in ('good', 'bad', 'skip', 'unknown'):
+        raise ParseError(_('invalid bisect state'))
+    marked = set(repo.changelog.rev(n) for n in hbisect.load_state(repo)[state])
+    return [r for r in subset if r in marked]
+
 symbols = {
     "adds": adds,
     "all": getall,
     "ancestor": ancestor,
     "ancestors": ancestors,
     "author": author,
+    "bisected": bisected,
     "bookmark": bookmark,
     "branch": branch,
     "children": children,
@@ -786,7 +804,7 @@ def optimize(x, small):
     elif op == 'func':
         f = getstring(x[1], _("not a symbol"))
         wa, ta = optimize(x[2], small)
-        if f in "grep date user author keyword branch file outgoing":
+        if f in "grep date user author keyword branch file outgoing closed":
             w = 10 # slow
         elif f in "modifies adds removes":
             w = 30 # slower
@@ -808,26 +826,16 @@ parse = parser.parser(tokenize, elements).parse
 def match(spec):
     if not spec:
         raise error.ParseError(_("empty query"))
-    tree = parse(spec)
+    tree, pos = parse(spec)
+    if (pos != len(spec)):
+        raise error.ParseError("invalid token", pos)
     weight, tree = optimize(tree, True)
     def mfunc(repo, subset):
         return getset(repo, subset, tree)
     return mfunc
 
 def makedoc(topic, doc):
-    """Generate and include predicates help in revsets topic."""
-    predicates = []
-    for name in sorted(symbols):
-        text = symbols[name].__doc__
-        if not text:
-            continue
-        text = gettext(text.rstrip())
-        lines = text.splitlines()
-        lines[1:] = [('  ' + l.strip()) for l in lines[1:]]
-        predicates.append('\n'.join(lines))
-    predicates = '\n\n'.join(predicates)
-    doc = doc.replace('.. predicatesmarker', predicates)
-    return doc
+    return help.makeitemsdoc(topic, doc, '.. predicatesmarker', symbols)
 
 # tell hggettext to extract docstrings from these functions:
 i18nfunctions = symbols.values()

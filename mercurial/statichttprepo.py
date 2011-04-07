@@ -71,7 +71,7 @@ def build_opener(ui, authinfo):
         """return a function that opens files over http"""
         p = base
         def o(path, mode="r", atomictemp=None):
-            if 'a' in mode or 'w' in mode:
+            if mode not in ('r', 'rb'):
                 raise IOError('Permission denied')
             f = "/".join((p, urllib.quote(path)))
             return httprangereader(f, urlopener)
@@ -85,7 +85,8 @@ class statichttprepository(localrepo.localrepository):
         self.ui = ui
 
         self.root = path
-        self.path, authinfo = url.getauthinfo(path.rstrip('/') + "/.hg")
+        u = url.url(path.rstrip('/') + "/.hg")
+        self.path, authinfo = u.authinfo()
 
         opener = build_opener(ui, authinfo)
         self.opener = opener(self.path)

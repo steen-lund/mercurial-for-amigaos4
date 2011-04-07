@@ -5,10 +5,10 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-import errno, os, re, xml.dom.minidom, shutil, urlparse, posixpath
+import errno, os, re, xml.dom.minidom, shutil, posixpath
 import stat, subprocess, tarfile
 from i18n import _
-import config, util, node, error, cmdutil
+import config, util, node, error, cmdutil, url, bookmarks
 hg = None
 
 nullstate = ('', '', 'empty')
@@ -144,7 +144,7 @@ def submerge(repo, wctx, mctx, actx, overwrite):
                 debug(s, "prompt remove")
                 wctx.sub(s).remove()
 
-    for s, r in s2.items():
+    for s, r in sorted(s2.items()):
         if s in s1:
             continue
         elif s not in sa:
@@ -193,25 +193,16 @@ def _abssource(repo, push=False, abort=True):
     """return pull/push path of repo - either based on parent repo .hgsub info
     or on the top repo config. Abort or return None if no source found."""
     if hasattr(repo, '_subparent'):
-        source = repo._subsource
-        if source.startswith('/') or '://' in source:
-            return source
+        source = url.url(repo._subsource)
+        source.path = posixpath.normpath(source.path)
+        if posixpath.isabs(source.path) or source.scheme:
+            return str(source)
         parent = _abssource(repo._subparent, push, abort=False)
         if parent:
-            if '://' in parent:
-                if parent[-1] == '/':
-                    parent = parent[:-1]
-                r = urlparse.urlparse(parent + '/' + source)
-                if parent.startswith('ssh://'):
-                    host, path = r[2][2:].split('/', 1)
-                    r2 = '//%s/%s' % (host, posixpath.normpath(path))
-                else:
-                    r2 = posixpath.normpath(r[2])
-                r = urlparse.urlunparse((r[0], r[1], r2,
-                                         r[3], r[4], r[5]))
-                return r
-            else: # plain file system path
-                return posixpath.normpath(os.path.join(parent, repo._subsource))
+            parent = url.url(parent)
+            parent.path = posixpath.join(parent.path, source.path)
+            parent.path = posixpath.normpath(parent.path)
+            return str(parent)
     else: # recursion reached top repo
         if hasattr(repo, '_subtoppath'):
             return repo._subtoppath
@@ -436,15 +427,14 @@ class hgsubrepo(abstractsubrepo):
 
     def _get(self, state):
         source, revision, kind = state
-        try:
-            self._repo.lookup(revision)
-        except error.RepoError:
+        if revision not in self._repo:
             self._repo._subsource = source
             srcurl = _abssource(self._repo)
             self._repo.ui.status(_('pulling subrepo %s from %s\n')
                                  % (subrelpath(self), srcurl))
             other = hg.repository(self._repo.ui, srcurl)
             self._repo.pull(other)
+            bookmarks.updatefromremote(self._repo.ui, self._repo, other)
 
     def get(self, state, overwrite=False):
         self._get(state)
@@ -718,6 +708,12 @@ class gitsubrepo(abstractsubrepo):
             current = None
         return current
 
+    def _gitremote(self, remote):
+        out = self._gitcommand(['remote', 'show', '-n', remote])
+        line = out.split('\n')[1]
+        i = line.index('URL: ') + len('URL: ')
+        return line[i:]
+
     def _githavelocally(self, revision):
         out, code = self._gitdir(['cat-file', '-e', revision])
         return code == 0
@@ -771,11 +767,14 @@ class gitsubrepo(abstractsubrepo):
 
     def _fetch(self, source, revision):
         if self._gitmissing():
-            self._ui.status(_('cloning subrepo %s\n') % self._relpath)
-            self._gitnodir(['clone', self._abssource(source), self._abspath])
+            source = self._abssource(source)
+            self._ui.status(_('cloning subrepo %s from %s\n') %
+                            (self._relpath, source))
+            self._gitnodir(['clone', source, self._abspath])
         if self._githavelocally(revision):
             return
-        self._ui.status(_('pulling subrepo %s\n') % self._relpath)
+        self._ui.status(_('pulling subrepo %s from %s\n') %
+                        (self._relpath, self._gitremote('origin')))
         # try only origin: the originally cloned repo
         self._gitcommand(['fetch'])
         if not self._githavelocally(revision):

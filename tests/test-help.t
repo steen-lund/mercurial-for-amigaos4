@@ -105,19 +105,19 @@ Short help:
   
    config       Configuration Files
    dates        Date Formats
-   patterns     File Name Patterns
-   environment  Environment Variables
-   revisions    Specifying Single Revisions
-   multirevs    Specifying Multiple Revisions
-   revsets      Specifying Revision Sets
    diffs        Diff Formats
+   environment  Environment Variables
+   extensions   Using additional features
+   glossary     Glossary
+   hgweb        Configuring hgweb
    merge-tools  Merge Tools
+   multirevs    Specifying Multiple Revisions
+   patterns     File Name Patterns
+   revisions    Specifying Single Revisions
+   revsets      Specifying Revision Sets
+   subrepos     Subrepositories
    templating   Template Usage
    urls         URL Paths
-   extensions   Using additional features
-   subrepos     Subrepositories
-   hgweb        Configuring hgweb
-   glossary     Glossary
   
   use "hg -v help" to show builtin aliases and global options
 
@@ -178,19 +178,19 @@ Short help:
   
    config       Configuration Files
    dates        Date Formats
-   patterns     File Name Patterns
-   environment  Environment Variables
-   revisions    Specifying Single Revisions
-   multirevs    Specifying Multiple Revisions
-   revsets      Specifying Revision Sets
    diffs        Diff Formats
+   environment  Environment Variables
+   extensions   Using additional features
+   glossary     Glossary
+   hgweb        Configuring hgweb
    merge-tools  Merge Tools
+   multirevs    Specifying Multiple Revisions
+   patterns     File Name Patterns
+   revisions    Specifying Single Revisions
+   revsets      Specifying Revision Sets
+   subrepos     Subrepositories
    templating   Template Usage
    urls         URL Paths
-   extensions   Using additional features
-   subrepos     Subrepositories
-   hgweb        Configuring hgweb
-   glossary     Glossary
 
 Test short command list with verbose option
 
@@ -705,21 +705,23 @@ Test that default list of commands omits extension commands
   
    config       Configuration Files
    dates        Date Formats
-   patterns     File Name Patterns
-   environment  Environment Variables
-   revisions    Specifying Single Revisions
-   multirevs    Specifying Multiple Revisions
-   revsets      Specifying Revision Sets
    diffs        Diff Formats
+   environment  Environment Variables
+   extensions   Using additional features
+   glossary     Glossary
+   hgweb        Configuring hgweb
    merge-tools  Merge Tools
+   multirevs    Specifying Multiple Revisions
+   patterns     File Name Patterns
+   revisions    Specifying Single Revisions
+   revsets      Specifying Revision Sets
+   subrepos     Subrepositories
    templating   Template Usage
    urls         URL Paths
-   extensions   Using additional features
-   subrepos     Subrepositories
-   hgweb        Configuring hgweb
-   glossary     Glossary
   
   use "hg -v help" to show builtin aliases and global options
+
+
 
 Test list of commands with command with no help text
 
@@ -764,6 +766,14 @@ Test a help topic
       The reserved name "." indicates the working directory parent. If no
       working directory is checked out, it is equivalent to null. If an
       uncommitted merge is in progress, "." is the revision of the first parent.
+
+Test templating help
+
+  $ hg help templating | egrep '(desc|diffstat|firstline|nonempty)  '
+      desc        String. The text of the changeset description.
+      diffstat    String. Statistics of changes with the following format:
+      firstline   Any text. Returns the first line of text.
+      nonempty    Any text. Returns '(none)' if the string is empty.
 
 Test help hooks
 

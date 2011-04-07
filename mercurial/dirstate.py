@@ -49,6 +49,7 @@ class dirstate(object):
         self._rootdir = os.path.join(root, '')
         self._dirty = False
         self._dirtypl = False
+        self._lastnormaltime = None
         self._ui = ui
 
     @propertycache
@@ -202,6 +203,12 @@ class dirstate(object):
     def parents(self):
         return [self._validate(p) for p in self._pl]
 
+    def p1(self):
+        return self._validate(self._pl[0])
+
+    def p2(self):
+        return self._validate(self._pl[1])
+
     def branch(self):
         return encoding.tolocal(self._branch)
 
@@ -236,6 +243,7 @@ class dirstate(object):
                 "_ignore"):
             if a in self.__dict__:
                 delattr(self, a)
+        self._lastnormaltime = None
         self._dirty = False
 
     def copy(self, source, dest):
@@ -281,9 +289,15 @@ class dirstate(object):
         self._dirty = True
         self._addpath(f)
         s = os.lstat(self._join(f))
-        self._map[f] = ('n', s.st_mode, s.st_size, int(s.st_mtime))
+        mtime = int(s.st_mtime)
+        self._map[f] = ('n', s.st_mode, s.st_size, mtime)
         if f in self._copymap:
             del self._copymap[f]
+        if mtime > self._lastnormaltime:
+            # Remember the most recent modification timeslot for status(),
+            # to make sure we won't miss future size-preserving file content
+            # modifications that happen within the same timeslot.
+            self._lastnormaltime = mtime
 
     def normallookup(self, f):
         '''Mark a file normal, but possibly dirty.'''
@@ -397,6 +411,7 @@ class dirstate(object):
             delattr(self, "_dirs")
         self._copymap = {}
         self._pl = [nullid, nullid]
+        self._lastnormaltime = None
         self._dirty = True
 
     def rebuild(self, parent, files):
@@ -444,6 +459,7 @@ class dirstate(object):
             write(f)
         st.write(cs.getvalue())
         st.rename()
+        self._lastnormaltime = None
         self._dirty = self._dirtypl = False
 
     def _dirignore(self, f):
@@ -680,6 +696,7 @@ class dirstate(object):
                 # lines are an expansion of "islink => checklink"
                 # where islink means "is this a link?" and checklink
                 # means "can we check links?".
+                mtime = int(st.st_mtime)
                 if (size >= 0 and
                     (size != st.st_size
                      or ((mode ^ st.st_mode) & 0100 and self._checkexec))
@@ -687,8 +704,14 @@ class dirstate(object):
                     or size == -2 # other parent
                     or fn in self._copymap):
                     madd(fn)
-                elif (time != int(st.st_mtime)
+                elif (mtime != time
                       and (mode & lnkkind != lnkkind or self._checklink)):
+                    ladd(fn)
+                elif mtime == self._lastnormaltime:
+                    # fn may have been changed in the same timeslot without
+                    # changing its size. This can happen if we quickly do
+                    # multiple commits in a single transaction.
+                    # Force lookup, so we don't miss such a racy file change.
                     ladd(fn)
                 elif listclean:
                     cadd(fn)
