@@ -72,7 +72,7 @@ def findrepo(p):
     return p
 
 def bail_if_changed(repo):
-    if repo.dirstate.parents()[1] != nullid:
+    if repo.dirstate.p2() != nullid:
         raise util.Abort(_('outstanding uncommitted merge'))
     modified, added, removed, deleted = repo.status()[:4]
     if modified or added or removed or deleted:
@@ -122,12 +122,12 @@ def revsingle(repo, revspec, default='.'):
 
 def revpair(repo, revs):
     if not revs:
-        return repo.dirstate.parents()[0], None
+        return repo.dirstate.p1(), None
 
     l = revrange(repo, revs)
 
     if len(l) == 0:
-        return repo.dirstate.parents()[0], None
+        return repo.dirstate.p1(), None
 
     if len(l) == 1:
         return repo.lookup(l[0]), None
@@ -230,7 +230,7 @@ def make_filename(repo, pat, node,
 def make_file(repo, pat, node=None,
               total=None, seqno=None, revwidth=None, mode='wb', pathname=None):
 
-    writable = 'w' in mode or 'a' in mode
+    writable = mode not in ('r', 'rb')
 
     if not pat or pat == '-':
         fp = writable and sys.stdout or sys.stdin
@@ -434,6 +434,8 @@ def copy(ui, repo, pats, opts, rename=False):
         target = repo.wjoin(abstarget)
         src = repo.wjoin(abssrc)
         state = repo.dirstate[abstarget]
+
+        util.checkfilename(abstarget)
 
         # check for collisions
         prevsrc = targets.get(abstarget)

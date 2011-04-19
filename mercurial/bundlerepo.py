@@ -15,7 +15,7 @@ from node import nullid
 from i18n import _
 import os, struct, tempfile, shutil
 import changegroup, util, mdiff, discovery
-import localrepo, changelog, manifest, filelog, revlog, error
+import localrepo, changelog, manifest, filelog, revlog, error, url
 
 class bundlerevlog(revlog.revlog):
     def __init__(self, opener, indexfile, bundle,
@@ -274,9 +274,9 @@ def instance(ui, path, create):
             cwd = os.path.join(cwd,'')
             if parentpath.startswith(cwd):
                 parentpath = parentpath[len(cwd):]
-    path = util.drop_scheme('file', path)
-    if path.startswith('bundle:'):
-        path = util.drop_scheme('bundle', path)
+    u = url.url(path)
+    path = u.localpath()
+    if u.scheme == 'bundle':
         s = path.split("+", 1)
         if len(s) == 1:
             repopath, bundlename = parentpath, s[0]
@@ -286,15 +286,17 @@ def instance(ui, path, create):
         repopath, bundlename = parentpath, path
     return bundlerepository(ui, repopath, bundlename)
 
-def getremotechanges(ui, repo, other, revs=None, bundlename=None, force=False):
-    tmp = discovery.findcommonincoming(repo, other, heads=revs, force=force)
+def getremotechanges(ui, repo, other, revs=None, bundlename=None,
+                     force=False, usecommon=False):
+    tmp = discovery.findcommonincoming(repo, other, heads=revs, force=force,
+                                       commononly=usecommon)
     common, incoming, rheads = tmp
     if not incoming:
         try:
             os.unlink(bundlename)
         except:
             pass
-        return other, None, None
+        return other, None, None, None
 
     bundle = None
     if bundlename or not other.local():
@@ -303,7 +305,9 @@ def getremotechanges(ui, repo, other, revs=None, bundlename=None, force=False):
         if revs is None and other.capable('changegroupsubset'):
             revs = rheads
 
-        if revs is None:
+        if usecommon:
+            cg = other.getbundle('incoming', common=common, heads=revs)
+        elif revs is None:
             cg = other.changegroup(incoming, "incoming")
         else:
             cg = other.changegroupsubset(incoming, revs, 'incoming')
@@ -315,5 +319,5 @@ def getremotechanges(ui, repo, other, revs=None, bundlename=None, force=False):
         if not other.local():
             # use the created uncompressed bundlerepo
             other = bundlerepository(ui, repo.root, fname)
-    return (other, incoming, bundle)
+    return (other, common, incoming, bundle)
 

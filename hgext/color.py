@@ -18,11 +18,11 @@
 
 '''colorize output from some commands
 
-This extension modifies the status and resolve commands to add color to their
-output to reflect file status, the qseries command to add color to reflect
-patch status (applied, unapplied, missing), and to diff-related
-commands to highlight additions, removals, diff headers, and trailing
-whitespace.
+This extension modifies the status and resolve commands to add color
+to their output to reflect file status, the qseries command to add
+color to reflect patch status (applied, unapplied, missing), and to
+diff-related commands to highlight additions, removals, diff headers,
+and trailing whitespace.
 
 Other effects in addition to color, like bold and underlined text, are
 also available. Effects are rendered with the ECMA-48 SGR control
@@ -107,6 +107,7 @@ _styles = {'grep.match': 'red bold',
            'diff.trailingwhitespace': 'bold red_background',
            'diffstat.deleted': 'red',
            'diffstat.inserted': 'green',
+           'ui.prompt': 'yellow',
            'log.changeset': 'yellow',
            'resolve.resolved': 'green bold',
            'resolve.unresolved': 'red bold',
@@ -348,13 +349,15 @@ else:
 
         # Look for ANSI-like codes embedded in text
         m = re.match(ansire, text)
-        while m:
-            for sattr in m.group(1).split(';'):
-                if sattr:
-                    attr = mapcolor(int(sattr), attr)
-            _kernel32.SetConsoleTextAttribute(stdout, attr)
-            orig(m.group(2), **opts)
-            m = re.match(ansire, m.group(3))
 
-        # Explicity reset original attributes
-        _kernel32.SetConsoleTextAttribute(stdout, origattr)
+        try:
+            while m:
+                for sattr in m.group(1).split(';'):
+                    if sattr:
+                        attr = mapcolor(int(sattr), attr)
+                _kernel32.SetConsoleTextAttribute(stdout, attr)
+                orig(m.group(2), **opts)
+                m = re.match(ansire, m.group(3))
+        finally:
+            # Explicity reset original attributes
+            _kernel32.SetConsoleTextAttribute(stdout, origattr)

@@ -438,6 +438,9 @@ def checksignature(func):
 
     return check
 
+def makedir(path, notindexed):
+    os.mkdir(path)
+
 def unlinkpath(f):
     """unlink and remove the directory if it is empty"""
     os.unlink(f)
@@ -490,6 +493,53 @@ def copyfiles(src, dst, hardlink=None):
 
     return hardlink, num
 
+def checkfilename(f):
+    '''Check that the filename f is an acceptable filename for a tracked file'''
+    if '\r' in f or '\n' in f:
+        raise Abort(_("'\\n' and '\\r' disallowed in filenames: %r") % f)
+
+_windows_reserved_filenames = '''con prn aux nul
+    com1 com2 com3 com4 com5 com6 com7 com8 com9
+    lpt1 lpt2 lpt3 lpt4 lpt5 lpt6 lpt7 lpt8 lpt9'''.split()
+_windows_reserved_chars = ':*?"<>|'
+def checkwinfilename(path):
+    '''Check that the base-relative path is a valid filename on Windows.
+    Returns None if the path is ok, or a UI string describing the problem.
+
+    >>> checkwinfilename("just/a/normal/path")
+    >>> checkwinfilename("foo/bar/con.xml")
+    "filename contains 'con', which is reserved on Windows"
+    >>> checkwinfilename("foo/con.xml/bar")
+    "filename contains 'con', which is reserved on Windows"
+    >>> checkwinfilename("foo/bar/xml.con")
+    >>> checkwinfilename("foo/bar/AUX/bla.txt")
+    "filename contains 'AUX', which is reserved on Windows"
+    >>> checkwinfilename("foo/bar/bla:.txt")
+    "filename contains ':', which is reserved on Windows"
+    >>> checkwinfilename("foo/bar/b\07la.txt")
+    "filename contains '\\\\x07', which is invalid on Windows"
+    >>> checkwinfilename("foo/bar/bla ")
+    "filename ends with ' ', which is not allowed on Windows"
+    '''
+    for n in path.replace('\\', '/').split('/'):
+        if not n:
+            continue
+        for c in n:
+            if c in _windows_reserved_chars:
+                return _("filename contains '%s', which is reserved "
+                         "on Windows") % c
+            if ord(c) <= 31:
+                return _("filename contains %r, which is invalid "
+                         "on Windows") % c
+        base = n.split('.')[0]
+        if base and base.lower() in _windows_reserved_filenames:
+            return _("filename contains '%s', which is reserved "
+                     "on Windows") % base
+        t = n[-1]
+        if t in '. ':
+            return _("filename ends with '%s', which is not allowed "
+                     "on Windows") % t
+
 class path_auditor(object):
     '''ensure that a filesystem path contains no banned components.
     the following properties of a path are checked:
@@ -510,6 +560,9 @@ class path_auditor(object):
         self.callback = callback
 
     def __call__(self, path):
+        '''Check the relative path.
+        path may contain a pattern (e.g. foodir/**.txt)'''
+
         if path in self.audited:
             return
         # AIX ignores "/" at end of path, others raise EISDIR.
@@ -527,8 +580,15 @@ class path_auditor(object):
                 if p in lparts[1:]:
                     pos = lparts.index(p)
                     base = os.path.join(*parts[:pos])
-                    raise Abort(_('path %r is inside repo %r') % (path, base))
-        def check(prefix):
+                    raise Abort(_('path %r is inside nested repo %r')
+                                % (path, base))
+
+        parts.pop()
+        prefixes = []
+        while parts:
+            prefix = os.sep.join(parts)
+            if prefix in self.auditeddir:
+                break
             curpath = os.path.join(self.root, prefix)
             try:
                 st = os.lstat(curpath)
@@ -544,15 +604,8 @@ class path_auditor(object):
                 elif (stat.S_ISDIR(st.st_mode) and
                       os.path.isdir(os.path.join(curpath, '.hg'))):
                     if not self.callback or not self.callback(curpath):
-                        raise Abort(_('path %r is inside repo %r') %
+                        raise Abort(_('path %r is inside nested repo %r') %
                                     (path, prefix))
-        parts.pop()
-        prefixes = []
-        while parts:
-            prefix = os.sep.join(parts)
-            if prefix in self.auditeddir:
-                break
-            check(prefix)
             prefixes.append(prefix)
             parts.pop()
 
@@ -573,6 +626,7 @@ def hidewindow():
     pass
 
 if os.name == 'nt':
+    checkosfilename = checkwinfilename
     from windows import *
 else:
     from posix import *
@@ -680,45 +734,6 @@ def fspath(name, root):
 
     return ''.join(result)
 
-def checkexec(path):
-    """
-    Check whether the given path is on a filesystem with UNIX-like exec flags
-
-    Requires a directory (like /foo/.hg)
-    """
-
-    # VFAT on some Linux versions can flip mode but it doesn't persist
-    # a FS remount. Frequently we can detect it if files are created
-    # with exec bit on.
-
-    try:
-        EXECFLAGS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-        fh, fn = tempfile.mkstemp(dir=path, prefix='hg-checkexec-')
-        try:
-            os.close(fh)
-            m = os.stat(fn).st_mode & 0777
-            new_file_has_exec = m & EXECFLAGS
-            os.chmod(fn, m ^ EXECFLAGS)
-            exec_flags_cannot_flip = ((os.stat(fn).st_mode & 0777) == m)
-        finally:
-            os.unlink(fn)
-    except (IOError, OSError):
-        # we don't care, the user probably won't be able to commit anyway
-        return False
-    return not (new_file_has_exec or exec_flags_cannot_flip)
-
-def checklink(path):
-    """check whether the given path is on a symlink-capable filesystem"""
-    # mktemp is not racy because symlink creation will fail if the
-    # file already exists
-    name = tempfile.mktemp(dir=path, prefix='hg-checklink-')
-    try:
-        os.symlink(".", name)
-        os.unlink(name)
-        return True
-    except (OSError, AttributeError):
-        return False
-
 def checknlink(testfile):
     '''check whether hardlink count reporting works properly'''
 
@@ -769,7 +784,18 @@ def splitpath(path):
 
 def gui():
     '''Are we running in a GUI?'''
-    return os.name == "nt" or os.name == "mac" or os.environ.get("DISPLAY")
+    if sys.platform == 'darwin':
+        if 'SSH_CONNECTION' in os.environ:
+            # handle SSH access to a box where the user is logged in
+            return False
+        elif getattr(osutil, 'isgui', None):
+            # check if a CoreGraphics session is available
+            return osutil.isgui()
+        else:
+            # pure build; use a safe default
+            return True
+    else:
+        return os.name == "nt" or os.environ.get("DISPLAY")
 
 def mktempcopy(name, emptyok=False, createmode=None):
     """Create a temporary file with the same contents from name
@@ -894,6 +920,9 @@ class opener(object):
         os.chmod(name, self.createmode & 0666)
 
     def __call__(self, path, mode="r", text=False, atomictemp=False):
+        r = checkosfilename(path)
+        if r:
+            raise Abort("%s: %r" % (r, path))
         self.auditor(path)
         f = os.path.join(self.base, path)
 
@@ -1204,10 +1233,17 @@ def matchdate(date):
         return parsedate(date, extendeddateformats, d)[0]
 
     date = date.strip()
-    if date[0] == "<":
+
+    if not date:
+        raise Abort(_("dates cannot consist entirely of whitespace"))
+    elif date[0] == "<":
+        if not date[1:]:
+            raise Abort(_("invalid day spec, use '<DATE'"))
         when = upper(date[1:])
         return lambda x: x <= when
     elif date[0] == ">":
+        if not date[1:]:
+            raise Abort(_("invalid day spec, use '>DATE'"))
         when = lower(date[1:])
         return lambda x: x >= when
     elif date[0] == "-":
@@ -1215,6 +1251,9 @@ def matchdate(date):
             days = int(date[1:])
         except ValueError:
             raise Abort(_("invalid day spec: %s") % date[1:])
+        if days < 0:
+            raise Abort(_("%s must be nonnegative (see 'hg help dates')")
+                % date[1:])
         when = makedate()[0] - days * 3600 * 24
         return lambda x: x >= when
     elif " to " in date:
@@ -1366,26 +1405,6 @@ def bytecount(nbytes):
         if nbytes >= divisor * multiplier:
             return format % (nbytes / float(divisor))
     return units[-1][2] % nbytes
-
-def drop_scheme(scheme, path):
-    sc = scheme + ':'
-    if path.startswith(sc):
-        path = path[len(sc):]
-        if path.startswith('//'):
-            if scheme == 'file':
-                i = path.find('/', 2)
-                if i == -1:
-                    return ''
-                # On Windows, absolute paths are rooted at the current drive
-                # root. On POSIX they are rooted at the file system root.
-                if os.name == 'nt':
-                    droot = os.path.splitdrive(os.getcwd())[0] + '/'
-                    path = os.path.join(droot, path[i + 1:])
-                else:
-                    path = path[i:]
-            else:
-                path = path[2:]
-    return path
 
 def uirepr(s):
     # Avoid double backslash in Windows path repr()

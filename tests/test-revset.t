@@ -297,6 +297,12 @@ quoting needed
   6
   $ log 'tag(tip)'
   9
+  $ log 'tag(unknown)'
+  abort: tag 'unknown' does not exist
+  [255]
+  $ log 'branch(unknown)'
+  abort: unknown revision 'unknown'!
+  [255]
   $ log 'user(bob)'
   2
 
@@ -356,3 +362,15 @@ issue2437
   9
   $ log 'ancestors(8) and (heads(branch("-a-b-c-")) or heads(branch(é)))'
   4
+
+issue2654: report a parse error if the revset was not completely parsed
+
+  $ log '1 OR 2'
+  hg: parse error at 2: invalid token
+  [255]
+
+or operator should preserve ordering:
+  $ log 'reverse(2::4) or tip'
+  4
+  2
+  9

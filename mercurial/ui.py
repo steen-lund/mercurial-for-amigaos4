@@ -7,7 +7,7 @@
 
 from i18n import _
 import errno, getpass, os, socket, sys, tempfile, traceback
-import config, util, error
+import config, util, error, url
 
 class ui(object):
     def __init__(self, src=None):
@@ -111,7 +111,7 @@ class ui(object):
                                   % (n, p, self.configsource('paths', n)))
                         p = p.replace('%%', '%')
                     p = util.expandpath(p)
-                    if '://' not in p and not os.path.isabs(p):
+                    if not url.hasscheme(p) and not os.path.isabs(p):
                         p = os.path.normpath(os.path.join(root, p))
                     c.set("paths", n, p)
 
@@ -273,20 +273,27 @@ class ui(object):
         cfg = self._data(untrusted)
         for section in cfg.sections():
             for name, value in self.configitems(section, untrusted):
-                yield section, name, str(value).replace('\n', '\\n')
+                yield section, name, value
 
     def plain(self):
         '''is plain mode active?
 
-        Plain mode means that all configuration variables which affect the
-        behavior and output of Mercurial should be ignored. Additionally, the
-        output should be stable, reproducible and suitable for use in scripts or
-        applications.
+        Plain mode means that all configuration variables which affect
+        the behavior and output of Mercurial should be
+        ignored. Additionally, the output should be stable,
+        reproducible and suitable for use in scripts or applications.
 
-        The only way to trigger plain mode is by setting the `HGPLAIN'
-        environment variable.
+        The only way to trigger plain mode is by setting either the
+        `HGPLAIN' or `HGPLAINEXCEPT' environment variables.
+
+        The return value can either be False, True, or a list of
+        features that plain mode should not apply to (e.g., i18n,
+        progress, etc).
         '''
-        return 'HGPLAIN' in os.environ
+        if 'HGPLAIN' not in os.environ and 'HGPLAINEXCEPT' not in os.environ:
+            return False
+        exceptions = os.environ.get('HGPLAINEXCEPT', '').strip().split(',')
+        return exceptions or True
 
     def username(self):
         """Return default username to be used in commits.
@@ -325,7 +332,7 @@ class ui(object):
 
     def expandpath(self, loc, default=None):
         """Return repository location relative to cwd or from [paths]"""
-        if "://" in loc or os.path.isdir(os.path.join(loc, '.hg')):
+        if url.hasscheme(loc) or os.path.isdir(os.path.join(loc, '.hg')):
             return loc
 
         path = self.config('paths', loc)
@@ -483,7 +490,7 @@ class ui(object):
             self.write(msg, ' ', default, "\n")
             return default
         try:
-            r = self._readline(msg + ' ')
+            r = self._readline(self.label(msg, 'ui.prompt') + ' ')
             if not r:
                 return default
             return r
