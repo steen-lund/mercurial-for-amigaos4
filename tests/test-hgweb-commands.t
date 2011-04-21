@@ -16,6 +16,7 @@ Set up the repo
   adding foo
   $ hg tag 1.0
   $ hg bookmark something
+  $ hg bookmark -r0 anotherthing
   $ echo another > foo
   $ hg branch stable
   marked working directory as branch stable
@@ -256,7 +257,7 @@ Logs and changes
    <tr class="parity0">
     <td class="age">1970-01-01</td>
     <td class="author">test</td>
-    <td class="description"><a href="/rev/2ef0ac749a14">base</a><span class="tag">1.0</span> </td>
+    <td class="description"><a href="/rev/2ef0ac749a14">base</a><span class="tag">1.0</span> <span class="tag">anotherthing</span> </td>
    </tr>
   
   </table>
@@ -317,7 +318,7 @@ Logs and changes
   <div class="main">
   
   <h2><a href="/">test</a></h2>
-  <h3>changeset 0:2ef0ac749a14  <span class="tag">1.0</span>  </h3>
+  <h3>changeset 0:2ef0ac749a14  <span class="tag">1.0</span>  <span class="tag">anotherthing</span> </h3>
   
   <form class="search" action="/log">
   
@@ -443,7 +444,7 @@ Logs and changes
    <tr class="parity0">
     <td class="age">1970-01-01</td>
     <td class="author">test</td>
-    <td class="description"><a href="/rev/2ef0ac749a14">base</a><span class="tag">1.0</span> </td>
+    <td class="description"><a href="/rev/2ef0ac749a14">base</a><span class="tag">1.0</span> <span class="tag">anotherthing</span> </td>
    </tr>
   
   </table>
@@ -603,6 +604,11 @@ Overviews
   
   stable	1d22e65f027e5a0609357e7d8e7508cd2ba5d2fe	open
   default	a4f92ed23982be056b9852de5dfe873eaac7f0de	inactive
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '/raw-bookmarks'
+  200 Script output follows
+  
+  anotherthing	2ef0ac749a14e4f57a5a822464a0902c6f7f448f
+  something	1d22e65f027e5a0609357e7d8e7508cd2ba5d2fe
   $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '/summary/?style=gitweb'
   200 Script output follows
   
@@ -691,7 +697,7 @@ Overviews
   <td>
   <a class="list" href="/rev/2ef0ac749a14?style=gitweb">
   <b>base</b>
-  <span class="logtags"><span class="tagtag" title="1.0">1.0</span> </span>
+  <span class="logtags"><span class="tagtag" title="1.0">1.0</span> <span class="bookmarktag" title="anotherthing">anotherthing</span> </span>
   </a>
   </td>
   <td class="link" nowrap>
@@ -715,6 +721,30 @@ Overviews
   </td>
   </tr>
   <tr class="light"><td colspan="3"><a class="list" href="/tags?style=gitweb">...</a></td></tr>
+  </table>
+  
+  <div><a class="title" href="/bookmarks?style=gitweb">bookmarks</a></div>
+  <table cellspacing="0">
+  
+  <tr class="parity0">
+  <td class="age"><i>1970-01-01</i></td>
+  <td><a class="list" href="/rev/2ef0ac749a14?style=gitweb"><b>anotherthing</b></a></td>
+  <td class="link">
+  <a href="/rev/2ef0ac749a14?style=gitweb">changeset</a> |
+  <a href="/log/2ef0ac749a14?style=gitweb">changelog</a> |
+  <a href="/file/2ef0ac749a14?style=gitweb">files</a>
+  </td>
+  </tr>
+  <tr class="parity1">
+  <td class="age"><i>1970-01-01</i></td>
+  <td><a class="list" href="/rev/1d22e65f027e?style=gitweb"><b>something</b></a></td>
+  <td class="link">
+  <a href="/rev/1d22e65f027e?style=gitweb">changeset</a> |
+  <a href="/log/1d22e65f027e?style=gitweb">changelog</a> |
+  <a href="/file/1d22e65f027e?style=gitweb">files</a>
+  </td>
+  </tr>
+  <tr class="light"><td colspan="3"><a class="list" href="/bookmarks?style=gitweb">...</a></td></tr>
   </table>
   
   <div><a class="title" href="#">branches</a></div>
@@ -817,7 +847,7 @@ Overviews
   <script>
   <!-- hide script content
   
-  var data = [["1d22e65f027e", [0, 1], [[0, 0, 1]], "branch", "test", "1970-01-01", ["stable", true], ["tip"], ["something"]], ["a4f92ed23982", [0, 1], [[0, 0, 1]], "Added tag 1.0 for changeset 2ef0ac749a14", "test", "1970-01-01", ["default", true], [], []], ["2ef0ac749a14", [0, 1], [], "base", "test", "1970-01-01", ["default", false], ["1.0"], []]];
+  var data = [["1d22e65f027e", [0, 1], [[0, 0, 1]], "branch", "test", "1970-01-01", ["stable", true], ["tip"], ["something"]], ["a4f92ed23982", [0, 1], [[0, 0, 1]], "Added tag 1.0 for changeset 2ef0ac749a14", "test", "1970-01-01", ["default", true], [], []], ["2ef0ac749a14", [0, 1], [], "base", "test", "1970-01-01", ["default", false], ["1.0"], ["anotherthing"]]];
   var graph = new Graph();
   graph.scale(39);
   
@@ -913,7 +943,7 @@ capabilities
   $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '?cmd=capabilities'; echo
   200 Script output follows
   
-  lookup changegroupsubset branchmap pushkey unbundle=HG10GZ,HG10BZ,HG10UN
+  lookup changegroupsubset branchmap pushkey known getbundle unbundlehash unbundle=HG10GZ,HG10BZ,HG10UN
 
 heads
 
@@ -1082,7 +1112,7 @@ Graph json escape of multibyte character
 
   $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '/graph/' \
   >     | grep '^var data ='
-  var data = [["40b4d6888e92", [0, 1], [[0, 0, 1]], "\u80fd", "test", "1970-01-01", ["stable", true], ["tip"], ["something"]], ["1d22e65f027e", [0, 1], [[0, 0, 1]], "branch", "test", "1970-01-01", ["stable", false], [], []], ["a4f92ed23982", [0, 1], [[0, 0, 1]], "Added tag 1.0 for changeset 2ef0ac749a14", "test", "1970-01-01", ["default", true], [], []], ["2ef0ac749a14", [0, 1], [], "base", "test", "1970-01-01", ["default", false], ["1.0"], []]];
+  var data = [["40b4d6888e92", [0, 1], [[0, 0, 1]], "\u80fd", "test", "1970-01-01", ["stable", true], ["tip"], ["something"]], ["1d22e65f027e", [0, 1], [[0, 0, 1]], "branch", "test", "1970-01-01", ["stable", false], [], []], ["a4f92ed23982", [0, 1], [[0, 0, 1]], "Added tag 1.0 for changeset 2ef0ac749a14", "test", "1970-01-01", ["default", true], [], []], ["2ef0ac749a14", [0, 1], [], "base", "test", "1970-01-01", ["default", false], ["1.0"], ["anotherthing"]]];
 
 ERRORS ENCOUNTERED
 

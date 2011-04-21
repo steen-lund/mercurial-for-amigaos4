@@ -16,8 +16,8 @@ map from a changeset hash to its hash in the source repository.
 from mercurial.i18n import _
 import os, tempfile
 from mercurial import bundlerepo, cmdutil, hg, merge, match
-from mercurial import patch, revlog, util, error
-from mercurial import revset
+from mercurial import patch, revlog, scmutil, util, error
+from mercurial import revset, templatekw
 
 class transplantentry(object):
     def __init__(self, lnode, rnode):
@@ -31,7 +31,7 @@ class transplants(object):
         self.opener = opener
 
         if not opener:
-            self.opener = util.opener(self.path)
+            self.opener = scmutil.opener(self.path)
         self.transplants = {}
         self.dirty = False
         self.read()
@@ -74,7 +74,7 @@ class transplanter(object):
     def __init__(self, ui, repo):
         self.ui = ui
         self.path = repo.join('transplant')
-        self.opener = util.opener(self.path)
+        self.opener = scmutil.opener(self.path)
         self.transplants = transplants(self.path, 'transplants',
                                        opener=self.opener)
 
@@ -177,12 +177,11 @@ class transplanter(object):
             lock.release()
             wlock.release()
 
-    def filter(self, filter, changelog, patchfile):
+    def filter(self, filter, node, changelog, patchfile):
         '''arbitrarily rewrite changeset before applying it'''
 
         self.ui.status(_('filtering %s\n') % patchfile)
         user, date, msg = (changelog[1], changelog[2], changelog[4])
-
         fd, headerfile = tempfile.mkstemp(prefix='hg-transplant-')
         fp = os.fdopen(fd, 'w')
         fp.write("# HG changeset patch\n")
@@ -194,7 +193,9 @@ class transplanter(object):
         try:
             util.system('%s %s %s' % (filter, util.shellquote(headerfile),
                                    util.shellquote(patchfile)),
-                        environ={'HGUSER': changelog[1]},
+                        environ={'HGUSER': changelog[1],
+                                 'HGREVISION': revlog.hex(node),
+                                 },
                         onerr=util.Abort, errprefix=_('filter failed'))
             user, date, msg = self.parselog(file(headerfile))[1:4]
         finally:
@@ -209,7 +210,7 @@ class transplanter(object):
         date = "%d %d" % (time, timezone)
         extra = {'transplant_source': node}
         if filter:
-            (user, date, message) = self.filter(filter, cl, patchfile)
+            (user, date, message) = self.filter(filter, node, cl, patchfile)
 
         if log:
             # we don't translate messages inserted into commits
@@ -236,7 +237,7 @@ class transplanter(object):
                 seriespath = os.path.join(self.path, 'series')
                 if os.path.exists(seriespath):
                     os.unlink(seriespath)
-                p1 = repo.dirstate.parents()[0]
+                p1 = repo.dirstate.p1()
                 p2 = node
                 self.log(user, date, message, p1, p2, merge=merge)
                 self.ui.write(str(inst) + '\n')
@@ -345,6 +346,8 @@ class transplanter(object):
         message = []
         node = revlog.nullid
         inmsg = False
+        user = None
+        date = None
         for line in fp.read().splitlines():
             if inmsg:
                 message.append(line)
@@ -359,6 +362,8 @@ class transplanter(object):
             elif not line.startswith('# '):
                 inmsg = True
                 message.append(line)
+        if None in (user, date):
+            raise util.Abort(_("filter corrupted changeset (no user or date)"))
         return (node, user, date, '\n'.join(message), parents)
 
     def log(self, user, date, message, p1, p2, merge=False):
@@ -547,8 +552,8 @@ def transplant(ui, repo, *revs, **opts):
     if source:
         sourcerepo = ui.expandpath(source)
         source = hg.repository(ui, sourcerepo)
-        source, incoming, bundle = bundlerepo.getremotechanges(ui, repo, source,
-                                    force=True)
+        source, common, incoming, bundle = bundlerepo.getremotechanges(ui, repo,
+                                            source, force=True)
     else:
         source = repo
 
@@ -607,8 +612,15 @@ def revsettransplanted(repo, subset, x):
         cs.add(r)
     return [r for r in s if r in cs]
 
+def kwtransplanted(repo, ctx, **args):
+    """:transplanted: String. The node identifier of the transplanted
+    changeset if any."""
+    n = ctx.extra().get('transplant_source')
+    return n and revlog.hex(n) or ''
+
 def extsetup(ui):
     revset.symbols['transplanted'] = revsettransplanted
+    templatekw.keywords['transplanted'] = kwtransplanted
 
 cmdtable = {
     "transplant":
@@ -632,4 +644,4 @@ cmdtable = {
 }
 
 # tell hggettext to extract docstrings from these functions:
-i18nfunctions = [revsettransplanted]
+i18nfunctions = [revsettransplanted, kwtransplanted]

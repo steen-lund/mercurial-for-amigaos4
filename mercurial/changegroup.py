@@ -49,15 +49,6 @@ bundletypes = {
     "HG10GZ": ("HG10GZ", lambda: zlib.compressobj()),
 }
 
-def collector(cl, mmfs, files):
-    # Gather information about changeset nodes going out in a bundle.
-    # We want to gather manifests needed and filelogs affected.
-    def collect(node):
-        c = cl.read(node)
-        files.update(c[3])
-        mmfs.setdefault(c[0], node)
-    return collect
-
 # hgweb uses this list to communicate its preferred type
 bundlepriority = ['HG10GZ', 'HG10BZ', 'HG10UN']
 
@@ -203,3 +194,18 @@ def readbundle(fh, fname):
     if version != '10':
         raise util.Abort(_('%s: unknown bundle version %s') % (fname, version))
     return unbundle10(fh, alg)
+
+class bundle10(object):
+    def __init__(self, lookup):
+        self._lookup = lookup
+    def close(self):
+        return closechunk()
+    def fileheader(self, fname):
+        return chunkheader(len(fname)) + fname
+    def revchunk(self, revlog, node='', p1='', p2='', prefix='', data=''):
+        linknode = self._lookup(revlog, node)
+        meta = node + p1 + p2 + linknode + prefix
+        l = len(meta) + len(data)
+        yield chunkheader(l)
+        yield meta
+        yield data

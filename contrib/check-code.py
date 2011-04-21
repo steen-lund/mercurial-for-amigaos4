@@ -66,6 +66,7 @@ testpats = [
     (r'^source\b', "don't use 'source', use '.'"),
     (r'touch -d', "don't use 'touch -d', use 'touch -t' instead"),
     (r'ls\s+[^|-]+\s+-', "options to 'ls' must come before filenames"),
+    (r'[^>]>\s*\$HGRCPATH', "don't overwrite $HGRCPATH, append to it"),
 ]
 
 testfilters = [
@@ -176,9 +177,10 @@ cpats = [
     (r'\([^\)]+\) \w+', "use (int)foo, not (int) foo"),
     (r'\S+ (\+\+|--)', "use foo++, not foo ++"),
     (r'\w,\w', "missing whitespace after ,"),
-    (r'\w[+/*]\w', "missing whitespace in expression"),
+    (r'^[^#]\w[+/*]\w', "missing whitespace in expression"),
     (r'^#\s+\w', "use #foo, not # foo"),
     (r'[^\n]\Z', "no trailing newline"),
+    (r'^\s*#import\b', "use only #include in standard C code"),
 ]
 
 cfilters = [

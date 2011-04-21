@@ -7,7 +7,7 @@
 
 from node import nullid, nullrev, hex, bin
 from i18n import _
-import util, filemerge, copies, subrepo
+import scmutil, util, filemerge, copies, subrepo
 import errno, os, shutil
 
 class mergestate(object):
@@ -268,7 +268,7 @@ def applyupdates(repo, action, wctx, mctx, actx, overwrite):
 
     updated, merged, removed, unresolved = 0, 0, 0, 0
     ms = mergestate(repo)
-    ms.reset(wctx.parents()[0].node())
+    ms.reset(wctx.p1().node())
     moves = []
     action.sort(key=actionkey)
     substate = wctx.substate # prime
@@ -286,7 +286,7 @@ def applyupdates(repo, action, wctx, mctx, actx, overwrite):
             fco = mctx[f2]
             if mctx == actx: # backwards, use working dir parent as ancestor
                 if fcl.parents():
-                    fca = fcl.parents()[0]
+                    fca = fcl.p1()
                 else:
                     fca = repo.filectx(f, fileid=nullrev)
             else:
@@ -303,7 +303,7 @@ def applyupdates(repo, action, wctx, mctx, actx, overwrite):
             repo.ui.debug("removing %s\n" % f)
             os.unlink(repo.wjoin(f))
 
-    audit_path = util.path_auditor(repo.root)
+    audit_path = scmutil.path_auditor(repo.root)
 
     numupdates = len(action)
     for i, a in enumerate(action):
@@ -439,7 +439,7 @@ def recordupdates(repo, action, branchmerge):
                 if f:
                     repo.dirstate.forget(f)
 
-def update(repo, node, branchmerge, force, partial):
+def update(repo, node, branchmerge, force, partial, ancestor=None):
     """
     Perform a merge between the working directory and the given node
 
@@ -492,9 +492,12 @@ def update(repo, node, branchmerge, force, partial):
         overwrite = force and not branchmerge
         pl = wc.parents()
         p1, p2 = pl[0], repo[node]
-        pa = p1.ancestor(p2)
+        if ancestor:
+            pa = repo[ancestor]
+        else:
+            pa = p1.ancestor(p2)
+
         fp1, fp2, xp1, xp2 = p1.node(), p2.node(), str(p1), str(p2)
-        fastforward = False
 
         ### check phase
         if not overwrite and len(pl) > 1:
@@ -504,9 +507,7 @@ def update(repo, node, branchmerge, force, partial):
                 raise util.Abort(_("merging with a working directory ancestor"
                                    " has no effect"))
             elif pa == p1:
-                if p1.branch() != p2.branch():
-                    fastforward = True
-                else:
+                if p1.branch() == p2.branch():
                     raise util.Abort(_("nothing to merge (use 'hg update'"
                                        " or check 'hg heads')"))
             if not force and (wc.files() or wc.deleted()):
@@ -551,7 +552,7 @@ def update(repo, node, branchmerge, force, partial):
         if not partial:
             repo.dirstate.setparents(fp1, fp2)
             recordupdates(repo, action, branchmerge)
-            if not branchmerge and not fastforward:
+            if not branchmerge:
                 repo.dirstate.setbranch(p2.branch())
     finally:
         wlock.release()

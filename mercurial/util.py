@@ -16,7 +16,7 @@ hide platform-specific details from the core.
 from i18n import _
 import error, osutil, encoding
 import errno, re, shutil, sys, tempfile, traceback
-import os, stat, time, calendar, textwrap, unicodedata, signal
+import os, time, calendar, textwrap, unicodedata, signal
 import imp, socket
 
 # Python compatibility
@@ -295,54 +295,6 @@ def pathto(root, n1, n2):
     b.reverse()
     return os.sep.join((['..'] * len(a)) + b) or '.'
 
-def canonpath(root, cwd, myname, auditor=None):
-    """return the canonical path of myname, given cwd and root"""
-    if endswithsep(root):
-        rootsep = root
-    else:
-        rootsep = root + os.sep
-    name = myname
-    if not os.path.isabs(name):
-        name = os.path.join(root, cwd, name)
-    name = os.path.normpath(name)
-    if auditor is None:
-        auditor = path_auditor(root)
-    if name != rootsep and name.startswith(rootsep):
-        name = name[len(rootsep):]
-        auditor(name)
-        return pconvert(name)
-    elif name == root:
-        return ''
-    else:
-        # Determine whether `name' is in the hierarchy at or beneath `root',
-        # by iterating name=dirname(name) until that causes no change (can't
-        # check name == '/', because that doesn't work on windows).  For each
-        # `name', compare dev/inode numbers.  If they match, the list `rel'
-        # holds the reversed list of components making up the relative file
-        # name we want.
-        root_st = os.stat(root)
-        rel = []
-        while True:
-            try:
-                name_st = os.stat(name)
-            except OSError:
-                break
-            if samestat(name_st, root_st):
-                if not rel:
-                    # name was actually the same as root (maybe a symlink)
-                    return ''
-                rel.reverse()
-                name = os.path.join(*rel)
-                auditor(name)
-                return pconvert(name)
-            dirname, basename = os.path.split(name)
-            rel.append(basename)
-            if dirname == name:
-                break
-            name = dirname
-
-        raise Abort('%s not under root' % myname)
-
 _hgexecutable = None
 
 def main_is_frozen():
@@ -438,6 +390,9 @@ def checksignature(func):
 
     return check
 
+def makedir(path, notindexed):
+    os.mkdir(path)
+
 def unlinkpath(f):
     """unlink and remove the directory if it is empty"""
     os.unlink(f)
@@ -490,76 +445,47 @@ def copyfiles(src, dst, hardlink=None):
 
     return hardlink, num
 
-class path_auditor(object):
-    '''ensure that a filesystem path contains no banned components.
-    the following properties of a path are checked:
+_windows_reserved_filenames = '''con prn aux nul
+    com1 com2 com3 com4 com5 com6 com7 com8 com9
+    lpt1 lpt2 lpt3 lpt4 lpt5 lpt6 lpt7 lpt8 lpt9'''.split()
+_windows_reserved_chars = ':*?"<>|'
+def checkwinfilename(path):
+    '''Check that the base-relative path is a valid filename on Windows.
+    Returns None if the path is ok, or a UI string describing the problem.
 
-    - ends with a directory separator
-    - under top-level .hg
-    - starts at the root of a windows drive
-    - contains ".."
-    - traverses a symlink (e.g. a/symlink_here/b)
-    - inside a nested repository (a callback can be used to approve
-      some nested repositories, e.g., subrepositories)
+    >>> checkwinfilename("just/a/normal/path")
+    >>> checkwinfilename("foo/bar/con.xml")
+    "filename contains 'con', which is reserved on Windows"
+    >>> checkwinfilename("foo/con.xml/bar")
+    "filename contains 'con', which is reserved on Windows"
+    >>> checkwinfilename("foo/bar/xml.con")
+    >>> checkwinfilename("foo/bar/AUX/bla.txt")
+    "filename contains 'AUX', which is reserved on Windows"
+    >>> checkwinfilename("foo/bar/bla:.txt")
+    "filename contains ':', which is reserved on Windows"
+    >>> checkwinfilename("foo/bar/b\07la.txt")
+    "filename contains '\\\\x07', which is invalid on Windows"
+    >>> checkwinfilename("foo/bar/bla ")
+    "filename ends with ' ', which is not allowed on Windows"
     '''
-
-    def __init__(self, root, callback=None):
-        self.audited = set()
-        self.auditeddir = set()
-        self.root = root
-        self.callback = callback
-
-    def __call__(self, path):
-        if path in self.audited:
-            return
-        # AIX ignores "/" at end of path, others raise EISDIR.
-        if endswithsep(path):
-            raise Abort(_("path ends in directory separator: %s") % path)
-        normpath = os.path.normcase(path)
-        parts = splitpath(normpath)
-        if (os.path.splitdrive(path)[0]
-            or parts[0].lower() in ('.hg', '.hg.', '')
-            or os.pardir in parts):
-            raise Abort(_("path contains illegal component: %s") % path)
-        if '.hg' in path.lower():
-            lparts = [p.lower() for p in parts]
-            for p in '.hg', '.hg.':
-                if p in lparts[1:]:
-                    pos = lparts.index(p)
-                    base = os.path.join(*parts[:pos])
-                    raise Abort(_('path %r is inside repo %r') % (path, base))
-        def check(prefix):
-            curpath = os.path.join(self.root, prefix)
-            try:
-                st = os.lstat(curpath)
-            except OSError, err:
-                # EINVAL can be raised as invalid path syntax under win32.
-                # They must be ignored for patterns can be checked too.
-                if err.errno not in (errno.ENOENT, errno.ENOTDIR, errno.EINVAL):
-                    raise
-            else:
-                if stat.S_ISLNK(st.st_mode):
-                    raise Abort(_('path %r traverses symbolic link %r') %
-                                (path, prefix))
-                elif (stat.S_ISDIR(st.st_mode) and
-                      os.path.isdir(os.path.join(curpath, '.hg'))):
-                    if not self.callback or not self.callback(curpath):
-                        raise Abort(_('path %r is inside repo %r') %
-                                    (path, prefix))
-        parts.pop()
-        prefixes = []
-        while parts:
-            prefix = os.sep.join(parts)
-            if prefix in self.auditeddir:
-                break
-            check(prefix)
-            prefixes.append(prefix)
-            parts.pop()
-
-        self.audited.add(path)
-        # only add prefixes to the cache after checking everything: we don't
-        # want to add "foo/bar/baz" before checking if there's a "foo/.hg"
-        self.auditeddir.update(prefixes)
+    for n in path.replace('\\', '/').split('/'):
+        if not n:
+            continue
+        for c in n:
+            if c in _windows_reserved_chars:
+                return _("filename contains '%s', which is reserved "
+                         "on Windows") % c
+            if ord(c) <= 31:
+                return _("filename contains %r, which is invalid "
+                         "on Windows") % c
+        base = n.split('.')[0]
+        if base and base.lower() in _windows_reserved_filenames:
+            return _("filename contains '%s', which is reserved "
+                     "on Windows") % base
+        t = n[-1]
+        if t in '. ':
+            return _("filename ends with '%s', which is not allowed "
+                     "on Windows") % t
 
 def lookup_reg(key, name=None, scope=None):
     return None
@@ -573,6 +499,7 @@ def hidewindow():
     pass
 
 if os.name == 'nt':
+    checkosfilename = checkwinfilename
     from windows import *
 else:
     from posix import *
@@ -680,45 +607,6 @@ def fspath(name, root):
 
     return ''.join(result)
 
-def checkexec(path):
-    """
-    Check whether the given path is on a filesystem with UNIX-like exec flags
-
-    Requires a directory (like /foo/.hg)
-    """
-
-    # VFAT on some Linux versions can flip mode but it doesn't persist
-    # a FS remount. Frequently we can detect it if files are created
-    # with exec bit on.
-
-    try:
-        EXECFLAGS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-        fh, fn = tempfile.mkstemp(dir=path, prefix='hg-checkexec-')
-        try:
-            os.close(fh)
-            m = os.stat(fn).st_mode & 0777
-            new_file_has_exec = m & EXECFLAGS
-            os.chmod(fn, m ^ EXECFLAGS)
-            exec_flags_cannot_flip = ((os.stat(fn).st_mode & 0777) == m)
-        finally:
-            os.unlink(fn)
-    except (IOError, OSError):
-        # we don't care, the user probably won't be able to commit anyway
-        return False
-    return not (new_file_has_exec or exec_flags_cannot_flip)
-
-def checklink(path):
-    """check whether the given path is on a symlink-capable filesystem"""
-    # mktemp is not racy because symlink creation will fail if the
-    # file already exists
-    name = tempfile.mktemp(dir=path, prefix='hg-checklink-')
-    try:
-        os.symlink(".", name)
-        os.unlink(name)
-        return True
-    except (OSError, AttributeError):
-        return False
-
 def checknlink(testfile):
     '''check whether hardlink count reporting works properly'''
 
@@ -769,7 +657,18 @@ def splitpath(path):
 
 def gui():
     '''Are we running in a GUI?'''
-    return os.name == "nt" or os.name == "mac" or os.environ.get("DISPLAY")
+    if sys.platform == 'darwin':
+        if 'SSH_CONNECTION' in os.environ:
+            # handle SSH access to a box where the user is logged in
+            return False
+        elif getattr(osutil, 'isgui', None):
+            # check if a CoreGraphics session is available
+            return osutil.isgui()
+        else:
+            # pure build; use a safe default
+            return True
+    else:
+        return os.name == "nt" or os.environ.get("DISPLAY")
 
 def mktempcopy(name, emptyok=False, createmode=None):
     """Create a temporary file with the same contents from name
@@ -868,98 +767,6 @@ def makedirs(name, mode=None):
             raise
     makedirs(parent, mode)
     makedirs(name, mode)
-
-class opener(object):
-    """Open files relative to a base directory
-
-    This class is used to hide the details of COW semantics and
-    remote file access from higher level code.
-    """
-    def __init__(self, base, audit=True):
-        self.base = base
-        if audit:
-            self.auditor = path_auditor(base)
-        else:
-            self.auditor = always
-        self.createmode = None
-        self._trustnlink = None
-
-    @propertycache
-    def _can_symlink(self):
-        return checklink(self.base)
-
-    def _fixfilemode(self, name):
-        if self.createmode is None:
-            return
-        os.chmod(name, self.createmode & 0666)
-
-    def __call__(self, path, mode="r", text=False, atomictemp=False):
-        self.auditor(path)
-        f = os.path.join(self.base, path)
-
-        if not text and "b" not in mode:
-            mode += "b" # for that other OS
-
-        nlink = -1
-        dirname, basename = os.path.split(f)
-        # If basename is empty, then the path is malformed because it points
-        # to a directory. Let the posixfile() call below raise IOError.
-        if basename and mode not in ('r', 'rb'):
-            if atomictemp:
-                if not os.path.isdir(dirname):
-                    makedirs(dirname, self.createmode)
-                return atomictempfile(f, mode, self.createmode)
-            try:
-                if 'w' in mode:
-                    unlink(f)
-                    nlink = 0
-                else:
-                    # nlinks() may behave differently for files on Windows
-                    # shares if the file is open.
-                    fd = posixfile(f)
-                    nlink = nlinks(f)
-                    if nlink < 1:
-                        nlink = 2 # force mktempcopy (issue1922)
-                    fd.close()
-            except (OSError, IOError), e:
-                if e.errno != errno.ENOENT:
-                    raise
-                nlink = 0
-                if not os.path.isdir(dirname):
-                    makedirs(dirname, self.createmode)
-            if nlink > 0:
-                if self._trustnlink is None:
-                    self._trustnlink = nlink > 1 or checknlink(f)
-                if nlink > 1 or not self._trustnlink:
-                    rename(mktempcopy(f), f)
-        fp = posixfile(f, mode)
-        if nlink == 0:
-            self._fixfilemode(f)
-        return fp
-
-    def symlink(self, src, dst):
-        self.auditor(dst)
-        linkname = os.path.join(self.base, dst)
-        try:
-            os.unlink(linkname)
-        except OSError:
-            pass
-
-        dirname = os.path.dirname(linkname)
-        if not os.path.exists(dirname):
-            makedirs(dirname, self.createmode)
-
-        if self._can_symlink:
-            try:
-                os.symlink(src, linkname)
-            except OSError, err:
-                raise OSError(err.errno, _('could not symlink to %r: %s') %
-                              (src, err.strerror), linkname)
-        else:
-            f = self(dst, "w")
-            f.write(src)
-            f.close()
-            self._fixfilemode(dst)
 
 class chunkbuffer(object):
     """Allow arbitrary sized chunks of data to be efficiently read from an
@@ -1204,10 +1011,17 @@ def matchdate(date):
         return parsedate(date, extendeddateformats, d)[0]
 
     date = date.strip()
-    if date[0] == "<":
+
+    if not date:
+        raise Abort(_("dates cannot consist entirely of whitespace"))
+    elif date[0] == "<":
+        if not date[1:]:
+            raise Abort(_("invalid day spec, use '<DATE'"))
         when = upper(date[1:])
         return lambda x: x <= when
     elif date[0] == ">":
+        if not date[1:]:
+            raise Abort(_("invalid day spec, use '>DATE'"))
         when = lower(date[1:])
         return lambda x: x >= when
     elif date[0] == "-":
@@ -1215,6 +1029,9 @@ def matchdate(date):
             days = int(date[1:])
         except ValueError:
             raise Abort(_("invalid day spec: %s") % date[1:])
+        if days < 0:
+            raise Abort(_("%s must be nonnegative (see 'hg help dates')")
+                % date[1:])
         when = makedate()[0] - days * 3600 * 24
         return lambda x: x >= when
     elif " to " in date:
@@ -1265,53 +1082,6 @@ def ellipsis(text, maxlength=400):
         return utext.encode(encoding.encoding)
     except (UnicodeDecodeError, UnicodeEncodeError):
         return _ellipsis(text, maxlength)[0]
-
-def walkrepos(path, followsym=False, seen_dirs=None, recurse=False):
-    '''yield every hg repository under path, recursively.'''
-    def errhandler(err):
-        if err.filename == path:
-            raise err
-    if followsym and hasattr(os.path, 'samestat'):
-        def _add_dir_if_not_there(dirlst, dirname):
-            match = False
-            samestat = os.path.samestat
-            dirstat = os.stat(dirname)
-            for lstdirstat in dirlst:
-                if samestat(dirstat, lstdirstat):
-                    match = True
-                    break
-            if not match:
-                dirlst.append(dirstat)
-            return not match
-    else:
-        followsym = False
-
-    if (seen_dirs is None) and followsym:
-        seen_dirs = []
-        _add_dir_if_not_there(seen_dirs, path)
-    for root, dirs, files in os.walk(path, topdown=True, onerror=errhandler):
-        dirs.sort()
-        if '.hg' in dirs:
-            yield root # found a repository
-            qroot = os.path.join(root, '.hg', 'patches')
-            if os.path.isdir(os.path.join(qroot, '.hg')):
-                yield qroot # we have a patch queue repo here
-            if recurse:
-                # avoid recursing inside the .hg directory
-                dirs.remove('.hg')
-            else:
-                dirs[:] = [] # don't descend further
-        elif followsym:
-            newdirs = []
-            for d in dirs:
-                fname = os.path.join(root, d)
-                if _add_dir_if_not_there(seen_dirs, fname):
-                    if os.path.islink(fname):
-                        for hgname in walkrepos(fname, True, seen_dirs):
-                            yield hgname
-                    else:
-                        newdirs.append(d)
-            dirs[:] = newdirs
 
 _rcpath = None
 
@@ -1366,26 +1136,6 @@ def bytecount(nbytes):
         if nbytes >= divisor * multiplier:
             return format % (nbytes / float(divisor))
     return units[-1][2] % nbytes
-
-def drop_scheme(scheme, path):
-    sc = scheme + ':'
-    if path.startswith(sc):
-        path = path[len(sc):]
-        if path.startswith('//'):
-            if scheme == 'file':
-                i = path.find('/', 2)
-                if i == -1:
-                    return ''
-                # On Windows, absolute paths are rooted at the current drive
-                # root. On POSIX they are rooted at the file system root.
-                if os.name == 'nt':
-                    droot = os.path.splitdrive(os.getcwd())[0] + '/'
-                    path = os.path.join(droot, path[i + 1:])
-                else:
-                    path = path[i:]
-            else:
-                path = path[2:]
-    return path
 
 def uirepr(s):
     # Avoid double backslash in Windows path repr()

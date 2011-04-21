@@ -6,7 +6,7 @@
 # GNU General Public License version 2 or any later version.
 
 import encoding
-import ctypes, errno, os, struct, subprocess
+import ctypes, errno, os, struct, subprocess, random
 
 _kernel32 = ctypes.windll.kernel32
 
@@ -55,6 +55,10 @@ _FILE_SHARE_WRITE = 0x00000002
 _FILE_SHARE_DELETE = 0x00000004
 
 _OPEN_EXISTING = 3
+
+# SetFileAttributes
+_FILE_ATTRIBUTE_NORMAL = 0x80
+_FILE_ATTRIBUTE_NOT_CONTENT_INDEXED = 0x2000
 
 # Process Security and Access Rights
 _PROCESS_QUERY_INFORMATION = 0x0400
@@ -137,7 +141,10 @@ def _getfileinfo(name):
         _kernel32.CloseHandle(fh)
 
 def os_link(src, dst):
-    if not _kernel32.CreateHardLinkA(dst, src, None):
+    try:
+        if not _kernel32.CreateHardLinkA(dst, src, None):
+            _raiseoserror(src)
+    except AttributeError: # Wine doesn't support this function
         _raiseoserror(src)
 
 def nlinks(name):
@@ -316,3 +323,54 @@ def spawndetached(args):
         raise ctypes.WinError()
 
     return pi.dwProcessId
+
+def unlink(f):
+    '''try to implement POSIX' unlink semantics on Windows'''
+
+    # POSIX allows to unlink and rename open files. Windows has serious
+    # problems with doing that:
+    # - Calling os.unlink (or os.rename) on a file f fails if f or any
+    #   hardlinked copy of f has been opened with Python's open(). There is no
+    #   way such a file can be deleted or renamed on Windows (other than
+    #   scheduling the delete or rename for the next reboot).
+    # - Calling os.unlink on a file that has been opened with Mercurial's
+    #   posixfile (or comparable methods) will delay the actual deletion of
+    #   the file for as long as the file is held open. The filename is blocked
+    #   during that time and cannot be used for recreating a new file under
+    #   that same name ("zombie file"). Directories containing such zombie files
+    #   cannot be removed or moved.
+    # A file that has been opened with posixfile can be renamed, so we rename
+    # f to a random temporary name before calling os.unlink on it. This allows
+    # callers to recreate f immediately while having other readers do their
+    # implicit zombie filename blocking on a temporary name.
+
+    for tries in xrange(10):
+        temp = '%s-%08x' % (f, random.randint(0, 0xffffffff))
+        try:
+            os.rename(f, temp)  # raises OSError EEXIST if temp exists
+            break
+        except OSError, e:
+            if e.errno != errno.EEXIST:
+                raise
+    else:
+        raise IOError, (errno.EEXIST, "No usable temporary filename found")
+
+    try:
+        os.unlink(temp)
+    except OSError:
+        # The unlink might have failed because the READONLY attribute may heave
+        # been set on the original file. Rename works fine with READONLY set,
+        # but not os.unlink. Reset all attributes and try again.
+        _kernel32.SetFileAttributesA(temp, _FILE_ATTRIBUTE_NORMAL)
+        try:
+            os.unlink(temp)
+        except OSError:
+            # The unlink might have failed due to some very rude AV-Scanners.
+            # Leaking a tempfile is the lesser evil than aborting here and
+            # leaving some potentially serious inconsistencies.
+            pass
+
+def makedir(path, notindexed):
+    os.mkdir(path)
+    if notindexed:
+        _kernel32.SetFileAttributesA(path, _FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)

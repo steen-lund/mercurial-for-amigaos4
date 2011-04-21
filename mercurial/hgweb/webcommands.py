@@ -108,10 +108,11 @@ def _search(web, req, tmpl):
     revcount = web.maxchanges
     if 'revcount' in req.form:
         revcount = int(req.form.get('revcount', [revcount])[0])
+        revcount = max(revcount, 1)
         tmpl.defaults['sessionvars']['revcount'] = revcount
 
     lessvars = copy.copy(tmpl.defaults['sessionvars'])
-    lessvars['revcount'] = revcount / 2
+    lessvars['revcount'] = max(revcount / 2, 1)
     lessvars['rev'] = query
     morevars = copy.copy(tmpl.defaults['sessionvars'])
     morevars['revcount'] = revcount * 2
@@ -220,10 +221,11 @@ def changelog(web, req, tmpl, shortlog=False):
     revcount = shortlog and web.maxshortchanges or web.maxchanges
     if 'revcount' in req.form:
         revcount = int(req.form.get('revcount', [revcount])[0])
+        revcount = max(revcount, 1)
         tmpl.defaults['sessionvars']['revcount'] = revcount
 
     lessvars = copy.copy(tmpl.defaults['sessionvars'])
-    lessvars['revcount'] = revcount / 2
+    lessvars['revcount'] = max(revcount / 2, 1)
     morevars = copy.copy(tmpl.defaults['sessionvars'])
     morevars['revcount'] = revcount * 2
 
@@ -393,14 +395,11 @@ def tags(web, req, tmpl):
 
 def bookmarks(web, req, tmpl):
     i = web.repo._bookmarks.items()
-    i.reverse()
     parity = paritygen(web.stripecount)
 
-    def entries(notip=False, limit=0, **map):
+    def entries(limit=0, **map):
         count = 0
-        for k, n in i:
-            if notip and k == "tip":
-                continue
+        for k, n in sorted(i):
             if limit > 0 and count >= limit:
                 continue
             count = count + 1
@@ -411,9 +410,8 @@ def bookmarks(web, req, tmpl):
 
     return tmpl("bookmarks",
                 node=hex(web.repo.changelog.tip()),
-                entries=lambda **x: entries(False, 0, **x),
-                entriesnotip=lambda **x: entries(True, 0, **x),
-                latestentry=lambda **x: entries(True, 1, **x))
+                entries=lambda **x: entries(0, **x),
+                latestentry=lambda **x: entries(1, **x))
 
 def branches(web, req, tmpl):
     tips = (web.repo[n] for t, n in web.repo.branchtags().iteritems())
@@ -464,6 +462,15 @@ def summary(web, req, tmpl):
                        node=hex(n),
                        date=web.repo[n].date())
 
+    def bookmarks(**map):
+        parity = paritygen(web.stripecount)
+        b = web.repo._bookmarks.items()
+        for k, n in sorted(b)[:10]:  # limit to 10 bookmarks
+            yield {'parity': parity.next(),
+                   'bookmark': k,
+                   'date': web.repo[n].date(),
+                   'node': hex(n)}
+
     def branches(**map):
         parity = paritygen(web.stripecount)
 
@@ -508,6 +515,7 @@ def summary(web, req, tmpl):
                 owner=get_contact(web.config) or "unknown",
                 lastchange=tip.date(),
                 tags=tagentries,
+                bookmarks=bookmarks,
                 branches=branches,
                 shortlog=changelist,
                 node=tip.hex(),
@@ -624,10 +632,11 @@ def filelog(web, req, tmpl):
     revcount = web.maxshortchanges
     if 'revcount' in req.form:
         revcount = int(req.form.get('revcount', [revcount])[0])
+        revcount = max(revcount, 1)
         tmpl.defaults['sessionvars']['revcount'] = revcount
 
     lessvars = copy.copy(tmpl.defaults['sessionvars'])
-    lessvars['revcount'] = revcount / 2
+    lessvars['revcount'] = max(revcount / 2, 1)
     morevars = copy.copy(tmpl.defaults['sessionvars'])
     morevars['revcount'] = revcount * 2
 
@@ -725,10 +734,11 @@ def graph(web, req, tmpl):
     revcount = web.maxshortchanges
     if 'revcount' in req.form:
         revcount = int(req.form.get('revcount', [revcount])[0])
+        revcount = max(revcount, 1)
         tmpl.defaults['sessionvars']['revcount'] = revcount
 
     lessvars = copy.copy(tmpl.defaults['sessionvars'])
-    lessvars['revcount'] = revcount / 2
+    lessvars['revcount'] = max(revcount / 2, 1)
     morevars = copy.copy(tmpl.defaults['sessionvars'])
     morevars['revcount'] = revcount * 2
 

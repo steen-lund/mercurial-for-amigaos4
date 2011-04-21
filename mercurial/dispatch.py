@@ -90,7 +90,7 @@ def _runcatch(ui, args):
     except error.CommandError, inst:
         if inst.args[0]:
             ui.warn(_("hg %s: %s\n") % (inst.args[0], inst.args[1]))
-            commands.help_(ui, inst.args[0])
+            commands.help_(ui, inst.args[0], full=False)
         else:
             ui.warn(_("hg: %s\n") % inst.args[1])
             commands.help_(ui, 'shortlist')
@@ -586,8 +586,8 @@ def _dispatch(ui, args):
                     if guess and repos.count(guess) == len(repos):
                         return _dispatch(ui, ['--repository', guess] + fullargs)
                 if not path:
-                    raise error.RepoError(_("There is no Mercurial repository"
-                                      " here (.hg not found)"))
+                    raise error.RepoError(_("no repository found in %r"
+                                            " (.hg not found)") % os.getcwd())
                 raise
         args.insert(0, repo)
     elif rpath:
