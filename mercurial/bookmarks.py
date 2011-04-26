@@ -29,7 +29,7 @@ def read(repo):
             sha, refspec = line.strip().split(' ', 1)
             refspec = encoding.tolocal(refspec)
             bookmarks[refspec] = repo.changelog.lookup(sha)
-    except:
+    except IOError:
         pass
     return bookmarks
 
@@ -101,13 +101,7 @@ def setcurrent(repo, mark):
     if current == mark:
         return
 
-    refs = repo._bookmarks
-
-    # do not update if we do update to a rev equal to the current bookmark
-    if (mark and mark not in refs and
-        current and refs[current] == repo.changectx('.').node()):
-        return
-    if mark not in refs:
+    if mark not in repo._bookmarks:
         mark = ''
     if not valid(mark):
         raise util.Abort(_("bookmark '%s' contains illegal "
@@ -121,6 +115,15 @@ def setcurrent(repo, mark):
     finally:
         wlock.release()
     repo._bookmarkcurrent = mark
+
+def updatecurrentbookmark(repo, oldnode, curbranch):
+    try:
+        update(repo, oldnode, repo.branchtags()[curbranch])
+    except KeyError:
+        if curbranch == "default": # no default branch!
+            update(repo, oldnode, repo.lookup("tip"))
+        else:
+            raise util.Abort(_("branch %s not found") % curbranch)
 
 def update(repo, parents, node):
     marks = repo._bookmarks
@@ -162,6 +165,28 @@ def pushbookmark(repo, key, old, new):
         return True
     finally:
         w.release()
+
+def updatefromremote(ui, repo, remote):
+    ui.debug("checking for updated bookmarks\n")
+    rb = remote.listkeys('bookmarks')
+    changed = False
+    for k in rb.keys():
+        if k in repo._bookmarks:
+            nr, nl = rb[k], repo._bookmarks[k]
+            if nr in repo:
+                cr = repo[nr]
+                cl = repo[nl]
+                if cl.rev() >= cr.rev():
+                    continue
+                if cr in cl.descendants():
+                    repo._bookmarks[k] = cr.node()
+                    changed = True
+                    ui.status(_("updating bookmark %s\n") % k)
+                else:
+                    ui.warn(_("not updating divergent"
+                                   " bookmark %s\n") % k)
+    if changed:
+        write(repo)
 
 def diff(ui, repo, remote):
     ui.status(_("searching for changed bookmarks\n"))

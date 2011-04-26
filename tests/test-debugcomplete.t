@@ -67,6 +67,7 @@ Show debug commands if there are no other candidates
   $ hg debugcomplete debug
   debugancestor
   debugbuilddag
+  debugbundle
   debugcheckstate
   debugcommands
   debugcomplete
@@ -75,10 +76,12 @@ Show debug commands if there are no other candidates
   debugdata
   debugdate
   debugfsinfo
+  debuggetbundle
   debugignore
   debugindex
   debugindexdot
   debuginstall
+  debugknown
   debugpushkey
   debugrebuildstate
   debugrename
@@ -87,6 +90,7 @@ Show debug commands if there are no other candidates
   debugstate
   debugsub
   debugwalk
+  debugwireargs
 
 Do not show the alias of a debug command if there are other candidates
 (this should hide rawcommit)
@@ -199,7 +203,7 @@ Show all commands + options
   addremove: similarity, include, exclude, dry-run
   archive: no-decode, prefix, rev, type, subrepos, include, exclude
   backout: merge, parent, tool, rev, include, exclude, message, logfile, date, user
-  bisect: reset, good, bad, skip, command, noupdate
+  bisect: reset, good, bad, skip, extend, command, noupdate
   bookmarks: force, rev, delete, rename
   branch: force, clean
   branches: active, closed
@@ -208,6 +212,7 @@ Show all commands + options
   copy: after, force, include, exclude, dry-run
   debugancestor: 
   debugbuilddag: mergeable-file, appended-file, overwritten-file, new-file
+  debugbundle: all
   debugcheckstate: 
   debugcommands: 
   debugcomplete: options
@@ -215,19 +220,22 @@ Show all commands + options
   debugdata: 
   debugdate: extended
   debugfsinfo: 
+  debuggetbundle: head, common, type
   debugignore: 
   debugindex: format
   debugindexdot: 
   debuginstall: 
+  debugknown: 
   debugpushkey: 
   debugrebuildstate: rev
   debugrename: rev
   debugrevspec: 
   debugsetparents: 
-  debugstate: nodates
+  debugstate: nodates, datesort
   debugsub: rev
   debugwalk: include, exclude
-  grep: print0, all, follow, ignore-case, files-with-matches, line-number, rev, user, date, include, exclude
+  debugwireargs: three, four, ssh, remotecmd, insecure
+  grep: print0, all, text, follow, ignore-case, files-with-matches, line-number, rev, user, date, include, exclude
   heads: rev, topo, active, closed, style, template
   help: 
   identify: rev, num, id, branch, tags, bookmarks
