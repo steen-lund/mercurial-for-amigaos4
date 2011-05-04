@@ -53,16 +53,40 @@ import sys
 import tempfile
 import time
 import re
+import threading
+
+processlock = threading.Lock()
 
 closefds = os.name == 'posix'
-def Popen4(cmd, bufsize=-1):
-    p = subprocess.Popen(cmd, shell=True, bufsize=bufsize,
+def Popen4(cmd, wd, timeout):
+    processlock.acquire()
+    orig = os.getcwd()
+    os.chdir(wd)
+    p = subprocess.Popen(cmd, shell=True, bufsize=-1,
                          close_fds=closefds,
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT)
+    os.chdir(orig)
+    processlock.release()
+
     p.fromchild = p.stdout
     p.tochild = p.stdin
     p.childerr = p.stderr
+
+    if timeout:
+        p.timeout = False
+        def t():
+            start = time.time()
+            while time.time() - start < timeout and p.returncode is None:
+                time.sleep(1)
+            p.timeout = True
+            if p.returncode is None:
+                try:
+                    p.terminate()
+                except OSError:
+                    pass
+        threading.Thread(target=t).start()
+
     return p
 
 # reserved exit code to skip test (used by hghave)
@@ -141,6 +165,8 @@ def parseargs():
              "temporary installation")
     parser.add_option("-3", "--py3k-warnings", action="store_true",
         help="enable Py3k warnings on Python 2.6+")
+    parser.add_option('--extra-config-opt', action="append",
+                      help='set the given config opt in the test hgrc')
 
     for option, default in defaults.items():
         defaults[option] = int(os.environ.get(*default))
@@ -187,12 +213,14 @@ def parseargs():
         else:
             pid = None
         def vlog(*msg):
+            iolock.acquire()
             if pid:
                 print pid,
             for m in msg:
                 print m,
             print
             sys.stdout.flush()
+            iolock.release()
     else:
         vlog = lambda *msg: None
 
@@ -227,8 +255,8 @@ def parseargs():
                 continue
 
             for line in f.readlines():
-                line = line.strip()
-                if line and not line.startswith('#'):
+                line = line.split('#', 1)[0].strip()
+                if line:
                     blacklist[line] = filename
 
             f.close()
@@ -277,6 +305,7 @@ def parsehghaveoutput(lines):
     return missing, failed
 
 def showdiff(expected, output, ref, err):
+    print
     for line in difflib.unified_diff(expected, output, ref, err):
         sys.stdout.write(line)
 
@@ -439,22 +468,16 @@ def outputcoverage(options):
             os.mkdir(adir)
         covrun('-i', '-a', '"--directory=%s"' % adir, '"--omit=%s"' % omit)
 
-class Timeout(Exception):
-    pass
-
-def alarmed(signum, frame):
-    raise Timeout
-
-def pytest(test, options, replacements):
+def pytest(test, wd, options, replacements):
     py3kswitch = options.py3k_warnings and ' -3' or ''
     cmd = '%s%s "%s"' % (PYTHON, py3kswitch, test)
     vlog("# Running", cmd)
-    return run(cmd, options, replacements)
+    return run(cmd, wd, options, replacements)
 
-def shtest(test, options, replacements):
+def shtest(test, wd, options, replacements):
     cmd = '"%s"' % test
     vlog("# Running", cmd)
-    return run(cmd, options, replacements)
+    return run(cmd, wd, options, replacements)
 
 needescape = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\xff]').search
 escapesub = re.compile(r'[\x00-\x08\x0b-\x1f\\\x7f-\xff]').sub
@@ -465,7 +488,7 @@ def escapef(m):
 def stringescape(s):
     return escapesub(escapef, s)
 
-def tsttest(test, options, replacements):
+def tsttest(test, wd, options, replacements):
     t = open(test)
     out = []
     script = []
@@ -506,7 +529,7 @@ def tsttest(test, options, replacements):
 
         cmd = '/bin/sh "%s"' % name
         vlog("# Running", cmd)
-        exitcode, output = run(cmd, options, replacements)
+        exitcode, output = run(cmd, wd, options, replacements)
         # do not merge output if skipped, return hghave message instead
         # similarly, with --debug, output is None
         if exitcode == SKIPPED_STATUS or output is None:
@@ -585,7 +608,7 @@ def tsttest(test, options, replacements):
     return exitcode, postout
 
 wifexited = getattr(os, "WIFEXITED", lambda x: False)
-def run(cmd, options, replacements):
+def run(cmd, wd, options, replacements):
     """Run command in a sub-process, capturing the output (stdout and stderr).
     Return a tuple (exitcode, output).  output is None in debug mode."""
     # TODO: Use subprocess.Popen if we're running on Python 2.4
@@ -602,54 +625,120 @@ def run(cmd, options, replacements):
         if ret is None:
             ret = 0
     else:
-        proc = Popen4(cmd)
+        proc = Popen4(cmd, wd, options.timeout)
         def cleanup():
-            os.kill(proc.pid, signal.SIGTERM)
+            try:
+                proc.terminate()
+            except OSError:
+                pass
             ret = proc.wait()
             if ret == 0:
                 ret = signal.SIGTERM << 8
             killdaemons()
             return ret
 
+        output = ''
+        proc.tochild.close()
+
         try:
-            output = ''
-            proc.tochild.close()
             output = proc.fromchild.read()
-            ret = proc.wait()
-            if wifexited(ret):
-                ret = os.WEXITSTATUS(ret)
-        except Timeout:
-            vlog('# Process %d timed out - killing it' % proc.pid)
-            ret = cleanup()
-            output += ("\n### Abort: timeout after %d seconds.\n"
-                       % options.timeout)
         except KeyboardInterrupt:
             vlog('# Handling keyboard interrupt')
             cleanup()
             raise
 
+        ret = proc.wait()
+        if wifexited(ret):
+            ret = os.WEXITSTATUS(ret)
+
+        if proc.timeout:
+            ret = 'timeout'
+
+        if ret:
+            killdaemons()
+
     for s, r in replacements:
         output = re.sub(s, r, output)
     return ret, splitnewlines(output)
 
-def runone(options, test, skips, fails):
+def runone(options, test):
     '''tristate output:
     None -> skipped
     True -> passed
     False -> failed'''
 
+    global results, resultslock, iolock
+
+    testpath = os.path.join(TESTDIR, test)
+
+    def result(l, e):
+        resultslock.acquire()
+        results[l].append(e)
+        resultslock.release()
+
     def skip(msg):
         if not options.verbose:
-            skips.append((test, msg))
+            result('s', (test, msg))
         else:
+            iolock.acquire()
             print "\nSkipping %s: %s" % (testpath, msg)
+            iolock.release()
         return None
 
-    def fail(msg):
-        fails.append((test, msg))
+    def fail(msg, ret):
         if not options.nodiff:
+            iolock.acquire()
             print "\nERROR: %s %s" % (testpath, msg)
+            iolock.release()
+        if (not ret and options.interactive
+            and os.path.exists(testpath + ".err")):
+            iolock.acquire()
+            print "Accept this change? [n] ",
+            answer = sys.stdin.readline().strip()
+            iolock.release()
+            if answer.lower() in "y yes".split():
+                if test.endswith(".t"):
+                    rename(testpath + ".err", testpath)
+                else:
+                    rename(testpath + ".err", testpath + ".out")
+                return
+        result('f', (test, msg))
+
+    def success():
+        result('p', test)
+
+    def ignore(msg):
+        result('i', (test, msg))
+
+    if (test.startswith("test-") and '~' not in test and
+        ('.' not in test or test.endswith('.py') or
+         test.endswith('.bat') or test.endswith('.t'))):
+        if not os.path.exists(test):
+            skip("doesn't exist")
+            return None
+    else:
+        return None # not a supported test, don't record
+
+    if options.blacklist:
+        filename = options.blacklist.get(test)
+        if filename is not None:
+            skip("blacklisted")
+            return None
+
+    if options.retest and not os.path.exists(test + ".err"):
+        ignore("not retesting")
         return None
+
+    if options.keywords:
+        fp = open(test)
+        t = fp.read().lower() + test.lower()
+        fp.close()
+        for k in options.keywords.lower().split():
+            if k in t:
+                break
+            else:
+                ignore("doesn't match keyword")
+                return None
 
     vlog("# Test", test)
 
@@ -667,9 +756,14 @@ def runone(options, test, skips, fails):
         hgrc.write('[inotify]\n')
         hgrc.write('pidfile=%s\n' % DAEMON_PIDS)
         hgrc.write('appendpid=True\n')
+    if options.extra_config_opt:
+        for opt in options.extra_config_opt:
+            section, key = opt.split('.', 1)
+            assert '=' in key, ('extra config opt %s must '
+                                'have an = for assignment' % opt)
+            hgrc.write('[%s]\n%s\n' % (section, key))
     hgrc.close()
 
-    testpath = os.path.join(TESTDIR, test)
     ref = os.path.join(TESTDIR, test+".out")
     err = os.path.join(TESTDIR, test+".err")
     if os.path.exists(err):
@@ -694,23 +788,17 @@ def runone(options, test, skips, fails):
         runner = shtest
 
     # Make a tmp subdirectory to work in
-    testtmp = os.environ["TESTTMP"] = os.path.join(HGTMP, test)
+    testtmp = os.environ["TESTTMP"] = os.environ["HOME"] = \
+        os.path.join(HGTMP, test)
+
     os.mkdir(testtmp)
-    os.chdir(testtmp)
-
-    if options.timeout > 0:
-        signal.alarm(options.timeout)
-
-    ret, out = runner(testpath, options, [
+    ret, out = runner(testpath, testtmp, options, [
         (re.escape(testtmp), '$TESTTMP'),
         (r':%s\b' % options.port, ':$HGPORT'),
         (r':%s\b' % (options.port + 1), ':$HGPORT1'),
         (r':%s\b' % (options.port + 2), ':$HGPORT2'),
         ])
     vlog("# Ret was:", ret)
-
-    if options.timeout > 0:
-        signal.alarm(0)
 
     mark = '.'
 
@@ -744,33 +832,41 @@ def runone(options, test, skips, fails):
         if not missing:
             missing = ['irrelevant']
         if failed:
-            fail("hghave failed checking for %s" % failed[-1])
+            fail("hghave failed checking for %s" % failed[-1], ret)
             skipped = False
         else:
             skip(missing[-1])
+    elif ret == 'timeout':
+        mark = 't'
+        fail("timed out", ret)
     elif out != refout:
         mark = '!'
-        if ret:
-            fail("output changed and returned error code %d" % ret)
-        else:
-            fail("output changed")
         if not options.nodiff:
+            iolock.acquire()
             if options.view:
                 os.system("%s %s %s" % (options.view, ref, err))
             else:
                 showdiff(refout, out, ref, err)
+            iolock.release()
+        if ret:
+            fail("output changed and returned error code %d" % ret, ret)
+        else:
+            fail("output changed", ret)
         ret = 1
     elif ret:
         mark = '!'
-        fail("returned error code %d" % ret)
+        fail("returned error code %d" % ret, ret)
+    else:
+        success()
 
     if not options.verbose:
+        iolock.acquire()
         sys.stdout.write(mark)
         sys.stdout.flush()
+        iolock.release()
 
     killdaemons()
 
-    os.chdir(TESTDIR)
     if not options.keep_tmpdir:
         shutil.rmtree(testtmp, True)
     if skipped:
@@ -882,6 +978,16 @@ def runchildren(options, tests):
         outputcoverage(options)
     sys.exit(failures != 0)
 
+results = dict(p=[], f=[], s=[], i=[])
+resultslock = threading.Lock()
+iolock = threading.Lock()
+
+def runqueue(options, tests, results):
+    for test in tests:
+        ret = runone(options, test)
+        if options.first and ret is not None and not ret:
+            break
+
 def runtests(options, tests):
     global DAEMON_PIDS, HGRCPATH
     DAEMON_PIDS = os.environ["DAEMON_PIDS"] = os.path.join(HGTMP, 'daemon.pids')
@@ -891,19 +997,6 @@ def runtests(options, tests):
         if INST:
             installhg(options)
             _checkhglib("Testing")
-
-        if options.timeout > 0:
-            try:
-                signal.signal(signal.SIGALRM, alarmed)
-                vlog('# Running each test with %d second timeout' %
-                     options.timeout)
-            except AttributeError:
-                print 'WARNING: cannot run tests with timeouts'
-                options.timeout = 0
-
-        tested = 0
-        failed = 0
-        skipped = 0
 
         if options.restart:
             orig = list(tests)
@@ -915,69 +1008,30 @@ def runtests(options, tests):
                 print "running all tests"
                 tests = orig
 
-        skips = []
-        fails = []
+        runqueue(options, tests, results)
 
-        for test in tests:
-            if options.blacklist:
-                filename = options.blacklist.get(test)
-                if filename is not None:
-                    skips.append((test, "blacklisted (%s)" % filename))
-                    skipped += 1
-                    continue
-
-            if options.retest and not os.path.exists(test + ".err"):
-                skipped += 1
-                continue
-
-            if options.keywords:
-                fp = open(test)
-                t = fp.read().lower() + test.lower()
-                fp.close()
-                for k in options.keywords.lower().split():
-                    if k in t:
-                        break
-                else:
-                    skipped += 1
-                    continue
-
-            ret = runone(options, test, skips, fails)
-            if ret is None:
-                skipped += 1
-            elif not ret:
-                if options.interactive:
-                    print "Accept this change? [n] ",
-                    answer = sys.stdin.readline().strip()
-                    if answer.lower() in "y yes".split():
-                        if test.endswith(".t"):
-                            rename(test + ".err", test)
-                        else:
-                            rename(test + ".err", test + ".out")
-                        tested += 1
-                        fails.pop()
-                        continue
-                failed += 1
-                if options.first:
-                    break
-            tested += 1
+        failed = len(results['f'])
+        tested = len(results['p']) + failed
+        skipped = len(results['s'])
+        ignored = len(results['i'])
 
         if options.child:
             fp = os.fdopen(options.child, 'w')
             fp.write('%d\n%d\n%d\n' % (tested, skipped, failed))
-            for s in skips:
+            for s in results['s']:
                 fp.write("%s %s\n" % s)
-            for s in fails:
+            for s in results['f']:
                 fp.write("%s %s\n" % s)
             fp.close()
         else:
             print
-            for s in skips:
+            for s in results['s']:
                 print "Skipped %s: %s" % s
-            for s in fails:
+            for s in results['f']:
                 print "Failed %s: %s" % s
             _checkhglib("Tested")
             print "# Ran %d tests, %d skipped, %d failed." % (
-                tested, skipped, failed)
+                tested, skipped + ignored, failed)
 
         if options.anycoverage:
             outputcoverage(options)
@@ -999,22 +1053,7 @@ def main():
         args = os.listdir(".")
     args.sort()
 
-    tests = []
-    skipped = []
-    for test in args:
-        if (test.startswith("test-") and '~' not in test and
-            ('.' not in test or test.endswith('.py') or
-             test.endswith('.bat') or test.endswith('.t'))):
-            if not os.path.exists(test):
-                skipped.append(test)
-            else:
-                tests.append(test)
-    if not tests:
-        for test in skipped:
-            print 'Skipped %s: does not exist' % test
-        print "# Ran 0 tests, %d skipped, 0 failed." % len(skipped)
-        return
-    tests = tests + skipped
+    tests = args
 
     # Reset some environment variables to well-known values so that
     # the tests produce repeatable output.

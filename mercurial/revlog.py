@@ -14,7 +14,7 @@ and O(changes) merge between branches.
 # import stuff from node for others to import from revlog
 from node import bin, hex, nullid, nullrev, short #@UnusedImport
 from i18n import _
-import changegroup, ancestor, mdiff, parsers, error, util
+import ancestor, mdiff, parsers, error, util
 import struct, zlib, errno
 
 _pack = struct.pack
@@ -288,7 +288,7 @@ class revlog(object):
 
     @util.propertycache
     def nodemap(self):
-        n = self.rev(self.node(0))
+        self.rev(self.node(0))
         return self._nodecache
 
     def rev(self, node):
@@ -399,11 +399,12 @@ class revlog(object):
                     yield i
                     break
 
-    def findmissing(self, common=None, heads=None):
-        """Return the ancestors of heads that are not ancestors of common.
+    def findcommonmissing(self, common=None, heads=None):
+        """Return a tuple of the ancestors of common and the ancestors of heads
+        that are not ancestors of common.
 
-        More specifically, return a list of nodes N such that every N
-        satisfies the following constraints:
+        More specifically, the second element is a list of nodes N such that
+        every N satisfies the following constraints:
 
           1. N is an ancestor of some node in 'heads'
           2. N is not an ancestor of any node in 'common'
@@ -441,7 +442,25 @@ class revlog(object):
                         visit.append(p)
         missing = list(missing)
         missing.sort()
-        return [self.node(r) for r in missing]
+        return has, [self.node(r) for r in missing]
+
+    def findmissing(self, common=None, heads=None):
+        """Return the ancestors of heads that are not ancestors of common.
+
+        More specifically, return a list of nodes N such that every N
+        satisfies the following constraints:
+
+          1. N is an ancestor of some node in 'heads'
+          2. N is not an ancestor of any node in 'common'
+
+        The list is sorted by revision number, meaning it is
+        topologically sorted.
+
+        'heads' and 'common' are both lists of node IDs.  If heads is
+        not supplied, uses all of the revlog's heads.  If common is not
+        supplied, uses nullid."""
+        _common, missing = self.findcommonmissing(common, heads)
+        return missing
 
     def nodesbetween(self, roots=None, heads=None):
         """Return a topological path from 'roots' to 'heads'.
@@ -598,6 +617,17 @@ class revlog(object):
         assert heads
         return (orderedout, roots, heads)
 
+    def headrevs(self):
+        count = len(self)
+        if not count:
+            return [nullrev]
+        ishead = [1] * (count + 1)
+        index = self.index
+        for r in xrange(count):
+            e = index[r]
+            ishead[e[5]] = ishead[e[6]] = 0
+        return [r for r in xrange(count) if ishead[r]]
+
     def heads(self, start=None, stop=None):
         """return the list of all nodes that have no children
 
@@ -607,15 +637,9 @@ class revlog(object):
         as if they had no children
         """
         if start is None and stop is None:
-            count = len(self)
-            if not count:
+            if not len(self):
                 return [nullid]
-            ishead = [1] * (count + 1)
-            index = self.index
-            for r in xrange(count):
-                e = index[r]
-                ishead[e[5]] = ishead[e[6]] = 0
-            return [self.node(r) for r in xrange(count) if ishead[r]]
+            return [self.node(r) for r in self.headrevs()]
 
         if start is None:
             start = nullid
@@ -803,6 +827,9 @@ class revlog(object):
     def _chunk(self, rev):
         return decompress(self._chunkraw(rev, rev))
 
+    def _chunkbase(self, rev):
+        return self._chunk(rev)
+
     def _chunkclear(self):
         self._chunkcache = (0, '')
 
@@ -865,7 +892,7 @@ class revlog(object):
 
         self._chunkraw(base, rev)
         if text is None:
-            text = self._chunk(base)
+            text = self._chunkbase(base)
 
         bins = [self._chunk(r) for r in chain]
         text = mdiff.patches(text, bins)
@@ -1039,7 +1066,7 @@ class revlog(object):
             self._cache = (node, curr, text)
         return node
 
-    def group(self, nodelist, lookup, infocollect=None, fullrev=False):
+    def group(self, nodelist, bundler):
         """Calculate a delta group, yielding a sequence of changegroup chunks
         (strings).
 
@@ -1049,45 +1076,26 @@ class revlog(object):
         guaranteed to have this parent as it has all history before
         these changesets. In the case firstparent is nullrev the
         changegroup starts with a full revision.
-        fullrev forces the insertion of the full revision, necessary
-        in the case of shallow clones where the first parent might
-        not exist at the reciever.
         """
 
-        revs = [self.rev(n) for n in nodelist]
+        revs = sorted([self.rev(n) for n in nodelist])
 
         # if we don't have any revisions touched by these changesets, bail
         if not revs:
-            yield changegroup.closechunk()
+            yield bundler.close()
             return
 
         # add the parent of the first rev
         p = self.parentrevs(revs[0])[0]
         revs.insert(0, p)
-        if p == nullrev:
-            fullrev = True
 
         # build deltas
-        for d in xrange(len(revs) - 1):
-            a, b = revs[d], revs[d + 1]
-            nb = self.node(b)
+        for r in xrange(len(revs) - 1):
+            prev, curr = revs[r], revs[r + 1]
+            for c in bundler.revchunk(self, curr, prev):
+                yield c
 
-            if infocollect is not None:
-                infocollect(nb)
-
-            p = self.parents(nb)
-            meta = nb + p[0] + p[1] + lookup(nb)
-            if fullrev:
-                d = self.revision(nb)
-                meta += mdiff.trivialdiffheader(len(d))
-                fullrev = False
-            else:
-                d = self.revdiff(a, b)
-            yield changegroup.chunkheader(len(meta) + len(d))
-            yield meta
-            yield d
-
-        yield changegroup.closechunk()
+        yield bundler.close()
 
     def addgroup(self, bundle, linkmapper, transaction):
         """
@@ -1119,14 +1127,15 @@ class revlog(object):
             # loop through our set of deltas
             chain = None
             while 1:
-                chunkdata = bundle.parsechunk()
+                chunkdata = bundle.deltachunk(chain)
                 if not chunkdata:
                     break
                 node = chunkdata['node']
                 p1 = chunkdata['p1']
                 p2 = chunkdata['p2']
                 cs = chunkdata['cs']
-                delta = chunkdata['data']
+                deltabase = chunkdata['deltabase']
+                delta = chunkdata['delta']
 
                 link = linkmapper(cs)
                 if (node in self.nodemap and
@@ -1156,15 +1165,13 @@ class revlog(object):
                             raise LookupError(p, self.indexfile,
                                               _('unknown parent'))
 
-                if not chain:
-                    # retrieve the parent revision of the delta chain
-                    chain = p1
-                    if not chain in self.nodemap:
-                        raise LookupError(chain, self.indexfile, _('unknown base'))
+                if deltabase not in self.nodemap:
+                    raise LookupError(deltabase, self.indexfile,
+                                      _('unknown delta base'))
 
-                chainrev = self.rev(chain)
+                baserev = self.rev(deltabase)
                 chain = self._addrevision(node, None, transaction, link,
-                                          p1, p2, (chainrev, delta), ifh, dfh)
+                                          p1, p2, (baserev, delta), ifh, dfh)
                 if not dfh and not self._inline:
                     # addrevision switched from inline to conventional
                     # reopen the index

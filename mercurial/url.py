@@ -7,72 +7,10 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-import urllib, urllib2, urlparse, httplib, os, re, socket, cStringIO
+import urllib, urllib2, httplib, os, socket, cStringIO
 import __builtin__
 from i18n import _
 import keepalive, util
-
-def _urlunparse(scheme, netloc, path, params, query, fragment, url):
-    '''Handle cases where urlunparse(urlparse(x://)) doesn't preserve the "//"'''
-    result = urlparse.urlunparse((scheme, netloc, path, params, query, fragment))
-    if (scheme and
-        result.startswith(scheme + ':') and
-        not result.startswith(scheme + '://') and
-        url.startswith(scheme + '://')
-       ):
-        result = scheme + '://' + result[len(scheme + ':'):]
-    return result
-
-def hidepassword(url):
-    '''hide user credential in a url string'''
-    if url.startswith("ssh://"):
-        # urllib doesn't know about ssh urls
-        return re.sub(r'(ssh://[^/]+):[^/]+(@.*)', r'\1:***\2', url)
-    scheme, netloc, path, params, query, fragment = urlparse.urlparse(url)
-    netloc = re.sub('([^:]*):([^@]*)@(.*)', r'\1:***@\3', netloc)
-    return _urlunparse(scheme, netloc, path, params, query, fragment, url)
-
-def removeauth(url):
-    '''remove all authentication information from a url string'''
-    scheme, netloc, path, params, query, fragment = urlparse.urlparse(url)
-    netloc = netloc[netloc.find('@')+1:]
-    return _urlunparse(scheme, netloc, path, params, query, fragment, url)
-
-def netlocsplit(netloc):
-    '''split [user[:passwd]@]host[:port] into 4-tuple.'''
-
-    a = netloc.find('@')
-    if a == -1:
-        user, passwd = None, None
-    else:
-        userpass, netloc = netloc[:a], netloc[a + 1:]
-        c = userpass.find(':')
-        if c == -1:
-            user, passwd = urllib.unquote(userpass), None
-        else:
-            user = urllib.unquote(userpass[:c])
-            passwd = urllib.unquote(userpass[c + 1:])
-    c = netloc.find(':')
-    if c == -1:
-        host, port = netloc, None
-    else:
-        host, port = netloc[:c], netloc[c + 1:]
-    return host, port, user, passwd
-
-def netlocunsplit(host, port, user=None, passwd=None):
-    '''turn host, port, user, passwd into [user[:passwd]@]host[:port].'''
-    if port:
-        hostport = host + ':' + port
-    else:
-        hostport = host
-    if user:
-        quote = lambda s: urllib.quote(s, safe='')
-        if passwd:
-            userpass = quote(user) + ':' + quote(passwd)
-        else:
-            userpass = quote(user)
-        return userpass + '@' + hostport
-    return hostport
 
 def readauthforuri(ui, uri):
     # Read configuration
@@ -105,44 +43,6 @@ def readauthforuri(ui, uri):
             bestlen = len(prefix)
             bestauth = group, auth
     return bestauth
-
-_safe = ('abcdefghijklmnopqrstuvwxyz'
-         'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-         '0123456789' '_.-/')
-_safeset = None
-_hex = None
-def quotepath(path):
-    '''quote the path part of a URL
-
-    This is similar to urllib.quote, but it also tries to avoid
-    quoting things twice (inspired by wget):
-
-    >>> quotepath('abc def')
-    'abc%20def'
-    >>> quotepath('abc%20def')
-    'abc%20def'
-    >>> quotepath('abc%20 def')
-    'abc%20%20def'
-    >>> quotepath('abc def%20')
-    'abc%20def%20'
-    >>> quotepath('abc def%2')
-    'abc%20def%252'
-    >>> quotepath('abc def%')
-    'abc%20def%25'
-    '''
-    global _safeset, _hex
-    if _safeset is None:
-        _safeset = set(_safe)
-        _hex = set('abcdefABCDEF0123456789')
-    l = list(path)
-    for i in xrange(len(l)):
-        c = l[i]
-        if (c == '%' and i + 2 < len(l) and
-            l[i + 1] in _hex and l[i + 2] in _hex):
-            pass
-        elif c not in _safeset:
-            l[i] = '%%%02X' % ord(c)
-    return ''.join(l)
 
 class passwordmgr(urllib2.HTTPPasswordMgrWithDefaultRealm):
     def __init__(self, ui):
@@ -195,14 +95,10 @@ class proxyhandler(urllib2.ProxyHandler):
             if not (proxyurl.startswith('http:') or
                     proxyurl.startswith('https:')):
                 proxyurl = 'http://' + proxyurl + '/'
-            snpqf = urlparse.urlsplit(proxyurl)
-            proxyscheme, proxynetloc, proxypath, proxyquery, proxyfrag = snpqf
-            hpup = netlocsplit(proxynetloc)
-
-            proxyhost, proxyport, proxyuser, proxypasswd = hpup
-            if not proxyuser:
-                proxyuser = ui.config("http_proxy", "user")
-                proxypasswd = ui.config("http_proxy", "passwd")
+            proxy = util.url(proxyurl)
+            if not proxy.user:
+                proxy.user = ui.config("http_proxy", "user")
+                proxy.passwd = ui.config("http_proxy", "passwd")
 
             # see if we should use a proxy for this url
             no_list = ["localhost", "127.0.0.1"]
@@ -217,13 +113,10 @@ class proxyhandler(urllib2.ProxyHandler):
             else:
                 self.no_list = no_list
 
-            proxyurl = urlparse.urlunsplit((
-                proxyscheme, netlocunsplit(proxyhost, proxyport,
-                                                proxyuser, proxypasswd or ''),
-                proxypath, proxyquery, proxyfrag))
+            proxyurl = str(proxy)
             proxies = {'http': proxyurl, 'https': proxyurl}
             ui.debug('proxying through http://%s:%s\n' %
-                      (proxyhost, proxyport))
+                      (proxy.host, proxy.port))
         else:
             proxies = {}
 
@@ -390,13 +283,9 @@ def _generic_start_transaction(handler, h, req):
         new_tunnel = False
 
     if new_tunnel or tunnel_host == req.get_full_url(): # has proxy
-        urlparts = urlparse.urlparse(tunnel_host)
-        if new_tunnel or urlparts[0] == 'https': # only use CONNECT for HTTPS
-            realhostport = urlparts[1]
-            if realhostport[-1] == ']' or ':' not in realhostport:
-                realhostport += ':443'
-
-            h.realhostport = realhostport
+        u = util.url(tunnel_host)
+        if new_tunnel or u.scheme == 'https': # only use CONNECT for HTTPS
+            h.realhostport = ':'.join([u.host, (u.port or '443')])
             h.headers = req.headers.copy()
             h.headers.update(handler.parent.addheaders)
             return
@@ -556,7 +445,7 @@ if has_https:
 
             host = self.host
             if self.realhostport: # use CONNECT proxy
-                something = _generic_proxytunnel(self)
+                _generic_proxytunnel(self)
                 host = self.realhostport.rsplit(':', 1)[0]
 
             cacerts = self.ui.config('web', 'cacerts')
@@ -694,31 +583,6 @@ class httpbasicauthhandler(urllib2.HTTPBasicAuthHandler):
         return urllib2.HTTPBasicAuthHandler.http_error_auth_reqed(
                         self, auth_header, host, req, headers)
 
-def getauthinfo(path):
-    scheme, netloc, urlpath, query, frag = urlparse.urlsplit(path)
-    if not urlpath:
-        urlpath = '/'
-    if scheme != 'file':
-        # XXX: why are we quoting the path again with some smart
-        # heuristic here? Anyway, it cannot be done with file://
-        # urls since path encoding is os/fs dependent (see
-        # urllib.pathname2url() for details).
-        urlpath = quotepath(urlpath)
-    host, port, user, passwd = netlocsplit(netloc)
-
-    # urllib cannot handle URLs with embedded user or passwd
-    url = urlparse.urlunsplit((scheme, netlocunsplit(host, port),
-                              urlpath, query, frag))
-    if user:
-        netloc = host
-        if port:
-            netloc += ':' + port
-        # Python < 2.4.3 uses only the netloc to search for a password
-        authinfo = (None, (url, netloc), user, passwd or '')
-    else:
-        authinfo = None
-    return url, authinfo
-
 handlerfuncs = []
 
 def opener(ui, authinfo=None):
@@ -749,17 +613,13 @@ def opener(ui, authinfo=None):
     opener.addheaders.append(('Accept', 'application/mercurial-0.1'))
     return opener
 
-scheme_re = re.compile(r'^([a-zA-Z0-9+-.]+)://')
-
-def open(ui, url, data=None):
-    scheme = None
-    m = scheme_re.search(url)
-    if m:
-        scheme = m.group(1).lower()
-    if not scheme:
-        path = util.normpath(os.path.abspath(url))
-        url = 'file://' + urllib.pathname2url(path)
-        authinfo = None
+def open(ui, url_, data=None):
+    u = util.url(url_)
+    if u.scheme:
+        u.scheme = u.scheme.lower()
+        url_, authinfo = u.authinfo()
     else:
-        url, authinfo = getauthinfo(url)
-    return opener(ui, authinfo).open(url, data)
+        path = util.normpath(os.path.abspath(url_))
+        url_ = 'file://' + urllib.pathname2url(path)
+        authinfo = None
+    return opener(ui, authinfo).open(url_, data)

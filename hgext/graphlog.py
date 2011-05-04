@@ -12,7 +12,6 @@ commands. When this options is given, an ASCII representation of the
 revision graph is also shown.
 '''
 
-import os
 from mercurial.cmdutil import revrange, show_changeset
 from mercurial.commands import templateopts
 from mercurial.i18n import _
@@ -22,7 +21,7 @@ from mercurial import hg, util, graphmod
 
 ASCIIDATA = 'ASC'
 
-def asciiedges(seen, rev, parents):
+def asciiedges(type, char, lines, seen, rev, parents):
     """adds edge info to changelog DAG walk suitable for ascii()"""
     if rev not in seen:
         seen.append(rev)
@@ -37,16 +36,33 @@ def asciiedges(seen, rev, parents):
             newparents.append(parent)
 
     ncols = len(seen)
-    seen[nodeidx:nodeidx + 1] = newparents
-    edges = [(nodeidx, seen.index(p)) for p in knownparents]
+    nextseen = seen[:]
+    nextseen[nodeidx:nodeidx + 1] = newparents
+    edges = [(nodeidx, nextseen.index(p)) for p in knownparents]
+
+    while len(newparents) > 2:
+        # ascii() only knows how to add or remove a single column between two
+        # calls. Nodes with more than two parents break this constraint so we
+        # introduce intermediate expansion lines to grow the active node list
+        # slowly.
+        edges.append((nodeidx, nodeidx))
+        edges.append((nodeidx, nodeidx + 1))
+        nmorecols = 1
+        yield (type, char, lines, (nodeidx, edges, ncols, nmorecols))
+        char = '\\'
+        lines = []
+        nodeidx += 1
+        ncols += 1
+        edges = []
+        del newparents[0]
 
     if len(newparents) > 0:
         edges.append((nodeidx, nodeidx))
     if len(newparents) > 1:
         edges.append((nodeidx, nodeidx + 1))
-
-    nmorecols = len(seen) - ncols
-    return nodeidx, edges, ncols, nmorecols
+    nmorecols = len(nextseen) - ncols
+    seen[:] = nextseen
+    yield (type, char, lines, (nodeidx, edges, ncols, nmorecols))
 
 def fix_long_right_edges(edges):
     for (i, (start, end)) in enumerate(edges):
@@ -215,13 +231,64 @@ def get_revs(repo, rev_opt):
     else:
         return (len(repo) - 1, 0)
 
-def check_unsupported_flags(opts):
-    for op in ["follow", "follow_first", "date", "copies", "keyword", "remove",
-               "only_merges", "user", "branch", "only_branch", "prune",
-               "newest_first", "no_merges", "include", "exclude"]:
+def check_unsupported_flags(pats, opts):
+    for op in ["follow_first", "copies", "newest_first"]:
         if op in opts and opts[op]:
-            raise util.Abort(_("--graph option is incompatible with --%s")
+            raise util.Abort(_("-G/--graph option is incompatible with --%s")
                              % op.replace("_", "-"))
+    if pats and opts.get('follow'):
+        raise util.Abort(_("-G/--graph option is incompatible with --follow "
+                           "with file argument"))
+
+def revset(pats, opts):
+    """Return revset str built of revisions, log options and file patterns.
+    """
+    opt2revset = {
+        'follow': (0, 'follow()'),
+        'no_merges': (0, 'not merge()'),
+        'only_merges': (0, 'merge()'),
+        'removed': (0, 'removes("*")'),
+        'date': (1, 'date($)'),
+        'branch': (2, 'branch($)'),
+        'exclude': (2, 'not file($)'),
+        'include': (2, 'file($)'),
+        'keyword': (2, 'keyword($)'),
+        'only_branch': (2, 'branch($)'),
+        'prune': (2, 'not ($ or ancestors($))'),
+        'user': (2, 'user($)'),
+        }
+    optrevset = []
+    revset = []
+    for op, val in opts.iteritems():
+        if not val:
+            continue
+        if op == 'rev':
+            # Already a revset
+            revset.extend(val)
+        if op not in opt2revset:
+            continue
+        arity, revop = opt2revset[op]
+        revop = revop.replace('$', '%(val)r')
+        if arity == 0:
+            optrevset.append(revop)
+        elif arity == 1:
+            optrevset.append(revop % {'val': val})
+        else:
+            for f in val:
+                optrevset.append(revop % {'val': f})
+
+    for path in pats:
+        optrevset.append('file(%r)' % path)
+
+    if revset or optrevset:
+        if revset:
+            revset = ['(' + ' or '.join(revset) + ')']
+        if optrevset:
+            revset.append('(' + ' and '.join(optrevset) + ')')
+        revset = ' and '.join(revset)
+    else:
+        revset = 'all()'
+    return revset
 
 def generate(ui, dag, displayer, showparents, edgefn):
     seen, state = [], asciistate()
@@ -230,10 +297,12 @@ def generate(ui, dag, displayer, showparents, edgefn):
         displayer.show(ctx)
         lines = displayer.hunk.pop(rev).split('\n')[:-1]
         displayer.flush(rev)
-        ascii(ui, state, type, char, lines, edgefn(seen, rev, parents))
+        edges = edgefn(type, char, lines, seen, rev, parents)
+        for type, char, lines, coldata in edges:
+            ascii(ui, state, type, char, lines, coldata)
     displayer.close()
 
-def graphlog(ui, repo, path=None, **opts):
+def graphlog(ui, repo, *pats, **opts):
     """show revision history alongside an ASCII revision graph
 
     Print a revision history alongside a revision graph drawn with
@@ -243,20 +312,13 @@ def graphlog(ui, repo, path=None, **opts):
     directory.
     """
 
-    check_unsupported_flags(opts)
-    limit = cmdutil.loglimit(opts)
-    start, stop = get_revs(repo, opts["rev"])
-    if start == nullrev:
-        return
+    check_unsupported_flags(pats, opts)
 
-    if path:
-        path = util.canonpath(repo.root, os.getcwd(), path)
-    if path: # could be reset in canonpath
-        revdag = graphmod.filerevs(repo, path, start, stop, limit)
-    else:
-        if limit is not None:
-            stop = max(stop, start - limit + 1)
-        revdag = graphmod.revisions(repo, start, stop)
+    revs = sorted(revrange(repo, [revset(pats, opts)]), reverse=1)
+    limit = cmdutil.loglimit(opts)
+    if limit is not None:
+        revs = revs[:limit]
+    revdag = graphmod.dagwalker(repo, revs)
 
     displayer = show_changeset(ui, repo, opts, buffered=True)
     showparents = [ctx.node() for ctx in repo[None].parents()]
@@ -279,7 +341,7 @@ def goutgoing(ui, repo, dest=None, **opts):
     directory.
     """
 
-    check_unsupported_flags(opts)
+    check_unsupported_flags([], opts)
     o = hg._outgoing(ui, repo, dest, opts)
     if o is None:
         return
@@ -301,7 +363,7 @@ def gincoming(ui, repo, source="default", **opts):
     def subreporecurse():
         return 1
 
-    check_unsupported_flags(opts)
+    check_unsupported_flags([], opts)
     def display(other, chlist, displayer):
         revdag = graphrevs(other, chlist, opts)
         showparents = [ctx.node() for ctx in repo[None].parents()]
@@ -319,11 +381,7 @@ def _wrapcmd(ui, cmd, table, wrapfn):
     '''wrap the command'''
     def graph(orig, *args, **kwargs):
         if kwargs['graph']:
-            try:
-                return wrapfn(*args, **kwargs)
-            except TypeError, e:
-                if len(args) > wrapfn.func_code.co_argcount:
-                    raise util.Abort(_('--graph option allows at most one file'))
+            return wrapfn(*args, **kwargs)
         return orig(*args, **kwargs)
     entry = extensions.wrapcommand(table, cmd, graph)
     entry[1].append(('G', 'graph', None, _("show the revision DAG")))

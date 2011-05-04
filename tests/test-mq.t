@@ -177,7 +177,7 @@ add an untracked file
 
 status --mq with color (issue2096)
 
-  $ hg status --mq --config extensions.color= --color=always
+  $ hg status --mq --config extensions.color= --config color.mode=ansi --color=always
   \x1b[0;32;1mA .hgignore\x1b[0m (esc)
   \x1b[0;32;1mA A\x1b[0m (esc)
   \x1b[0;32;1mA B\x1b[0m (esc)
@@ -1282,7 +1282,7 @@ apply force, should not discard changes with empty patch
   patch empty is empty
   now at: empty
   $ hg diff --config diff.nodates=True
-  diff -r bf5fc3f07a0a hello.txt
+  diff -r d58265112590 hello.txt
   --- a/hello.txt
   +++ b/hello.txt
   @@ -1,1 +1,2 @@
@@ -1296,7 +1296,7 @@ apply force, should not discard changes with empty patch
    hello
   +world
   $ hg log -l1 -p
-  changeset:   1:bf5fc3f07a0a
+  changeset:   1:d58265112590
   tag:         empty
   tag:         qbase
   tag:         qtip

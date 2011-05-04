@@ -219,7 +219,6 @@ test pushkeys and bookmarks
   $ hg book -f -r 0 foo
   $ hg pull -B foo
   pulling from ssh://user@dummy/remote
-  searching for changes
   no changes found
   updating bookmark foo
   importing bookmark foo
@@ -263,10 +262,28 @@ push should succeed even though it has an unexpected response
   summary:     z
   
 
+clone bookmarks
+
+  $ hg -R ../remote bookmark test
+  $ hg -R ../remote bookmarks
+   * test                      2:6c0482d977a3
+  $ hg clone -e "python ../dummyssh" ssh://user@dummy/remote local-bookmarks
+  requesting all changes
+  adding changesets
+  adding manifests
+  adding file changes
+  added 4 changesets with 5 changes to 4 files (+1 heads)
+  updating to branch default
+  3 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg -R local-bookmarks bookmarks
+     test                      2:6c0482d977a3
+
 passwords in ssh urls are not supported
+(we use a glob here because different Python versions give different
+results here)
 
   $ hg push ssh://user:erroneouspwd@dummy/remote
-  pushing to ssh://user:***@dummy/remote
+  pushing to ssh://user:*@dummy/remote (glob)
   abort: password in URL not supported!
   [255]
 
@@ -280,6 +297,7 @@ passwords in ssh urls are not supported
   Got arguments 1:user@dummy 2:hg -R remote serve --stdio
   Got arguments 1:user@dummy 2:hg -R local serve --stdio
   Got arguments 1:user@dummy 2:hg -R $TESTTMP/local serve --stdio
+  Got arguments 1:user@dummy 2:hg -R remote serve --stdio
   Got arguments 1:user@dummy 2:hg -R remote serve --stdio
   Got arguments 1:user@dummy 2:hg -R remote serve --stdio
   Got arguments 1:user@dummy 2:hg -R remote serve --stdio
