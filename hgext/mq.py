@@ -45,7 +45,7 @@ create other, independent patch queues with the :hg:`qqueue` command.
 from mercurial.i18n import _
 from mercurial.node import bin, hex, short, nullid, nullrev
 from mercurial.lock import release
-from mercurial import commands, cmdutil, hg, patch, util
+from mercurial import commands, cmdutil, hg, patch, scmutil, util, revset
 from mercurial import repair, extensions, url, error
 import os, sys, re, errno, shutil
 
@@ -259,7 +259,7 @@ class queue(object):
         except IOError:
             curpath = os.path.join(path, 'patches')
         self.path = patchdir or curpath
-        self.opener = util.opener(self.path)
+        self.opener = scmutil.opener(self.path)
         self.ui = ui
         self.applied_dirty = 0
         self.series_dirty = 0
@@ -291,14 +291,14 @@ class queue(object):
                     elif l.strip():
                         self.ui.warn(_('malformated mq status line: %s\n') % entry)
                     # else we ignore empty lines
-            lines = self.opener(self.status_path).read().splitlines()
+            lines = self.opener.read(self.status_path).splitlines()
             return list(parselines(lines))
         return []
 
     @util.propertycache
     def full_series(self):
         if os.path.exists(self.join(self.series_path)):
-            return self.opener(self.series_path).read().splitlines()
+            return self.opener.read(self.series_path).splitlines()
         return []
 
     @util.propertycache
@@ -412,7 +412,7 @@ class queue(object):
         if self.active_guards is None:
             self.active_guards = []
             try:
-                guards = self.opener(self.guards_path).read().split()
+                guards = self.opener.read(self.guards_path).split()
             except IOError, err:
                 if err.errno != errno.ENOENT:
                     raise
@@ -737,11 +737,29 @@ class queue(object):
                     os.unlink(self.join(p))
 
         if numrevs:
+            qfinished = self.applied[:numrevs]
             del self.applied[:numrevs]
             self.applied_dirty = 1
 
-        for i in sorted([self.find_series(p) for p in patches], reverse=True):
-            del self.full_series[i]
+        unknown = []
+
+        for (i, p) in sorted([(self.find_series(p), p) for p in patches],
+                             reverse=True):
+            if i is not None:
+                del self.full_series[i]
+            else:
+                unknown.append(p)
+
+        if unknown:
+            if numrevs:
+                rev  = dict((entry.name, entry.node) for entry in qfinished)
+                for p in unknown:
+                    msg = _('revision %s refers to unknown patches: %s\n')
+                    self.ui.warn(msg % (short(rev[p]), p))
+            else:
+                msg = _('unknown patches: %s\n')
+                raise util.Abort(''.join(msg % p for p in unknown))
+
         self.parse_series()
         self.series_dirty = 1
 
@@ -836,10 +854,18 @@ class queue(object):
 
     _reserved = ('series', 'status', 'guards', '.', '..')
     def check_reserved_name(self, name):
-        if (name in self._reserved or name.startswith('.hg')
-            or name.startswith('.mq') or '#' in name or ':' in name):
+        if name in self._reserved:
             raise util.Abort(_('"%s" cannot be used as the name of a patch')
                              % name)
+        for prefix in ('.hg', '.mq'):
+            if name.startswith(prefix):
+                raise util.Abort(_('patch name cannot begin with "%s"')
+                                 % prefix)
+        for c in ('#', ':'):
+            if c in name:
+                raise util.Abort(_('"%s" cannot be used in the name of a patch')
+                                 % c)
+
 
     def new(self, repo, patchfn, *pats, **opts):
         """options:
@@ -899,7 +925,7 @@ class queue(object):
                 else:
                     p.write("# HG changeset patch\n")
                     p.write("# Parent "
-                            + hex(repo[None].parents()[0].node()) + "\n")
+                            + hex(repo[None].p1().node()) + "\n")
                     if user:
                         p.write("# User " + user + "\n")
                     if date:
@@ -1054,7 +1080,7 @@ class queue(object):
                 heads += ls
             if not heads:
                 heads = [nullid]
-            if repo.dirstate.parents()[0] not in heads and not exact:
+            if repo.dirstate.p1() not in heads and not exact:
                 self.ui.status(_("(working directory not at a head)\n"))
 
             if not self.series:
@@ -1101,7 +1127,7 @@ class queue(object):
                 self.ui.warn(_('patch series already fully applied\n'))
                 return 1
             if not force:
-                self.check_localchanges(repo)
+                self.check_localchanges(repo, refresh=self.applied)
 
             if exact:
                 if move:
@@ -1148,7 +1174,7 @@ class queue(object):
                     ret = self.apply(repo, s, list, all_files=all_files)
             except:
                 self.ui.warn(_('cleaning up working directory...'))
-                node = repo.dirstate.parents()[0]
+                node = repo.dirstate.p1()
                 hg.revert(repo, node, None)
                 # only remove unknown files that we know we touched or
                 # created while patching
@@ -1899,7 +1925,7 @@ def qimport(ui, repo, *filename, **opts):
     With -g/--git, patches imported with --rev will use the git diff
     format. See the diffs help topic for information on why this is
     important for preserving rename/copy information and permission
-    changes.
+    changes. Use :hg:`qfinish` to remove changesets from mq control.
 
     To import a patch from standard input, pass - as the patch file.
     When importing from standard input, a patch name must be specified
@@ -2537,8 +2563,9 @@ def strip(ui, repo, *revs, **opts):
     """strip changesets and all their descendants from the repository
 
     The strip command removes the specified changesets and all their
-    descendants. If the working directory has uncommitted changes,
-    the operation is aborted unless the --force flag is supplied.
+    descendants. If the working directory has uncommitted changes, the
+    operation is aborted unless the --force flag is supplied, in which
+    case changes will be discarded.
 
     If a parent of the working directory is stripped, then the working
     directory will automatically be updated to the most recent
@@ -2960,7 +2987,7 @@ def reposetup(ui, repo):
             mqtags = [(patch.node, patch.name) for patch in q.applied]
 
             try:
-                r = self.changelog.rev(mqtags[-1][0])
+                self.changelog.rev(mqtags[-1][0])
             except error.RepoLookupError:
                 self.ui.warn(_('mq status file refers to unknown node %s\n')
                              % short(mqtags[-1][0]))
@@ -3068,6 +3095,20 @@ def summary(orig, ui, repo, *args, **kwargs):
     else:
         ui.note(_("mq:     (empty queue)\n"))
     return r
+
+def revsetmq(repo, subset, x):
+    """``mq()``
+    Changesets managed by MQ.
+    """
+    revset.getargs(x, 0, 0, _("mq takes no arguments"))
+    applied = set([repo[r.node].rev() for r in repo.mq.applied])
+    return [r for r in subset if r in applied]
+
+def extsetup(ui):
+    revset.symbols['mq'] = revsetmq
+
+# tell hggettext to extract docstrings from these functions:
+i18nfunctions = [revsetmq]
 
 def uisetup(ui):
     mqopt = [('', 'mq', None, _("operate on patch repository"))]
@@ -3234,8 +3275,8 @@ cmdtable = {
           _('hg qseries [-ms]')),
      "strip":
          (strip,
-         [('f', 'force', None, _('force removal of changesets even if the '
-                                 'working directory has uncommitted changes')),
+         [('f', 'force', None, _('force removal of changesets, discard '
+                                 'uncommitted changes (no backup)')),
           ('b', 'backup', None, _('bundle only changesets with local revision'
                                   ' number greater than REV which are not'
                                   ' descendants of REV (DEPRECATED)')),

@@ -8,7 +8,7 @@
 from node import hex, nullid, nullrev, short
 from i18n import _
 import os, sys, errno, re, glob, tempfile
-import util, templater, patch, error, encoding, templatekw
+import util, scmutil, templater, patch, error, templatekw
 import match as matchmod
 import similar, revset, subrepo
 
@@ -72,7 +72,7 @@ def findrepo(p):
     return p
 
 def bail_if_changed(repo):
-    if repo.dirstate.parents()[1] != nullid:
+    if repo.dirstate.p2() != nullid:
         raise util.Abort(_('outstanding uncommitted merge'))
     modified, added, removed, deleted = repo.status()[:4]
     if modified or added or removed or deleted:
@@ -91,7 +91,7 @@ def logmessage(opts):
             if logfile == '-':
                 message = sys.stdin.read()
             else:
-                message = open(logfile).read()
+                message = util.readfile(logfile)
         except IOError, inst:
             raise util.Abort(_("can't read commit message '%s': %s") %
                              (logfile, inst.strerror))
@@ -122,12 +122,12 @@ def revsingle(repo, revspec, default='.'):
 
 def revpair(repo, revs):
     if not revs:
-        return repo.dirstate.parents()[0], None
+        return repo.dirstate.p1(), None
 
     l = revrange(repo, revs)
 
     if len(l) == 0:
-        return repo.dirstate.parents()[0], None
+        return repo.dirstate.p1(), None
 
     if len(l) == 1:
         return repo.lookup(l[0]), None
@@ -174,7 +174,7 @@ def revrange(repo, revs):
             pass
 
         # fall through to new-style queries if old-style fails
-        m = revset.match(spec)
+        m = revset.match(repo.ui, spec)
         for r in m(repo, range(len(repo))):
             if r not in seen:
                 l.append(r)
@@ -230,7 +230,7 @@ def make_filename(repo, pat, node,
 def make_file(repo, pat, node=None,
               total=None, seqno=None, revwidth=None, mode='wb', pathname=None):
 
-    writable = 'w' in mode or 'a' in mode
+    writable = mode not in ('r', 'rb')
 
     if not pat or pat == '-':
         fp = writable and sys.stdout or sys.stdin
@@ -286,14 +286,14 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
         similarity = float(opts.get('similarity') or 0)
     # we'd use status here, except handling of symlinks and ignore is tricky
     added, unknown, deleted, removed = [], [], [], []
-    audit_path = util.path_auditor(repo.root)
+    audit_path = scmutil.pathauditor(repo.root)
     m = match(repo, pats, opts)
     for abs in repo.walk(m):
         target = repo.wjoin(abs)
         good = True
         try:
             audit_path(abs)
-        except:
+        except (OSError, util.Abort):
             good = False
         rel = m.rel(abs)
         exact = m.exact(abs)
@@ -429,11 +429,13 @@ def copy(ui, repo, pats, opts, rename=False):
     # relsrc: ossep
     # otarget: ossep
     def copyfile(abssrc, relsrc, otarget, exact):
-        abstarget = util.canonpath(repo.root, cwd, otarget)
+        abstarget = scmutil.canonpath(repo.root, cwd, otarget)
         reltarget = repo.pathto(abstarget, cwd)
         target = repo.wjoin(abstarget)
         src = repo.wjoin(abssrc)
         state = repo.dirstate[abstarget]
+
+        scmutil.checkportable(ui, abstarget)
 
         # check for collisions
         prevsrc = targets.get(abstarget)
@@ -495,7 +497,7 @@ def copy(ui, repo, pats, opts, rename=False):
     # return: function that takes hgsep and returns ossep
     def targetpathfn(pat, dest, srcs):
         if os.path.isdir(pat):
-            abspfx = util.canonpath(repo.root, cwd, pat)
+            abspfx = scmutil.canonpath(repo.root, cwd, pat)
             abspfx = util.localpath(abspfx)
             if destdirexists:
                 striplen = len(os.path.split(abspfx)[0])
@@ -521,7 +523,7 @@ def copy(ui, repo, pats, opts, rename=False):
             res = lambda p: os.path.join(dest,
                                          os.path.basename(util.localpath(p)))
         else:
-            abspfx = util.canonpath(repo.root, cwd, pat)
+            abspfx = scmutil.canonpath(repo.root, cwd, pat)
             if len(abspfx) < len(srcs[0][0]):
                 # A directory. Either the target path contains the last
                 # component of the source path or it does not.
@@ -1312,9 +1314,15 @@ def add(ui, repo, match, dryrun, listsubrepos, prefix):
     match.bad = lambda x, y: bad.append(x) or oldbad(x, y)
     names = []
     wctx = repo[None]
+    cca = None
+    abort, warn = scmutil.checkportabilityalert(ui)
+    if abort or warn:
+        cca = scmutil.casecollisionauditor(ui, abort, wctx)
     for f in repo.walk(match):
         exact = match.exact(f)
         if exact or f not in repo.dirstate:
+            if cca:
+                cca(f)
             names.append(f)
             if ui.verbose or not exact:
                 ui.status(_('adding %s\n') % match.rel(join(f)))

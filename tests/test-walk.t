@@ -1,6 +1,5 @@
-  $ mkdir t
+  $ hg init t
   $ cd t
-  $ hg init
   $ mkdir -p beans
   $ for b in kidney navy turtle borlotti black pinto; do
   >     echo $b > beans/$b
@@ -29,6 +28,7 @@
   adding mammals/Procyonidae/coatimundi
   adding mammals/Procyonidae/raccoon
   adding mammals/skunk
+  warning: filename contains ':', which is reserved on Windows: 'glob:glob'
   $ hg commit -m "commit #0"
 
   $ hg debugwalk
@@ -159,7 +159,7 @@
   f  mammals/Procyonidae/raccoon     Procyonidae/raccoon
   f  mammals/skunk                   skunk
   $ hg debugwalk .hg
-  abort: path 'mammals/.hg' is inside repo 'mammals'
+  abort: path 'mammals/.hg' is inside nested repo 'mammals'
   [255]
   $ hg debugwalk ../.hg
   abort: path contains illegal component: .hg
@@ -203,7 +203,7 @@
   abort: path contains illegal component: .hg/data
   [255]
   $ hg debugwalk beans/.hg
-  abort: path 'beans/.hg' is inside repo 'beans'
+  abort: path 'beans/.hg' is inside nested repo 'beans'
   [255]
 
 Test absolute paths:
