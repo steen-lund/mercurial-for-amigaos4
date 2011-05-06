@@ -7,7 +7,7 @@
 
 from node import nullid, nullrev, short, hex
 from i18n import _
-import ancestor, bdiff, error, util, subrepo, patch, encoding
+import ancestor, bdiff, error, util, scmutil, subrepo, patch, encoding
 import os, errno, stat
 
 propertycache = util.propertycache
@@ -402,6 +402,15 @@ class filectx(object):
         return [filectx(self._repo, p, fileid=n, filelog=l)
                 for p, n, l in pl if n != nullid]
 
+    def p1(self):
+        return self.parents()[0]
+
+    def p2(self):
+        p = self.parents()
+        if len(p) == 2:
+            return p[1]
+        return filectx(self._repo, self._path, fileid=-1, filelog=self._filelog)
+
     def children(self):
         # hard for renames
         c = self._filelog.children(self._filenode)
@@ -652,6 +661,12 @@ class workingctx(changectx):
 
         return man
 
+    def __iter__(self):
+        d = self._repo.dirstate
+        for f in d:
+            if d[f] != 'r':
+                yield f
+
     @propertycache
     def _status(self):
         return self._repo.status()[:4]
@@ -792,10 +807,11 @@ class workingctx(changectx):
         try:
             rejected = []
             for f in list:
+                scmutil.checkportable(ui, join(f))
                 p = self._repo.wjoin(f)
                 try:
                     st = os.lstat(p)
-                except:
+                except OSError:
                     ui.warn(_("%s does not exist!\n") % join(f))
                     rejected.append(f)
                     continue
