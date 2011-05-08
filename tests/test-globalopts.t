@@ -28,6 +28,7 @@
   pulling from ../b
   searching for changes
   warning: repository is unrelated
+  requesting all changes
   adding changesets
   adding manifests
   adding file changes
@@ -83,13 +84,13 @@ Implicit -R:
   $ hg ann a/a a/a
   0: a
   $ hg ann a/a b/b
-  abort: There is no Mercurial repository here (.hg not found)!
+  abort: no repository found in '$TESTTMP' (.hg not found)!
   [255]
   $ hg -R b ann a/a
   abort: a/a not under root
   [255]
   $ hg log
-  abort: There is no Mercurial repository here (.hg not found)!
+  abort: no repository found in '$TESTTMP' (.hg not found)!
   [255]
 
 Abbreviation of long option:
@@ -334,21 +335,24 @@ Testing -h/--help:
   
    config       Configuration Files
    dates        Date Formats
-   patterns     File Name Patterns
-   environment  Environment Variables
-   revisions    Specifying Single Revisions
-   multirevs    Specifying Multiple Revisions
-   revsets      Specifying Revision Sets
    diffs        Diff Formats
+   environment  Environment Variables
+   extensions   Using additional features
+   glossary     Glossary
+   hgignore     syntax for Mercurial ignore files
+   hgweb        Configuring hgweb
    merge-tools  Merge Tools
+   multirevs    Specifying Multiple Revisions
+   patterns     File Name Patterns
+   revisions    Specifying Single Revisions
+   revsets      Specifying Revision Sets
+   subrepos     Subrepositories
    templating   Template Usage
    urls         URL Paths
-   extensions   Using additional features
-   subrepos     Subrepositories
-   hgweb        Configuring hgweb
-   glossary     Glossary
   
   use "hg -v help" to show builtin aliases and global options
+
+
 
   $ hg --help
   Mercurial Distributed SCM
@@ -411,19 +415,20 @@ Testing -h/--help:
   
    config       Configuration Files
    dates        Date Formats
-   patterns     File Name Patterns
-   environment  Environment Variables
-   revisions    Specifying Single Revisions
-   multirevs    Specifying Multiple Revisions
-   revsets      Specifying Revision Sets
    diffs        Diff Formats
+   environment  Environment Variables
+   extensions   Using additional features
+   glossary     Glossary
+   hgignore     syntax for Mercurial ignore files
+   hgweb        Configuring hgweb
    merge-tools  Merge Tools
+   multirevs    Specifying Multiple Revisions
+   patterns     File Name Patterns
+   revisions    Specifying Single Revisions
+   revsets      Specifying Revision Sets
+   subrepos     Subrepositories
    templating   Template Usage
    urls         URL Paths
-   extensions   Using additional features
-   subrepos     Subrepositories
-   hgweb        Configuring hgweb
-   glossary     Glossary
   
   use "hg -v help" to show builtin aliases and global options
 

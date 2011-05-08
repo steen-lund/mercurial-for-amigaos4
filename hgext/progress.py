@@ -47,7 +47,6 @@ import sys
 import time
 
 from mercurial.i18n import _
-from mercurial import util
 
 def spacejoin(*args):
     return ' '.join(s for s in args if s)
@@ -239,7 +238,6 @@ class progbar(object):
             self.topicstates[topic] = pos, item, unit, total
             if now - self.lastprint >= self.refresh and self.topics:
                 self.lastprint = now
-                current = self.topics[-1]
                 self.show(now, topic, *self.topicstates[topic])
 
 def uisetup(ui):

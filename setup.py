@@ -98,24 +98,8 @@ def hasfunction(cc, funcname):
 try:
     import py2exe
     py2exeloaded = True
-
-    # Help py2exe to find win32com.shell
-    try:
-        import modulefinder
-        import win32com
-        for p in win32com.__path__[1:]: # Take the path to win32comext
-            modulefinder.AddPackagePath("win32com", p)
-        pn = "win32com.shell"
-        __import__(pn)
-        m = sys.modules[pn]
-        for p in m.__path__[1:]:
-            modulefinder.AddPackagePath(pn, p)
-    except ImportError:
-        pass
-
 except ImportError:
     py2exeloaded = False
-    pass
 
 def runcmd(cmd, env):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -317,8 +301,9 @@ cmdclass = {'build_mo': hgbuildmo,
             'build_py': hgbuildpy,
             'install_scripts': hginstallscripts}
 
-packages = ['mercurial', 'mercurial.hgweb', 'hgext', 'hgext.convert',
-            'hgext.highlight', 'hgext.zeroconf']
+packages = ['mercurial', 'mercurial.hgweb',
+            'mercurial.httpclient', 'mercurial.httpclient.tests',
+            'hgext', 'hgext.convert', 'hgext.highlight', 'hgext.zeroconf']
 
 pymodules = []
 
@@ -330,11 +315,17 @@ extmodules = [
     Extension('mercurial.parsers', ['mercurial/parsers.c']),
     ]
 
+osutil_ldflags = []
+
+if sys.platform == 'darwin':
+    osutil_ldflags += ['-framework', 'ApplicationServices']
+
 # disable osutil.c under windows + python 2.4 (issue1364)
 if sys.platform == 'win32' and sys.version_info < (2, 5, 0, 'final'):
     pymodules.append('mercurial.pure.osutil')
 else:
-    extmodules.append(Extension('mercurial.osutil', ['mercurial/osutil.c']))
+    extmodules.append(Extension('mercurial.osutil', ['mercurial/osutil.c'],
+                                extra_link_args=osutil_ldflags))
 
 if sys.platform == 'linux2' and os.uname()[2] > '2.6':
     # The inotify extension is only usable with Linux 2.6 kernels.
