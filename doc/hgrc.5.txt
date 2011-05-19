@@ -181,7 +181,11 @@ and their possible values.
 """""""""
 Defines command aliases.
 Aliases allow you to define your own commands in terms of other
-commands (or aliases), optionally including arguments.
+commands (or aliases), optionally including arguments. Positional
+arguments in the form of ``$1``, ``$2``, etc in the alias definition
+are expanded by Mercurial before execution. Positional arguments not
+already used by ``$N`` in the definition are put at the end of the
+command to be executed.
 
 Alias definitions consist of lines of the form::
 
@@ -654,6 +658,10 @@ variables it is passed are listed with names of the form ``$HG_foo``.
   Run before starting a local commit. Exit status 0 allows the
   commit to proceed. Non-zero status will cause the commit to fail.
   Parent changeset IDs are in ``$HG_PARENT1`` and ``$HG_PARENT2``.
+``prelistkeys``
+  Run before listing pushkeys (like bookmarks) in the
+  repository. Non-zero status will cause failure. The key namespace is
+  in ``$HG_NAMESPACE``.
 ``preoutgoing``
   Run before collecting changes to send from the local repository to
   another. Non-zero status will cause failure. This lets you prevent
@@ -663,6 +671,12 @@ variables it is passed are listed with names of the form ``$HG_foo``.
   ``$HG_SOURCE``. If "serve", operation is happening on behalf of remote
   SSH or HTTP repository. If "push", "pull" or "bundle", operation
   is happening on behalf of repository on same system.
+``prepushkey``
+  Run before a pushkey (like a bookmark) is added to the
+  repository. Non-zero status will cause the key to be rejected. The
+  key namespace is in ``$HG_NAMESPACE``, the key is in ``$HG_KEY``,
+  the old value (if any) is in ``$HG_OLD``, and the new value is in
+  ``$HG_NEW``.
 ``pretag``
   Run before creating a tag. Exit status 0 allows the tag to be
   created. Non-zero status will cause the tag to fail. ID of
@@ -689,6 +703,15 @@ variables it is passed are listed with names of the form ``$HG_foo``.
   the update to proceed. Non-zero status will prevent the update.
   Changeset ID of first new parent is in ``$HG_PARENT1``. If merge, ID
   of second new parent is in ``$HG_PARENT2``.
+``listkeys``
+  Run after listing pushkeys (like bookmarks) in the repository. The
+  key namespace is in ``$HG_NAMESPACE``. ``$HG_VALUES`` is a
+  dictionary containing the keys and values.
+``pushkey``
+  Run after a pushkey (like a bookmark) is added to the
+  repository. The key namespace is in ``$HG_NAMESPACE``, the key is in
+  ``$HG_KEY``, the old value (if any) is in ``$HG_OLD``, and the new
+  value is in ``$HG_NEW``.
 ``tag``
   Run after a tag is created. ID of tagged changeset is in ``$HG_NODE``.
   Name of tag is in ``$HG_TAG``. Tag is local if ``$HG_LOCAL=1``, in
@@ -930,9 +953,17 @@ User interface controls.
     The conflict resolution program to use during a manual merge.
     For more information on merge tools see :hg:`help merge-tools`.
     For configuring merge tools see the merge-tools_ section.
-``patch``
-    command to use to apply patches. Look for ``gpatch`` or ``patch`` in
-    PATH if unset.
+``portablefilenames``
+    Check for portable filenames. Can be ``warn``, ``ignore`` or ``abort``.
+    Default is ``warn``.
+    If set to ``warn`` (or ``true``), a warning message is printed on POSIX
+    platforms, if a file with a non-portable filename is added (e.g. a file
+    with a name that can't be created on Windows because it contains reserved
+    parts like ``AUX``, reserved characters like ``:``, or would cause a case
+    collision with an existing file).
+    If set to ``ignore`` (or ``false``), no warning is printed.
+    If set to ``abort``, the command is aborted.
+    On Windows, this configuration option is ignored and the command aborted.
 ``quiet``
     Reduce the amount of output printed. True or False. Default is False.
 ``remotecmd``
@@ -1065,6 +1096,8 @@ The full set of options is:
 
     To disable SSL verification temporarily, specify ``--insecure`` from
     command line.
+``cache``
+    Whether to support caching in hgweb. Defaults to True.
 ``contact``
     Name or email address of the person in charge of the repository.
     Defaults to ui.username or ``$EMAIL`` or "unknown" if unset or empty.
@@ -1105,6 +1138,9 @@ The full set of options is:
     Default is False.
 ``ipv6``
     Whether to use IPv6. Default is False.
+``logourl``
+    Base URL to use for logos. If unset, ``http://mercurial.selenic.com/``
+    will be used.
 ``name``
     Repository name to use in the web interface. Default is current
     working directory.

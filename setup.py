@@ -4,7 +4,7 @@
 # 'python setup.py install', or
 # 'python setup.py --help' for more options
 
-import sys
+import sys, platform
 if not hasattr(sys, 'version_info') or sys.version_info < (2, 4, 0, 'final'):
     raise SystemExit("Mercurial requires Python 2.4 or later.")
 
@@ -36,11 +36,21 @@ except:
     raise SystemExit(
         "Couldn't import standard zlib (incomplete Python install).")
 
+# The base IronPython distribution (as of 2.7.1) doesn't support bz2
+isironpython = False
 try:
-    import bz2
+    isironpython = platform.python_implementation().lower().find("ironpython") != -1
 except:
-    raise SystemExit(
-        "Couldn't import standard bz2 (incomplete Python install).")
+    pass
+
+if isironpython:
+    print "warning: IronPython detected (no bz2 support)"
+else:
+    try:
+        import bz2
+    except:
+        raise SystemExit(
+            "Couldn't import standard bz2 (incomplete Python install).")
 
 import os, subprocess, time
 import shutil
@@ -98,24 +108,8 @@ def hasfunction(cc, funcname):
 try:
     import py2exe
     py2exeloaded = True
-
-    # Help py2exe to find win32com.shell
-    try:
-        import modulefinder
-        import win32com
-        for p in win32com.__path__[1:]: # Take the path to win32comext
-            modulefinder.AddPackagePath("win32com", p)
-        pn = "win32com.shell"
-        __import__(pn)
-        m = sys.modules[pn]
-        for p in m.__path__[1:]:
-            modulefinder.AddPackagePath(pn, p)
-    except ImportError:
-        pass
-
 except ImportError:
     py2exeloaded = False
-    pass
 
 def runcmd(cmd, env):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -317,8 +311,9 @@ cmdclass = {'build_mo': hgbuildmo,
             'build_py': hgbuildpy,
             'install_scripts': hginstallscripts}
 
-packages = ['mercurial', 'mercurial.hgweb', 'hgext', 'hgext.convert',
-            'hgext.highlight', 'hgext.zeroconf']
+packages = ['mercurial', 'mercurial.hgweb',
+            'mercurial.httpclient', 'mercurial.httpclient.tests',
+            'hgext', 'hgext.convert', 'hgext.highlight', 'hgext.zeroconf']
 
 pymodules = []
 
@@ -330,11 +325,17 @@ extmodules = [
     Extension('mercurial.parsers', ['mercurial/parsers.c']),
     ]
 
+osutil_ldflags = []
+
+if sys.platform == 'darwin':
+    osutil_ldflags += ['-framework', 'ApplicationServices']
+
 # disable osutil.c under windows + python 2.4 (issue1364)
 if sys.platform == 'win32' and sys.version_info < (2, 5, 0, 'final'):
     pymodules.append('mercurial.pure.osutil')
 else:
-    extmodules.append(Extension('mercurial.osutil', ['mercurial/osutil.c']))
+    extmodules.append(Extension('mercurial.osutil', ['mercurial/osutil.c'],
+                                extra_link_args=osutil_ldflags))
 
 if sys.platform == 'linux2' and os.uname()[2] > '2.6':
     # The inotify extension is only usable with Linux 2.6 kernels.
@@ -385,7 +386,7 @@ if sys.platform == 'darwin' and os.path.exists('/usr/bin/xcodebuild'):
     # Also parse only first digit, because 3.2.1 can't be parsed nicely
     if (version.startswith('Xcode') and
         StrictVersion(version.split()[1]) >= StrictVersion('4.0')):
-        os.environ['ARCHFLAGS'] = '-arch i386 -arch x86_64'
+        os.environ['ARCHFLAGS'] = ''
 
 setup(name='mercurial',
       version=setupversion,

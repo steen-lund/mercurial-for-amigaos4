@@ -10,29 +10,29 @@ from i18n import _
 import repo, changegroup, subrepo, discovery, pushkey
 import changelog, dirstate, filelog, manifest, context, bookmarks
 import lock, transaction, store, encoding
-import util, extensions, hook, error
+import scmutil, util, extensions, hook, error
 import match as matchmod
 import merge as mergemod
 import tags as tagsmod
-import url as urlmod
 from lock import release
 import weakref, errno, os, time, inspect
 propertycache = util.propertycache
 
 class localrepository(repo.repository):
-    capabilities = set(('lookup', 'changegroupsubset', 'branchmap', 'pushkey'))
-    supportedformats = set(('revlogv1', 'parentdelta'))
+    capabilities = set(('lookup', 'changegroupsubset', 'branchmap', 'pushkey',
+                        'known', 'getbundle'))
+    supportedformats = set(('revlogv1', 'generaldelta'))
     supported = supportedformats | set(('store', 'fncache', 'shared',
                                         'dotencode'))
 
-    def __init__(self, baseui, path=None, create=0):
+    def __init__(self, baseui, path=None, create=False):
         repo.repository.__init__(self)
         self.root = os.path.realpath(util.expandpath(path))
         self.path = os.path.join(self.root, ".hg")
         self.origroot = path
-        self.auditor = util.path_auditor(self.root, self._checknested)
-        self.opener = util.opener(self.path)
-        self.wopener = util.opener(self.root)
+        self.auditor = scmutil.pathauditor(self.root, self._checknested)
+        self.opener = scmutil.opener(self.path)
+        self.wopener = scmutil.opener(self.root)
         self.baseui = baseui
         self.ui = baseui.copy()
 
@@ -46,7 +46,7 @@ class localrepository(repo.repository):
             if create:
                 if not os.path.exists(path):
                     util.makedirs(path)
-                os.mkdir(self.path)
+                util.makedir(self.path, notindexed=True)
                 requirements = ["revlogv1"]
                 if self.ui.configbool('format', 'usestore', True):
                     os.mkdir(os.path.join(self.path, "store"))
@@ -56,12 +56,13 @@ class localrepository(repo.repository):
                         if self.ui.configbool('format', 'dotencode', True):
                             requirements.append('dotencode')
                     # create an invalid changelog
-                    self.opener("00changelog.i", "a").write(
+                    self.opener.append(
+                        "00changelog.i",
                         '\0\0\0\2' # represents revlogv2
                         ' dummy changelog to prevent using the old repo layout'
                     )
-                if self.ui.configbool('format', 'parentdelta', False):
-                    requirements.append("parentdelta")
+                if self.ui.configbool('format', 'generaldelta', False):
+                    requirements.append("generaldelta")
             else:
                 raise error.RepoError(_("repository %s not found") % path)
         elif create:
@@ -70,7 +71,7 @@ class localrepository(repo.repository):
             # find requirements
             requirements = set()
             try:
-                requirements = set(self.opener("requires").read().splitlines())
+                requirements = set(self.opener.read("requires").splitlines())
             except IOError, inst:
                 if inst.errno != errno.ENOENT:
                     raise
@@ -80,7 +81,7 @@ class localrepository(repo.repository):
 
         self.sharedpath = self.path
         try:
-            s = os.path.realpath(self.opener("sharedpath").read())
+            s = os.path.realpath(self.opener.read("sharedpath"))
             if not os.path.exists(s):
                 raise error.RepoError(
                     _('.hg/sharedpath points to nonexistent directory %s') % s)
@@ -89,7 +90,7 @@ class localrepository(repo.repository):
             if inst.errno != errno.ENOENT:
                 raise
 
-        self.store = store.store(requirements, self.sharedpath, util.opener)
+        self.store = store.store(requirements, self.sharedpath, scmutil.opener)
         self.spath = self.store.path
         self.sopener = self.store.opener
         self.sjoin = self.store.join
@@ -115,9 +116,9 @@ class localrepository(repo.repository):
 
     def _applyrequirements(self, requirements):
         self.requirements = requirements
-        self.sopener.options = {}
-        if 'parentdelta' in requirements:
-            self.sopener.options['parentdelta'] = 1
+        openerreqs = set(('revlogv1', 'generaldelta'))
+        self.sopener.options = dict((r, 1) for r in requirements
+                                           if r in openerreqs)
 
     def _writerequirements(self):
         reqfile = self.opener("requires", "w")
@@ -177,7 +178,6 @@ class localrepository(repo.repository):
             p = os.environ['HG_PENDING']
             if p.startswith(self.root):
                 c.readpending('00changelog.i.a')
-        self.sopener.options['defversion'] = c.version
         return c
 
     @propertycache
@@ -189,7 +189,7 @@ class localrepository(repo.repository):
         warned = [0]
         def validate(node):
             try:
-                r = self.changelog.rev(node)
+                self.changelog.rev(node)
                 return node
             except error.LookupError:
                 if not warned[0]:
@@ -361,7 +361,12 @@ class localrepository(repo.repository):
         tags = {}
         for (name, (node, hist)) in alltags.iteritems():
             if node != nullid:
-                tags[encoding.tolocal(name)] = node
+                try:
+                    # ignore tags to unknown nodes
+                    self.changelog.lookup(node)
+                    tags[encoding.tolocal(name)] = node
+                except error.LookupError:
+                    pass
         tags['tip'] = self.changelog.tip()
         tagtypes = dict([(encoding.tolocal(name), value)
                          for (name, value) in tagtypes.iteritems()])
@@ -384,10 +389,7 @@ class localrepository(repo.repository):
         '''return a list of tags ordered by revision'''
         l = []
         for t, n in self.tags().iteritems():
-            try:
-                r = self.changelog.rev(n)
-            except:
-                r = -2 # sort to the beginning of the list if unknown
+            r = self.changelog.rev(n)
             l.append((r, t, n))
         return [(t, n) for r, t, n in sorted(l)]
 
@@ -506,22 +508,24 @@ class localrepository(repo.repository):
             bheads.extend(newnodes)
             if len(bheads) <= 1:
                 continue
+            bheads = sorted(bheads, key=lambda x: self[x].rev())
             # starting from tip means fewer passes over reachable
             while newnodes:
                 latest = newnodes.pop()
                 if latest not in bheads:
                     continue
-                minbhrev = self[min([self[bh].rev() for bh in bheads])].node()
+                minbhrev = self[bheads[0]].node()
                 reachable = self.changelog.reachable(latest, minbhrev)
                 reachable.remove(latest)
-                bheads = [b for b in bheads if b not in reachable]
+                if reachable:
+                    bheads = [b for b in bheads if b not in reachable]
             partial[branch] = bheads
 
     def lookup(self, key):
         if isinstance(key, int):
             return self.changelog.node(key)
         elif key == '.':
-            return self.dirstate.parents()[0]
+            return self.dirstate.p1()
         elif key == 'null':
             return nullid
         elif key == 'tip':
@@ -546,7 +550,7 @@ class localrepository(repo.repository):
         try:
             if len(key) == 20:
                 key = hex(key)
-        except:
+        except TypeError:
             pass
         raise error.RepoLookupError(_("unknown revision '%s'") % key)
 
@@ -557,6 +561,10 @@ class localrepository(repo.repository):
 
         repo = (remote and remote.local()) and remote or self
         return repo[key].branch()
+
+    def known(self, nodes):
+        nm = self.changelog.nodemap
+        return [(n in nm) for n in nodes]
 
     def local(self):
         return True
@@ -644,7 +652,7 @@ class localrepository(repo.repository):
         if self._link(filename):
             data = os.readlink(self.wjoin(filename))
         else:
-            data = self.wopener(filename, 'r').read()
+            data = self.wopener.read(filename)
         return self._filter(self._encodefilterpats, filename, data)
 
     def wwrite(self, filename, data, flags):
@@ -652,9 +660,9 @@ class localrepository(repo.repository):
         if 'l' in flags:
             self.wopener.symlink(data, filename)
         else:
-            self.wopener(filename, 'w').write(data)
+            self.wopener.write(filename, data)
             if 'x' in flags:
-                util.set_flags(self.wjoin(filename), False, True)
+                util.setflags(self.wjoin(filename), False, True)
 
     def wwritedata(self, filename, data):
         return self._filter(self._decodefilterpats, filename, data)
@@ -682,19 +690,20 @@ class localrepository(repo.repository):
     def _writejournal(self, desc):
         # save dirstate for rollback
         try:
-            ds = self.opener("dirstate").read()
+            ds = self.opener.read("dirstate")
         except IOError:
             ds = ""
-        self.opener("journal.dirstate", "w").write(ds)
-        self.opener("journal.branch", "w").write(
-            encoding.fromlocal(self.dirstate.branch()))
-        self.opener("journal.desc", "w").write("%d\n%s\n" % (len(self), desc))
+        self.opener.write("journal.dirstate", ds)
+        self.opener.write("journal.branch",
+                          encoding.fromlocal(self.dirstate.branch()))
+        self.opener.write("journal.desc",
+                          "%d\n%s\n" % (len(self), desc))
 
         bkname = self.join('bookmarks')
         if os.path.exists(bkname):
             util.copyfile(bkname, self.join('journal.bookmarks'))
         else:
-            self.opener('journal.bookmarks', 'w').write('')
+            self.opener.write('journal.bookmarks', '')
 
         return (self.sjoin('journal'), self.join('journal.dirstate'),
                 self.join('journal.branch'), self.join('journal.desc'),
@@ -722,7 +731,7 @@ class localrepository(repo.repository):
             lock = self.lock()
             if os.path.exists(self.sjoin("undo")):
                 try:
-                    args = self.opener("undo.desc", "r").read().splitlines()
+                    args = self.opener.read("undo.desc").splitlines()
                     if len(args) >= 3 and self.ui.verbose:
                         desc = _("repository tip rolled back to revision %s"
                                  " (undo %s: %s)\n") % (
@@ -743,7 +752,7 @@ class localrepository(repo.repository):
                     util.rename(self.join('undo.bookmarks'),
                                 self.join('bookmarks'))
                 try:
-                    branch = self.opener("undo.branch").read()
+                    branch = self.opener.read("undo.branch")
                     self.dirstate.setbranch(branch)
                 except IOError:
                     self.ui.warn(_("named branch could not be reset, "
@@ -1024,10 +1033,7 @@ class localrepository(repo.repository):
                 raise
 
             # update bookmarks, dirstate and mergestate
-            parents = (p1, p2)
-            if p2 == nullid:
-                parents = (p1,)
-            bookmarks.update(self, parents, ret)
+            bookmarks.update(self, p1, ret)
             for f in changes[0] + changes[1]:
                 self.dirstate.normal(f)
             for f in changes[2]:
@@ -1048,8 +1054,6 @@ class localrepository(repo.repository):
         tr = lock = None
         removed = list(ctx.removed())
         p1, p2 = ctx.p1(), ctx.p2()
-        m1 = p1.manifest().copy()
-        m2 = p2.manifest()
         user = ctx.user()
 
         lock = self.lock()
@@ -1057,40 +1061,48 @@ class localrepository(repo.repository):
             tr = self.transaction("commit")
             trp = weakref.proxy(tr)
 
-            # check in files
-            new = {}
-            changed = []
-            linkrev = len(self)
-            for f in sorted(ctx.modified() + ctx.added()):
-                self.ui.note(f + "\n")
-                try:
-                    fctx = ctx[f]
-                    new[f] = self._filecommit(fctx, m1, m2, linkrev, trp,
-                                              changed)
-                    m1.set(f, fctx.flags())
-                except OSError, inst:
-                    self.ui.warn(_("trouble committing %s!\n") % f)
-                    raise
-                except IOError, inst:
-                    errcode = getattr(inst, 'errno', errno.ENOENT)
-                    if error or errcode and errcode != errno.ENOENT:
+            if ctx.files():
+                m1 = p1.manifest().copy()
+                m2 = p2.manifest()
+
+                # check in files
+                new = {}
+                changed = []
+                linkrev = len(self)
+                for f in sorted(ctx.modified() + ctx.added()):
+                    self.ui.note(f + "\n")
+                    try:
+                        fctx = ctx[f]
+                        new[f] = self._filecommit(fctx, m1, m2, linkrev, trp,
+                                                  changed)
+                        m1.set(f, fctx.flags())
+                    except OSError, inst:
                         self.ui.warn(_("trouble committing %s!\n") % f)
                         raise
-                    else:
-                        removed.append(f)
+                    except IOError, inst:
+                        errcode = getattr(inst, 'errno', errno.ENOENT)
+                        if error or errcode and errcode != errno.ENOENT:
+                            self.ui.warn(_("trouble committing %s!\n") % f)
+                            raise
+                        else:
+                            removed.append(f)
 
-            # update manifest
-            m1.update(new)
-            removed = [f for f in sorted(removed) if f in m1 or f in m2]
-            drop = [f for f in removed if f in m1]
-            for f in drop:
-                del m1[f]
-            mn = self.manifest.add(m1, trp, linkrev, p1.manifestnode(),
-                                   p2.manifestnode(), (new, drop))
+                # update manifest
+                m1.update(new)
+                removed = [f for f in sorted(removed) if f in m1 or f in m2]
+                drop = [f for f in removed if f in m1]
+                for f in drop:
+                    del m1[f]
+                mn = self.manifest.add(m1, trp, linkrev, p1.manifestnode(),
+                                       p2.manifestnode(), (new, drop))
+                files = changed + removed
+            else:
+                mn = p1.manifestnode()
+                files = []
 
             # update changelog
             self.changelog.delayupdate()
-            n = self.changelog.add(mn, changed + removed, ctx.description(),
+            n = self.changelog.add(mn, files, ctx.description(),
                                    trp, p1.node(), p2.node(),
                                    user, ctx.date(), ctx.extra().copy())
             p = lambda: self.changelog.writepending() and self.root or ""
@@ -1231,14 +1243,15 @@ class localrepository(repo.repository):
             modified, added, clean = [], [], []
             for fn in mf2:
                 if fn in mf1:
-                    if (mf1.flags(fn) != mf2.flags(fn) or
-                        (mf1[fn] != mf2[fn] and
-                         (mf2[fn] or ctx1[fn].cmp(ctx2[fn])))):
+                    if (fn not in deleted and
+                        (mf1.flags(fn) != mf2.flags(fn) or
+                         (mf1[fn] != mf2[fn] and
+                          (mf2[fn] or ctx1[fn].cmp(ctx2[fn]))))):
                         modified.append(fn)
                     elif listclean:
                         clean.append(fn)
                     del mf1[fn]
-                else:
+                elif fn not in deleted:
                     added.append(fn)
             removed = mf1.keys()
 
@@ -1337,13 +1350,16 @@ class localrepository(repo.repository):
                 self.ui.status(_("no changes found\n"))
                 result = 0
             else:
-                if heads is None and fetch == [nullid]:
+                if heads is None and list(common) == [nullid]:
                     self.ui.status(_("requesting all changes\n"))
                 elif heads is None and remote.capable('changegroupsubset'):
                     # issue1320, avoid a race if remote changed after discovery
                     heads = rheads
 
-                if heads is None:
+                if remote.capable('getbundle'):
+                    cg = remote.getbundle('pull', common=common,
+                                          heads=heads or rheads)
+                elif heads is None:
                     cg = remote.changegroup(fetch, 'pull')
                 elif not remote.capable('changegroupsubset'):
                     raise util.Abort(_("partial pull cannot be done because "
@@ -1355,27 +1371,6 @@ class localrepository(repo.repository):
                                              lock=lock)
         finally:
             lock.release()
-
-        self.ui.debug("checking for updated bookmarks\n")
-        rb = remote.listkeys('bookmarks')
-        changed = False
-        for k in rb.keys():
-            if k in self._bookmarks:
-                nr, nl = rb[k], self._bookmarks[k]
-                if nr in self:
-                    cr = self[nr]
-                    cl = self[nl]
-                    if cl.rev() >= cr.rev():
-                        continue
-                    if cr in cl.descendants():
-                        self._bookmarks[k] = cr.node()
-                        changed = True
-                        self.ui.status(_("updating bookmark %s\n") % k)
-                    else:
-                        self.ui.warn(_("not updating divergent"
-                                       " bookmark %s\n") % k)
-        if changed:
-            bookmarks.write(self)
 
         return result
 
@@ -1456,7 +1451,7 @@ class localrepository(repo.repository):
             for node in nodes:
                 self.ui.debug("%s\n" % hex(node))
 
-    def changegroupsubset(self, bases, heads, source, extranodes=None):
+    def changegroupsubset(self, bases, heads, source):
         """Compute a changegroup consisting of all the nodes that are
         descendents of any of the bases and ancestors of any of the heads.
         Return a chunkbuffer object whose read() method will return
@@ -1468,214 +1463,134 @@ class localrepository(repo.repository):
 
         Another wrinkle is doing the reverse, figuring out which changeset in
         the changegroup a particular filenode or manifestnode belongs to.
-
-        The caller can specify some nodes that must be included in the
-        changegroup using the extranodes argument.  It should be a dict
-        where the keys are the filenames (or 1 for the manifest), and the
-        values are lists of (node, linknode) tuples, where node is a wanted
-        node and linknode is the changelog node that should be transmitted as
-        the linkrev.
         """
-
-        # Set up some initial variables
-        # Make it easy to refer to self.changelog
         cl = self.changelog
-        # Compute the list of changesets in this changegroup.
-        # Some bases may turn out to be superfluous, and some heads may be
-        # too.  nodesbetween will return the minimal set of bases and heads
-        # necessary to re-create the changegroup.
         if not bases:
             bases = [nullid]
-        msng_cl_lst, bases, heads = cl.nodesbetween(bases, heads)
+        csets, bases, heads = cl.nodesbetween(bases, heads)
+        # We assume that all ancestors of bases are known
+        common = set(cl.ancestors(*[cl.rev(n) for n in bases]))
+        return self._changegroupsubset(common, csets, heads, source)
 
-        if extranodes is None:
-            # can we go through the fast path ?
-            heads.sort()
-            allheads = self.heads()
-            allheads.sort()
-            if heads == allheads:
-                return self._changegroup(msng_cl_lst, source)
+    def getbundle(self, source, heads=None, common=None):
+        """Like changegroupsubset, but returns the set difference between the
+        ancestors of heads and the ancestors common.
+
+        If heads is None, use the local heads. If common is None, use [nullid].
+
+        The nodes in common might not all be known locally due to the way the
+        current discovery protocol works.
+        """
+        cl = self.changelog
+        if common:
+            nm = cl.nodemap
+            common = [n for n in common if n in nm]
+        else:
+            common = [nullid]
+        if not heads:
+            heads = cl.heads()
+        common, missing = cl.findcommonmissing(common, heads)
+        if not missing:
+            return None
+        return self._changegroupsubset(common, missing, heads, source)
+
+    def _changegroupsubset(self, commonrevs, csets, heads, source):
+
+        cl = self.changelog
+        mf = self.manifest
+        mfs = {} # needed manifests
+        fnodes = {} # needed file nodes
+        changedfiles = set()
+        fstate = ['', {}]
+        count = [0]
+
+        # can we go through the fast path ?
+        heads.sort()
+        if heads == sorted(self.heads()):
+            return self._changegroup(csets, source)
 
         # slow path
         self.hook('preoutgoing', throw=True, source=source)
+        self.changegroupinfo(csets, source)
 
-        self.changegroupinfo(msng_cl_lst, source)
+        # filter any nodes that claim to be part of the known set
+        def prune(revlog, missing):
+            for n in missing:
+                if revlog.linkrev(revlog.rev(n)) not in commonrevs:
+                    yield n
 
-        # We assume that all ancestors of bases are known
-        commonrevs = set(cl.ancestors(*[cl.rev(n) for n in bases]))
+        def lookup(revlog, x):
+            if revlog == cl:
+                c = cl.read(x)
+                changedfiles.update(c[3])
+                mfs.setdefault(c[0], x)
+                count[0] += 1
+                self.ui.progress(_('bundling'), count[0], unit=_('changesets'))
+                return x
+            elif revlog == mf:
+                clnode = mfs[x]
+                mdata = mf.readfast(x)
+                for f in changedfiles:
+                    if f in mdata:
+                        fnodes.setdefault(f, {}).setdefault(mdata[f], clnode)
+                count[0] += 1
+                self.ui.progress(_('bundling'), count[0],
+                                 unit=_('manifests'), total=len(mfs))
+                return mfs[x]
+            else:
+                self.ui.progress(
+                    _('bundling'), count[0], item=fstate[0],
+                    unit=_('files'), total=len(changedfiles))
+                return fstate[1][x]
 
-        # Make it easy to refer to self.manifest
-        mnfst = self.manifest
-        # We don't know which manifests are missing yet
-        msng_mnfst_set = {}
-        # Nor do we know which filenodes are missing.
-        msng_filenode_set = {}
+        bundler = changegroup.bundle10(lookup)
+        reorder = self.ui.config('bundle', 'reorder', 'auto')
+        if reorder == 'auto':
+            reorder = None
+        else:
+            reorder = util.parsebool(reorder)
 
-        # A changeset always belongs to itself, so the changenode lookup
-        # function for a changenode is identity.
-        def identity(x):
-            return x
-
-        # A function generating function that sets up the initial environment
-        # the inner function.
-        def filenode_collector(changedfiles):
-            # This gathers information from each manifestnode included in the
-            # changegroup about which filenodes the manifest node references
-            # so we can include those in the changegroup too.
-            #
-            # It also remembers which changenode each filenode belongs to.  It
-            # does this by assuming the a filenode belongs to the changenode
-            # the first manifest that references it belongs to.
-            def collect_msng_filenodes(mnfstnode):
-                r = mnfst.rev(mnfstnode)
-                if mnfst.deltaparent(r) in mnfst.parentrevs(r):
-                    # If the previous rev is one of the parents,
-                    # we only need to see a diff.
-                    deltamf = mnfst.readdelta(mnfstnode)
-                    # For each line in the delta
-                    for f, fnode in deltamf.iteritems():
-                        # And if the file is in the list of files we care
-                        # about.
-                        if f in changedfiles:
-                            # Get the changenode this manifest belongs to
-                            clnode = msng_mnfst_set[mnfstnode]
-                            # Create the set of filenodes for the file if
-                            # there isn't one already.
-                            ndset = msng_filenode_set.setdefault(f, {})
-                            # And set the filenode's changelog node to the
-                            # manifest's if it hasn't been set already.
-                            ndset.setdefault(fnode, clnode)
-                else:
-                    # Otherwise we need a full manifest.
-                    m = mnfst.read(mnfstnode)
-                    # For every file in we care about.
-                    for f in changedfiles:
-                        fnode = m.get(f, None)
-                        # If it's in the manifest
-                        if fnode is not None:
-                            # See comments above.
-                            clnode = msng_mnfst_set[mnfstnode]
-                            ndset = msng_filenode_set.setdefault(f, {})
-                            ndset.setdefault(fnode, clnode)
-            return collect_msng_filenodes
-
-        # If we determine that a particular file or manifest node must be a
-        # node that the recipient of the changegroup will already have, we can
-        # also assume the recipient will have all the parents.  This function
-        # prunes them from the set of missing nodes.
-        def prune(revlog, missingnodes):
-            hasset = set()
-            # If a 'missing' filenode thinks it belongs to a changenode we
-            # assume the recipient must have, then the recipient must have
-            # that filenode.
-            for n in missingnodes:
-                clrev = revlog.linkrev(revlog.rev(n))
-                if clrev in commonrevs:
-                    hasset.add(n)
-            for n in hasset:
-                missingnodes.pop(n, None)
-            for r in revlog.ancestors(*[revlog.rev(n) for n in hasset]):
-                missingnodes.pop(revlog.node(r), None)
-
-        # Add the nodes that were explicitly requested.
-        def add_extra_nodes(name, nodes):
-            if not extranodes or name not in extranodes:
-                return
-
-            for node, linknode in extranodes[name]:
-                if node not in nodes:
-                    nodes[node] = linknode
-
-        # Now that we have all theses utility functions to help out and
-        # logically divide up the task, generate the group.
         def gengroup():
-            # The set of changed files starts empty.
-            changedfiles = set()
-            collect = changegroup.collector(cl, msng_mnfst_set, changedfiles)
-
             # Create a changenode group generator that will call our functions
             # back to lookup the owning changenode and collect information.
-            group = cl.group(msng_cl_lst, identity, collect)
-            for cnt, chnk in enumerate(group):
-                yield chnk
-                # revlog.group yields three entries per node, so
-                # dividing by 3 gives an approximation of how many
-                # nodes have been processed.
-                self.ui.progress(_('bundling'), cnt / 3,
-                                 unit=_('changesets'))
-            changecount = cnt / 3
+            for chunk in cl.group(csets, bundler, reorder=reorder):
+                yield chunk
             self.ui.progress(_('bundling'), None)
 
-            prune(mnfst, msng_mnfst_set)
-            add_extra_nodes(1, msng_mnfst_set)
-            msng_mnfst_lst = msng_mnfst_set.keys()
-            # Sort the manifestnodes by revision number.
-            msng_mnfst_lst.sort(key=mnfst.rev)
             # Create a generator for the manifestnodes that calls our lookup
             # and data collection functions back.
-            group = mnfst.group(msng_mnfst_lst,
-                                lambda mnode: msng_mnfst_set[mnode],
-                                filenode_collector(changedfiles))
-            efiles = {}
-            for cnt, chnk in enumerate(group):
-                if cnt % 3 == 1:
-                    mnode = chnk[:20]
-                    efiles.update(mnfst.readdelta(mnode))
-                yield chnk
-                # see above comment for why we divide by 3
-                self.ui.progress(_('bundling'), cnt / 3,
-                                 unit=_('manifests'), total=changecount)
+            count[0] = 0
+            for chunk in mf.group(prune(mf, mfs), bundler, reorder=reorder):
+                yield chunk
             self.ui.progress(_('bundling'), None)
-            efiles = len(efiles)
 
-            # These are no longer needed, dereference and toss the memory for
-            # them.
-            msng_mnfst_lst = None
-            msng_mnfst_set.clear()
+            mfs.clear()
 
-            if extranodes:
-                for fname in extranodes:
-                    if isinstance(fname, int):
-                        continue
-                    msng_filenode_set.setdefault(fname, {})
-                    changedfiles.add(fname)
             # Go through all our files in order sorted by name.
-            for idx, fname in enumerate(sorted(changedfiles)):
+            count[0] = 0
+            for fname in sorted(changedfiles):
                 filerevlog = self.file(fname)
                 if not len(filerevlog):
                     raise util.Abort(_("empty or missing revlog for %s") % fname)
-                # Toss out the filenodes that the recipient isn't really
-                # missing.
-                missingfnodes = msng_filenode_set.pop(fname, {})
-                prune(filerevlog, missingfnodes)
-                add_extra_nodes(fname, missingfnodes)
-                # If any filenodes are left, generate the group for them,
-                # otherwise don't bother.
-                if missingfnodes:
-                    yield changegroup.chunkheader(len(fname))
-                    yield fname
-                    # Sort the filenodes by their revision # (topological order)
-                    nodeiter = list(missingfnodes)
-                    nodeiter.sort(key=filerevlog.rev)
-                    # Create a group generator and only pass in a changenode
-                    # lookup function as we need to collect no information
-                    # from filenodes.
-                    group = filerevlog.group(nodeiter,
-                                             lambda fnode: missingfnodes[fnode])
-                    for chnk in group:
-                        # even though we print the same progress on
-                        # most loop iterations, put the progress call
-                        # here so that time estimates (if any) can be updated
-                        self.ui.progress(
-                            _('bundling'), idx, item=fname,
-                            unit=_('files'), total=efiles)
-                        yield chnk
+                fstate[0] = fname
+                fstate[1] = fnodes.pop(fname, {})
+                first = True
+
+                for chunk in filerevlog.group(prune(filerevlog, fstate[1]),
+                                              bundler, reorder=reorder):
+                    if first:
+                        if chunk == bundler.close():
+                            break
+                        count[0] += 1
+                        yield bundler.fileheader(fname)
+                        first = False
+                    yield chunk
             # Signal that no more groups are left.
-            yield changegroup.closechunk()
+            yield bundler.close()
             self.ui.progress(_('bundling'), None)
 
-            if msng_cl_lst:
-                self.hook('outgoing', node=hex(msng_cl_lst[0]), source=source)
+            if csets:
+                self.hook('outgoing', node=hex(csets[0]), source=source)
 
         return changegroup.unbundle10(util.chunkbuffer(gengroup()), 'UN')
 
@@ -1693,74 +1608,80 @@ class localrepository(repo.repository):
 
         nodes is the set of nodes to send"""
 
-        self.hook('preoutgoing', throw=True, source=source)
-
         cl = self.changelog
-        revset = set([cl.rev(n) for n in nodes])
+        mf = self.manifest
+        mfs = {}
+        changedfiles = set()
+        fstate = ['']
+        count = [0]
+
+        self.hook('preoutgoing', throw=True, source=source)
         self.changegroupinfo(nodes, source)
 
-        def identity(x):
-            return x
+        revset = set([cl.rev(n) for n in nodes])
 
         def gennodelst(log):
             for r in log:
                 if log.linkrev(r) in revset:
                     yield log.node(r)
 
-        def lookuplinkrev_func(revlog):
-            def lookuplinkrev(n):
-                return cl.node(revlog.linkrev(revlog.rev(n)))
-            return lookuplinkrev
+        def lookup(revlog, x):
+            if revlog == cl:
+                c = cl.read(x)
+                changedfiles.update(c[3])
+                mfs.setdefault(c[0], x)
+                count[0] += 1
+                self.ui.progress(_('bundling'), count[0], unit=_('changesets'))
+                return x
+            elif revlog == mf:
+                count[0] += 1
+                self.ui.progress(_('bundling'), count[0],
+                                 unit=_('manifests'), total=len(mfs))
+                return cl.node(revlog.linkrev(revlog.rev(x)))
+            else:
+                self.ui.progress(
+                    _('bundling'), count[0], item=fstate[0],
+                    total=len(changedfiles), unit=_('files'))
+                return cl.node(revlog.linkrev(revlog.rev(x)))
+
+        bundler = changegroup.bundle10(lookup)
+        reorder = self.ui.config('bundle', 'reorder', 'auto')
+        if reorder == 'auto':
+            reorder = None
+        else:
+            reorder = util.parsebool(reorder)
 
         def gengroup():
             '''yield a sequence of changegroup chunks (strings)'''
             # construct a list of all changed files
-            changedfiles = set()
-            mmfs = {}
-            collect = changegroup.collector(cl, mmfs, changedfiles)
 
-            for cnt, chnk in enumerate(cl.group(nodes, identity, collect)):
-                # revlog.group yields three entries per node, so
-                # dividing by 3 gives an approximation of how many
-                # nodes have been processed.
-                self.ui.progress(_('bundling'), cnt / 3, unit=_('changesets'))
-                yield chnk
-            changecount = cnt / 3
+            for chunk in cl.group(nodes, bundler, reorder=reorder):
+                yield chunk
             self.ui.progress(_('bundling'), None)
 
-            mnfst = self.manifest
-            nodeiter = gennodelst(mnfst)
-            efiles = {}
-            for cnt, chnk in enumerate(mnfst.group(nodeiter,
-                                                   lookuplinkrev_func(mnfst))):
-                if cnt % 3 == 1:
-                    mnode = chnk[:20]
-                    efiles.update(mnfst.readdelta(mnode))
-                # see above comment for why we divide by 3
-                self.ui.progress(_('bundling'), cnt / 3,
-                                 unit=_('manifests'), total=changecount)
-                yield chnk
-            efiles = len(efiles)
+            count[0] = 0
+            for chunk in mf.group(gennodelst(mf), bundler, reorder=reorder):
+                yield chunk
             self.ui.progress(_('bundling'), None)
 
-            for idx, fname in enumerate(sorted(changedfiles)):
+            count[0] = 0
+            for fname in sorted(changedfiles):
                 filerevlog = self.file(fname)
                 if not len(filerevlog):
                     raise util.Abort(_("empty or missing revlog for %s") % fname)
-                nodeiter = gennodelst(filerevlog)
-                nodeiter = list(nodeiter)
-                if nodeiter:
-                    yield changegroup.chunkheader(len(fname))
-                    yield fname
-                    lookup = lookuplinkrev_func(filerevlog)
-                    for chnk in filerevlog.group(nodeiter, lookup):
-                        self.ui.progress(
-                            _('bundling'), idx, item=fname,
-                            total=efiles, unit=_('files'))
-                        yield chnk
+                fstate[0] = fname
+                first = True
+                for chunk in filerevlog.group(gennodelst(filerevlog), bundler,
+                                              reorder=reorder):
+                    if first:
+                        if chunk == bundler.close():
+                            break
+                        count[0] += 1
+                        yield bundler.fileheader(fname)
+                        first = False
+                    yield chunk
+            yield bundler.close()
             self.ui.progress(_('bundling'), None)
-
-            yield changegroup.closechunk()
 
             if nodes:
                 self.hook('outgoing', node=hex(nodes[0]), source=source)
@@ -1799,9 +1720,9 @@ class localrepository(repo.repository):
         # inconsistent view
         cl = self.changelog
         cl.delayupdate()
-        oldheads = len(cl.heads())
+        oldheads = cl.heads()
 
-        tr = self.transaction("\n".join([srctype, urlmod.hidepassword(url)]))
+        tr = self.transaction("\n".join([srctype, util.hidepassword(url)]))
         try:
             trp = weakref.proxy(tr)
             # pull off the changeset group
@@ -1819,6 +1740,7 @@ class localrepository(repo.repository):
             pr = prog()
             source.callback = pr
 
+            source.changelogheader()
             if (cl.addgroup(source, csmap, trp) is None
                 and not emptyok):
                 raise util.Abort(_("received changelog group is empty"))
@@ -1838,6 +1760,7 @@ class localrepository(repo.repository):
             # if the result of the merge of 1 and 2 is the same in 3 and 4,
             # no new manifest will be created and the manifest group will
             # be empty during the pull
+            source.manifestheader()
             self.manifest.addgroup(source, revmap, trp)
             self.ui.progress(_('manifests'), None)
 
@@ -1859,9 +1782,10 @@ class localrepository(repo.repository):
             source.callback = None
 
             while 1:
-                f = source.chunk()
-                if not f:
+                chunkdata = source.filelogheader()
+                if not chunkdata:
                     break
+                f = chunkdata["filename"]
                 self.ui.debug("adding %s revisions\n" % f)
                 pr()
                 fl = self.file(f)
@@ -1890,14 +1814,20 @@ class localrepository(repo.repository):
                             _('missing file data for %s:%s - run hg verify') %
                             (f, hex(n)))
 
-            newheads = len(cl.heads())
-            heads = ""
-            if oldheads and newheads != oldheads:
-                heads = _(" (%+d heads)") % (newheads - oldheads)
+            dh = 0
+            if oldheads:
+                heads = cl.heads()
+                dh = len(heads) - len(oldheads)
+                for h in heads:
+                    if h not in oldheads and 'close' in self[h].extra():
+                        dh -= 1
+            htext = ""
+            if dh:
+                htext = _(" (%+d heads)") % dh
 
             self.ui.status(_("added %d changesets"
                              " with %d changes to %d files%s\n")
-                             % (changesets, revisions, files, heads))
+                             % (changesets, revisions, files, htext))
 
             if changesets > 0:
                 p = lambda: cl.writepending() and self.root or ""
@@ -1925,16 +1855,11 @@ class localrepository(repo.repository):
                 self.hook("incoming", node=hex(cl.node(i)),
                           source=srctype, url=url)
 
-        # FIXME - why does this care about tip?
-        if newheads == oldheads:
-            bookmarks.update(self, self.dirstate.parents(), self['tip'].node())
-
         # never return 0 here:
-        if newheads < oldheads:
-            return newheads - oldheads - 1
+        if dh < 0:
+            return dh - 1
         else:
-            return newheads - oldheads + 1
-
+            return dh + 1
 
     def stream_in(self, remote, requirements):
         lock = self.lock()
@@ -2024,10 +1949,22 @@ class localrepository(repo.repository):
         return self.pull(remote, heads)
 
     def pushkey(self, namespace, key, old, new):
-        return pushkey.push(self, namespace, key, old, new)
+        self.hook('prepushkey', throw=True, namespace=namespace, key=key,
+                  old=old, new=new)
+        ret = pushkey.push(self, namespace, key, old, new)
+        self.hook('pushkey', namespace=namespace, key=key, old=old, new=new,
+                  ret=ret)
+        return ret
 
     def listkeys(self, namespace):
-        return pushkey.list(self, namespace)
+        self.hook('prelistkeys', throw=True, namespace=namespace)
+        values = pushkey.list(self, namespace)
+        self.hook('listkeys', namespace=namespace, values=values)
+        return values
+
+    def debugwireargs(self, one, two, three=None, four=None, five=None):
+        '''used to test argument passing over the wire'''
+        return "%s %s %s %s %s" % (one, two, three, four, five)
 
 # used to avoid circular references so destructors work
 def aftertrans(files):
@@ -2043,7 +1980,7 @@ def undoname(fn):
     return os.path.join(base, name.replace('journal', 'undo', 1))
 
 def instance(ui, path, create):
-    return localrepository(ui, util.drop_scheme('file', path), create)
+    return localrepository(ui, util.localpath(path), create)
 
 def islocal(path):
     return True

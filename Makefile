@@ -45,6 +45,7 @@ doc:
 clean:
 	-$(PYTHON) setup.py clean --all # ignore errors from this command
 	find . \( -name '*.py[cdo]' -o -name '*.so' \) -exec rm -f '{}' ';'
+	rm -f $(addprefix mercurial/,$(notdir $(wildcard mercurial/pure/*.py)))
 	rm -f MANIFEST tests/*.err
 	rm -rf build mercurial/locale
 	$(MAKE) -C doc clean
@@ -77,6 +78,8 @@ dist:	tests dist-notests
 
 dist-notests:	doc MANIFEST
 	TAR_OPTIONS="--owner=root --group=root --mode=u+w,go-w,a+rX-s" $(PYTHON) setup.py -q sdist
+
+check: tests
 
 tests:
 	cd tests && $(PYTHON) run-tests.py $(TESTFLAGS)

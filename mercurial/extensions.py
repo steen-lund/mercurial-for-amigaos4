@@ -6,12 +6,12 @@
 # GNU General Public License version 2 or any later version.
 
 import imp, os
-import util, cmdutil, help, error
+import util, cmdutil, error
 from i18n import _, gettext
 
 _extensions = {}
 _order = []
-_ignore = ['hbisect', 'bookmarks']
+_ignore = ['hbisect', 'bookmarks', 'parentrevspec']
 
 def extensions():
     for name in _order:
@@ -209,6 +209,38 @@ def _disabledpaths(strip_init=False):
         exts[name] = path
     return exts
 
+def _moduledoc(file):
+    '''return the top-level python documentation for the given file
+
+    Loosely inspired by pydoc.source_synopsis(), but rewritten to
+    handle triple quotes and to return the whole text instead of just
+    the synopsis'''
+    result = []
+
+    line = file.readline()
+    while line[:1] == '#' or not line.strip():
+        line = file.readline()
+        if not line:
+            break
+
+    start = line[:3]
+    if start == '"""' or start == "'''":
+        line = line[3:]
+        while line:
+            if line.rstrip().endswith(start):
+                line = line.split(start)[0]
+                if line:
+                    result.append(line)
+                break
+            elif not line:
+                return None # unmatched delimiter
+            result.append(line)
+            line = file.readline()
+    else:
+        return None
+
+    return ''.join(result)
+
 def _disabledhelp(path):
     '''retrieve help synopsis of a disabled extension (without importing)'''
     try:
@@ -216,7 +248,7 @@ def _disabledhelp(path):
     except IOError:
         return
     else:
-        doc = help.moduledoc(file)
+        doc = _moduledoc(file)
         file.close()
 
     if doc: # extracting localized synopsis
@@ -230,20 +262,15 @@ def disabled():
 
     paths = _disabledpaths()
     if not paths:
-        return None, 0
+        return None
 
     exts = {}
-    maxlength = 0
     for name, path in paths.iteritems():
         doc = _disabledhelp(path)
-        if not doc:
-            continue
+        if doc:
+            exts[name] = doc
 
-        exts[name] = doc
-        if len(name) > maxlength:
-            maxlength = len(name)
-
-    return exts, maxlength
+    return exts
 
 def disabledext(name):
     '''find a specific disabled extension from hgext. returns desc'''
@@ -299,11 +326,9 @@ def disabledcmd(ui, cmd, strict=False):
 def enabled():
     '''return a dict of {name: desc} of extensions, and the max name length'''
     exts = {}
-    maxlength = 0
     for ename, ext in extensions():
         doc = (gettext(ext.__doc__) or _('(no help text available)'))
         ename = ename.split('.')[-1]
-        maxlength = max(len(ename), maxlength)
         exts[ename] = doc.splitlines()[0].strip()
 
-    return exts, maxlength
+    return exts

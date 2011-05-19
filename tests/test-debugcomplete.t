@@ -67,6 +67,7 @@ Show debug commands if there are no other candidates
   $ hg debugcomplete debug
   debugancestor
   debugbuilddag
+  debugbundle
   debugcheckstate
   debugcommands
   debugcomplete
@@ -74,19 +75,24 @@ Show debug commands if there are no other candidates
   debugdag
   debugdata
   debugdate
+  debugdiscovery
   debugfsinfo
+  debuggetbundle
   debugignore
   debugindex
   debugindexdot
   debuginstall
+  debugknown
   debugpushkey
   debugrebuildstate
   debugrename
+  debugrevlog
   debugrevspec
   debugsetparents
   debugstate
   debugsub
   debugwalk
+  debugwireargs
 
 Do not show the alias of a debug command if there are other candidates
 (this should hide rawcommit)
@@ -199,37 +205,43 @@ Show all commands + options
   addremove: similarity, include, exclude, dry-run
   archive: no-decode, prefix, rev, type, subrepos, include, exclude
   backout: merge, parent, tool, rev, include, exclude, message, logfile, date, user
-  bisect: reset, good, bad, skip, command, noupdate
-  bookmarks: force, rev, delete, rename
+  bisect: reset, good, bad, skip, extend, command, noupdate
+  bookmarks: force, rev, delete, rename, inactive
   branch: force, clean
   branches: active, closed
   bundle: force, rev, branch, base, all, type, ssh, remotecmd, insecure
   cat: output, rev, decode, include, exclude
   copy: after, force, include, exclude, dry-run
   debugancestor: 
-  debugbuilddag: mergeable-file, appended-file, overwritten-file, new-file
+  debugbuilddag: mergeable-file, overwritten-file, new-file
+  debugbundle: all
   debugcheckstate: 
   debugcommands: 
   debugcomplete: options
   debugdag: tags, branches, dots, spaces
-  debugdata: 
+  debugdata: changelog, manifest
   debugdate: extended
+  debugdiscovery: old, nonheads, ssh, remotecmd, insecure
   debugfsinfo: 
+  debuggetbundle: head, common, type
   debugignore: 
-  debugindex: format
+  debugindex: changelog, manifest, format
   debugindexdot: 
   debuginstall: 
+  debugknown: 
   debugpushkey: 
   debugrebuildstate: rev
   debugrename: rev
+  debugrevlog: changelog, manifest, dump
   debugrevspec: 
   debugsetparents: 
-  debugstate: nodates
+  debugstate: nodates, datesort
   debugsub: rev
   debugwalk: include, exclude
-  grep: print0, all, follow, ignore-case, files-with-matches, line-number, rev, user, date, include, exclude
+  debugwireargs: three, four, five, ssh, remotecmd, insecure
+  grep: print0, all, text, follow, ignore-case, files-with-matches, line-number, rev, user, date, include, exclude
   heads: rev, topo, active, closed, style, template
-  help: 
+  help: extension, command
   identify: rev, num, id, branch, tags, bookmarks
   import: strip, base, force, no-commit, exact, import-branch, message, logfile, date, user, similarity
   incoming: force, newest-first, bundle, rev, bookmarks, branch, patch, git, limit, no-merges, stat, style, template, ssh, remotecmd, insecure, subrepos

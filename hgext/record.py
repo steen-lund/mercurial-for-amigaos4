@@ -324,10 +324,12 @@ def filterpatch(ui, headers):
         for i, chunk in enumerate(h.hunks):
             if skipfile is None and skipall is None:
                 chunk.pretty(ui)
-            msg = (total == 1
-                   and (_('record this change to %r?') % chunk.filename())
-                   or (_('record change %d/%d to %r?') %
-                       (pos - len(h.hunks) + i, total, chunk.filename())))
+            if total == 1:
+                msg = _('record this change to %r?') % chunk.filename()
+            else:
+                idx = pos - len(h.hunks) + i
+                msg = _('record change %d/%d to %r?') % (idx, total,
+                                                         chunk.filename())
             r, skipfile, skipall = prompt(skipfile, skipall, msg)
             if r:
                 if fixoffset:
@@ -467,7 +469,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
 
             # 3a. apply filtered patch to clean repo  (clean)
             if backups:
-                hg.revert(repo, repo.dirstate.parents()[0],
+                hg.revert(repo, repo.dirstate.p1(),
                           lambda key: key in backups)
 
             # 3b. (apply)
@@ -475,10 +477,7 @@ def dorecord(ui, repo, commitfunc, *pats, **opts):
                 try:
                     ui.debug('applying patch\n')
                     ui.debug(fp.getvalue())
-                    pfiles = {}
-                    patch.internalpatch(fp, ui, 1, repo.root, files=pfiles,
-                                        eolmode=None)
-                    cmdutil.updatedir(ui, repo, pfiles)
+                    patch.internalpatch(ui, repo, fp, 1, eolmode=None)
                 except patch.PatchError, err:
                     raise util.Abort(str(err))
             del fp
@@ -533,6 +532,9 @@ cmdtable = {
     "record":
         (record, commands.table['^commit|ci'][1], # same options as commit
          _('hg record [OPTION]... [FILE]...')),
+    "qrecord":
+        (qrecord, {}, # placeholder until mq is available
+         _('hg qrecord [OPTION]... PATCH [FILE]...')),
 }
 
 

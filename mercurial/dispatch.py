@@ -90,7 +90,7 @@ def _runcatch(ui, args):
     except error.CommandError, inst:
         if inst.args[0]:
             ui.warn(_("hg %s: %s\n") % (inst.args[0], inst.args[1]))
-            commands.help_(ui, inst.args[0])
+            commands.help_(ui, inst.args[0], full=False, command=True)
         else:
             ui.warn(_("hg: %s\n") % inst.args[1])
             commands.help_(ui, 'shortlist')
@@ -133,7 +133,8 @@ def _runcatch(ui, args):
         elif hasattr(inst, "reason"):
             try: # usually it is in the form (errno, strerror)
                 reason = inst.reason.args[1]
-            except: # it might be anything, for example a string
+            except (AttributeError, IndexError):
+                 # it might be anything, for example a string
                 reason = inst.reason
             ui.warn(_("abort: error: %s\n") % reason)
         elif hasattr(inst, "args") and inst.args[0] == errno.EPIPE:
@@ -181,10 +182,21 @@ def _runcatch(ui, args):
 
     return -1
 
-def aliasargs(fn):
-    if hasattr(fn, 'args'):
-        return fn.args
-    return []
+def aliasargs(fn, givenargs):
+    args = getattr(fn, 'args', [])
+    if args and givenargs:
+        cmd = ' '.join(map(util.shellquote, args))
+
+        nums = []
+        def replacer(m):
+            num = int(m.group(1)) - 1
+            nums.append(num)
+            return givenargs[num]
+        cmd = re.sub(r'\$(\d+|\$)', replacer, cmd)
+        givenargs = [x for i, x in enumerate(givenargs)
+                     if i not in nums]
+        args = shlex.split(cmd)
+    return args + givenargs
 
 class cmdalias(object):
     def __init__(self, name, definition, cmdtable):
@@ -262,7 +274,7 @@ class cmdalias(object):
             else:
                 self.fn, self.opts = tableentry
 
-            self.args = aliasargs(self.fn) + args
+            self.args = aliasargs(self.fn, args)
             if cmd not in commands.norepo.split(' '):
                 self.norepo = False
             if self.help.startswith("hg " + cmd):
@@ -329,7 +341,7 @@ def _parse(ui, args):
         aliases, entry = cmdutil.findcmd(cmd, commands.table,
                                      ui.config("ui", "strict"))
         cmd = aliases[0]
-        args = aliasargs(entry[0]) + args
+        args = aliasargs(entry[0], args)
         defaults = ui.config("defaults", cmd)
         if defaults:
             args = map(util.expandpath, shlex.split(defaults)) + args
@@ -586,8 +598,8 @@ def _dispatch(ui, args):
                     if guess and repos.count(guess) == len(repos):
                         return _dispatch(ui, ['--repository', guess] + fullargs)
                 if not path:
-                    raise error.RepoError(_("There is no Mercurial repository"
-                                      " here (.hg not found)"))
+                    raise error.RepoError(_("no repository found in %r"
+                                            " (.hg not found)") % os.getcwd())
                 raise
         args.insert(0, repo)
     elif rpath:
