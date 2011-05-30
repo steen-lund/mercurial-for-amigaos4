@@ -7,7 +7,7 @@
 # GNU General Public License version 2 or any later version.
 
 import os, copy
-from mercurial import match, patch, util, error, ui
+from mercurial import match, patch, scmutil, error, ui
 from mercurial.node import hex, nullid
 
 def up(p):
@@ -66,7 +66,7 @@ def _siblings(siblings=[], hiderev=None):
     if len(siblings) == 1 and siblings[0].rev() == hiderev:
         return
     for s in siblings:
-        d = {'node': hex(s.node()), 'rev': s.rev()}
+        d = {'node': s.hex(), 'rev': s.rev()}
         d['user'] = s.user()
         d['date'] = s.date()
         d['description'] = s.description()
@@ -127,7 +127,7 @@ def showbookmark(repo, tmpl, t1, node=nullid, **args):
 
 def cleanpath(repo, path):
     path = path.lstrip('/')
-    return util.canonpath(repo.root, '', path)
+    return scmutil.canonpath(repo.root, '', path)
 
 def changectx(repo, req):
     changeid = "tip"
