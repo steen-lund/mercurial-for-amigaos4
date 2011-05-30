@@ -37,9 +37,9 @@ The following settings are available::
                      # disable is given
 
 Valid entries for the format field are topic, bar, number, unit,
-estimate, and item. item defaults to the last 20 characters of the
-item, but this can be changed by adding either ``-<num>`` which would
-take the last num characters, or ``+<num>`` for the first num
+estimate, speed, and item. item defaults to the last 20 characters of
+the item, but this can be changed by adding either ``-<num>`` which
+would take the last num characters, or ``+<num>`` for the first num
 characters.
 """
 
@@ -47,7 +47,6 @@ import sys
 import time
 
 from mercurial.i18n import _
-from mercurial import util
 
 def spacejoin(*args):
     return ' '.join(s for s in args if s)
@@ -152,6 +151,8 @@ class progbar(object):
                 add = unit
             elif indicator == 'estimate':
                 add = self.estimate(topic, pos, total, now)
+            elif indicator == 'speed':
+                add = self.speed(topic, pos, unit, now)
             if not needprogress:
                 head = spacejoin(head, add)
             else:
@@ -217,6 +218,15 @@ class progbar(object):
                 return fmtremaining(seconds)
         return ''
 
+    def speed(self, topic, pos, unit, now):
+        initialpos = self.startvals[topic]
+        delta = pos - initialpos
+        elapsed = now - self.starttimes[topic]
+        if elapsed > float(
+            self.ui.config('progress', 'estimate', default=2)):
+            return _('%d %s/sec') % (delta / elapsed, unit)
+        return ''
+
     def progress(self, topic, pos, item='', unit='', total=None):
         now = time.time()
         if pos is None:
@@ -239,7 +249,6 @@ class progbar(object):
             self.topicstates[topic] = pos, item, unit, total
             if now - self.lastprint >= self.refresh and self.topics:
                 self.lastprint = now
-                current = self.topics[-1]
                 self.show(now, topic, *self.topicstates[topic])
 
 def uisetup(ui):
