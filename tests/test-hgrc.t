@@ -20,12 +20,12 @@ Issue1199: Can't use '%' in hgrc (eg url encoded username)
   $ cd foobar
   $ cat .hg/hgrc
   [paths]
-  default = */foo%bar (glob)
+  default = $TESTTMP/foo%bar
   $ hg paths
-  default = */foo%bar (glob)
+  default = $TESTTMP/foo%bar
   $ hg showconfig
-  bundle.mainreporoot=*/foobar (glob)
-  paths.default=*/foo%bar (glob)
+  bundle.mainreporoot=$TESTTMP/foobar
+  paths.default=$TESTTMP/foo%bar
   $ cd ..
 
 issue1829: wrong indentation
@@ -129,6 +129,42 @@ plain hgrc
   $ HGPLAIN=; export HGPLAIN
   $ hg showconfig --config ui.traceback=True --debug
   read config from: $TESTTMP/hgrc
+  none: ui.traceback=True
+  none: ui.verbose=False
+  none: ui.debug=True
+  none: ui.quiet=False
+
+plain mode with exceptions
+
+  $ cat > plain.py <<EOF
+  > def uisetup(ui):
+  >     ui.write('plain: %r\n' % ui.plain())
+  > EOF
+  $ echo "[extensions]" >> $HGRCPATH
+  $ echo "plain=./plain.py" >> $HGRCPATH
+  $ HGPLAINEXCEPT=; export HGPLAINEXCEPT
+  $ hg showconfig --config ui.traceback=True --debug
+  plain: True
+  read config from: $TESTTMP/hgrc
+  $TESTTMP/hgrc:15: extensions.plain=./plain.py
+  none: ui.traceback=True
+  none: ui.verbose=False
+  none: ui.debug=True
+  none: ui.quiet=False
+  $ unset HGPLAIN
+  $ hg showconfig --config ui.traceback=True --debug
+  plain: True
+  read config from: $TESTTMP/hgrc
+  $TESTTMP/hgrc:15: extensions.plain=./plain.py
+  none: ui.traceback=True
+  none: ui.verbose=False
+  none: ui.debug=True
+  none: ui.quiet=False
+  $ HGPLAINEXCEPT=i18n; export HGPLAINEXCEPT
+  $ hg showconfig --config ui.traceback=True --debug
+  plain: True
+  read config from: $TESTTMP/hgrc
+  $TESTTMP/hgrc:15: extensions.plain=./plain.py
   none: ui.traceback=True
   none: ui.verbose=False
   none: ui.debug=True

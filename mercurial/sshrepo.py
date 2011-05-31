@@ -7,7 +7,6 @@
 
 from i18n import _
 import util, error, wireproto
-import re
 
 class remotelock(object):
     def __init__(self, repo):
@@ -20,20 +19,20 @@ class remotelock(object):
             self.release()
 
 class sshrepository(wireproto.wirerepository):
-    def __init__(self, ui, path, create=0):
+    def __init__(self, ui, path, create=False):
         self._url = path
         self.ui = ui
 
-        m = re.match(r'^ssh://(([^@]+)@)?([^:/]+)(:(\d+))?(/(.*))?$', path)
-        if not m:
+        u = util.url(path, parsequery=False, parsefragment=False)
+        if u.scheme != 'ssh' or not u.host or u.path is None:
             self._abort(error.RepoError(_("couldn't parse location %s") % path))
 
-        self.user = m.group(2)
-        if self.user and ':' in self.user:
+        self.user = u.user
+        if u.passwd is not None:
             self._abort(error.RepoError(_("password in URL not supported")))
-        self.host = m.group(3)
-        self.port = m.group(5)
-        self.path = m.group(7) or "."
+        self.host = u.host
+        self.port = u.port
+        self.path = u.path or "."
 
         sshcmd = self.ui.config("ui", "ssh", "ssh")
         remotecmd = self.ui.config("ui", "remotecmd", "hg")
@@ -119,9 +118,24 @@ class sshrepository(wireproto.wirerepository):
     def _callstream(self, cmd, **args):
         self.ui.debug("sending %s command\n" % cmd)
         self.pipeo.write("%s\n" % cmd)
-        for k, v in sorted(args.iteritems()):
+        _func, names = wireproto.commands[cmd]
+        keys = names.split()
+        wireargs = {}
+        for k in keys:
+            if k == '*':
+                wireargs['*'] = args
+                break
+            else:
+                wireargs[k] = args[k]
+                del args[k]
+        for k, v in sorted(wireargs.iteritems()):
             self.pipeo.write("%s %d\n" % (k, len(v)))
-            self.pipeo.write(v)
+            if isinstance(v, dict):
+                for dk, dv in v.iteritems():
+                    self.pipeo.write("%s %d\n" % (dk, len(dv)))
+                    self.pipeo.write(dv)
+            else:
+                self.pipeo.write(v)
         self.pipeo.flush()
 
         return self.pipei
@@ -153,7 +167,7 @@ class sshrepository(wireproto.wirerepository):
         self.readerr()
         try:
             l = int(l)
-        except:
+        except ValueError:
             self._abort(error.ResponseError(_("unexpected response:"), l))
         return self.pipei.read(l)
 
@@ -194,7 +208,7 @@ class sshrepository(wireproto.wirerepository):
             return 1
         try:
             return int(r)
-        except:
+        except ValueError:
             self._abort(error.ResponseError(_("unexpected response:"), r))
 
 instance = sshrepository
