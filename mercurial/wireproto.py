@@ -15,7 +15,9 @@ import pushkey as pushkeymod
 # list of nodes encoding / decoding
 
 def decodelist(l, sep=' '):
-    return map(bin, l.split(sep))
+    if l:
+        return map(bin, l.split(sep))
+    return []
 
 def encodelist(l, sep=' '):
     return sep.join(map(hex, l))
@@ -35,7 +37,15 @@ class wirerepository(repo.repository):
         d = self._call("heads")
         try:
             return decodelist(d[:-1])
-        except:
+        except ValueError:
+            self._abort(error.ResponseError(_("unexpected response:"), d))
+
+    def known(self, nodes):
+        n = encodelist(nodes)
+        d = self._call("known", nodes=n)
+        try:
+            return [bool(int(f)) for f in d]
+        except ValueError:
             self._abort(error.ResponseError(_("unexpected response:"), d))
 
     def branchmap(self):
@@ -57,7 +67,7 @@ class wirerepository(repo.repository):
         try:
             br = [tuple(decodelist(b)) for b in d.splitlines()]
             return br
-        except:
+        except ValueError:
             self._abort(error.ResponseError(_("unexpected response:"), d))
 
     def between(self, pairs):
@@ -68,7 +78,7 @@ class wirerepository(repo.repository):
             d = self._call("between", pairs=n)
             try:
                 r.extend(l and decodelist(l) or [] for l in d.splitlines())
-            except:
+            except ValueError:
                 self._abort(error.ResponseError(_("unexpected response:"), d))
         return r
 
@@ -113,13 +123,29 @@ class wirerepository(repo.repository):
                              bases=bases, heads=heads)
         return changegroupmod.unbundle10(self._decompress(f), 'UN')
 
+    def getbundle(self, source, heads=None, common=None):
+        self.requirecap('getbundle', _('look up remote changes'))
+        opts = {}
+        if heads is not None:
+            opts['heads'] = encodelist(heads)
+        if common is not None:
+            opts['common'] = encodelist(common)
+        f = self._callstream("getbundle", **opts)
+        return changegroupmod.unbundle10(self._decompress(f), 'UN')
+
     def unbundle(self, cg, heads, source):
         '''Send cg (a readable file-like object representing the
         changegroup to push, typically a chunkbuffer object) to the
         remote server as a bundle. Return an integer indicating the
         result of the push (see localrepository.addchangegroup()).'''
 
-        ret, output = self._callpush("unbundle", cg, heads=encodelist(heads))
+        if heads != ['force'] and self.capable('unbundlehash'):
+            heads = encodelist(['hashed',
+                                util.sha1(''.join(sorted(heads))).digest()])
+        else:
+            heads = encodelist(heads)
+
+        ret, output = self._callpush("unbundle", cg, heads=heads)
         if ret == "":
             raise error.ResponseError(
                 _('push failed:'), output)
@@ -132,6 +158,15 @@ class wirerepository(repo.repository):
         for l in output.splitlines(True):
             self.ui.status(_('remote: '), l)
         return ret
+
+    def debugwireargs(self, one, two, three=None, four=None, five=None):
+        # don't pass optional arguments left at their default value
+        opts = {}
+        if three is not None:
+            opts['three'] = three
+        if four is not None:
+            opts['four'] = four
+        return self._call('debugwireargs', one=one, two=two, **opts)
 
 # server side
 
@@ -151,6 +186,17 @@ def dispatch(repo, proto, command):
     func, spec = commands[command]
     args = proto.getargs(spec)
     return func(repo, proto, *args)
+
+def options(cmd, keys, others):
+    opts = {}
+    for k in keys:
+        if k in others:
+            opts[k] = others[k]
+            del others[k]
+    if others:
+        sys.stderr.write("abort: %s got unexpected arguments %s\n"
+                         % (cmd, ",".join(others)))
+    return opts
 
 def between(repo, proto, pairs):
     pairs = [decodelist(p, '-') for p in pairs.split(" ")]
@@ -176,7 +222,8 @@ def branches(repo, proto, nodes):
     return "".join(r)
 
 def capabilities(repo, proto):
-    caps = 'lookup changegroupsubset branchmap pushkey'.split()
+    caps = ('lookup changegroupsubset branchmap pushkey known getbundle '
+            'unbundlehash').split()
     if _allowstream(repo.ui):
         requiredformats = repo.requirements & repo.supportedformats
         # if our local revlogs are just revlogv1, add 'stream' cap
@@ -186,6 +233,7 @@ def capabilities(repo, proto):
         else:
             caps.append('streamreqs=%s' % ','.join(requiredformats))
     caps.append('unbundle=%s' % ','.join(changegroupmod.bundlepriority))
+    caps.append('httpheader=1024')
     return ' '.join(caps)
 
 def changegroup(repo, proto, roots):
@@ -197,6 +245,18 @@ def changegroupsubset(repo, proto, bases, heads):
     bases = decodelist(bases)
     heads = decodelist(heads)
     cg = repo.changegroupsubset(bases, heads, 'serve')
+    return streamres(proto.groupchunks(cg))
+
+def debugwireargs(repo, proto, one, two, others):
+    # only accept optional args from the known set
+    opts = options('debugwireargs', ['three', 'four'], others)
+    return repo.debugwireargs(one, two, **opts)
+
+def getbundle(repo, proto, others):
+    opts = options('getbundle', ['heads', 'common'], others)
+    for k, v in opts.iteritems():
+        opts[k] = decodelist(v)
+    cg = repo.getbundle('serve', **opts)
     return streamres(proto.groupchunks(cg))
 
 def heads(repo, proto):
@@ -228,13 +288,16 @@ def lookup(repo, proto, key):
         success = 0
     return "%s %s\n" % (success, r)
 
+def known(repo, proto, nodes, others):
+    return ''.join(b and "1" or "0" for b in repo.known(decodelist(nodes)))
+
 def pushkey(repo, proto, namespace, key, old, new):
     # compatibility with pre-1.8 clients which were accidentally
     # sending raw binary nodes rather than utf-8-encoded hex
     if len(new) == 20 and new.encode('string-escape') != new:
         # looks like it could be a binary node
         try:
-            u = new.decode('utf-8')
+            new.decode('utf-8')
             new = encoding.tolocal(new) # but cleanly decodes as UTF-8
         except UnicodeDecodeError:
             pass # binary, leave unmodified
@@ -298,7 +361,9 @@ def unbundle(repo, proto, heads):
 
     def check_heads():
         heads = repo.heads()
-        return their_heads == ['force'] or their_heads == heads
+        heads_hash = util.sha1(''.join(sorted(heads))).digest()
+        return (their_heads == ['force'] or their_heads == heads or
+                their_heads == ['hashed', heads_hash])
 
     proto.redirect()
 
@@ -343,8 +408,11 @@ commands = {
     'capabilities': (capabilities, ''),
     'changegroup': (changegroup, 'roots'),
     'changegroupsubset': (changegroupsubset, 'bases heads'),
+    'debugwireargs': (debugwireargs, 'one two *'),
+    'getbundle': (getbundle, '*'),
     'heads': (heads, ''),
     'hello': (hello, ''),
+    'known': (known, 'nodes *'),
     'listkeys': (listkeys, 'namespace'),
     'lookup': (lookup, 'key'),
     'pushkey': (pushkey, 'namespace key old new'),
