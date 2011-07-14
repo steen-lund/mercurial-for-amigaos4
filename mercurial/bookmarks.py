@@ -26,7 +26,13 @@ def read(repo):
     bookmarks = {}
     try:
         for line in repo.opener('bookmarks'):
-            sha, refspec = line.strip().split(' ', 1)
+            line = line.strip()
+            if not line:
+                continue
+            if ' ' not in line:
+                repo.ui.warn(_('malformed line in .hg/bookmarks: %r\n') % line)
+                continue
+            sha, refspec = line.split(' ', 1)
             refspec = encoding.tolocal(refspec)
             try:
                 bookmarks[refspec] = repo.changelog.lookup(sha)
