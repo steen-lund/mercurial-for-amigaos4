@@ -474,15 +474,14 @@ def _getlocal(ui, rpath):
         lui = ui.copy()
         lui.readconfig(os.path.join(path, ".hg", "hgrc"), path)
 
-    if rpath:
+    if rpath and rpath[-1]:
         path = lui.expandpath(rpath[-1])
         lui = ui.copy()
         lui.readconfig(os.path.join(path, ".hg", "hgrc"), path)
 
     return path, lui
 
-def _checkshellalias(ui, args):
-    cwd = os.getcwd()
+def _checkshellalias(lui, ui, args):
     norepo = commands.norepo
     options = {}
 
@@ -494,12 +493,6 @@ def _checkshellalias(ui, args):
     if not args:
         return
 
-    _parseconfig(ui, options['config'])
-    if options['cwd']:
-        os.chdir(options['cwd'])
-
-    path, lui = _getlocal(ui, [options['repository']])
-
     cmdtable = commands.table.copy()
     addaliases(lui, cmdtable)
 
@@ -508,7 +501,6 @@ def _checkshellalias(ui, args):
         aliases, entry = cmdutil.findcmd(cmd, cmdtable, lui.config("ui", "strict"))
     except (error.AmbiguousCommand, error.UnknownCommand):
         commands.norepo = norepo
-        os.chdir(cwd)
         return
 
     cmd = aliases[0]
@@ -519,16 +511,11 @@ def _checkshellalias(ui, args):
         return lambda: runcommand(lui, None, cmd, args[:1], ui, options, d, [], {})
 
     commands.norepo = norepo
-    os.chdir(cwd)
 
 _loaded = set()
 def _dispatch(req):
     args = req.args
     ui = req.ui
-
-    shellaliasfn = _checkshellalias(ui, args)
-    if shellaliasfn:
-        return shellaliasfn()
 
     # read --config before doing anything else
     # (e.g. to change trust settings for reading .hg/hgrc)
@@ -541,6 +528,12 @@ def _dispatch(req):
 
     rpath = _earlygetopt(["-R", "--repository", "--repo"], args)
     path, lui = _getlocal(ui, rpath)
+
+    # Now that we're operating in the right directory/repository with
+    # the right config settings, check for shell aliases
+    shellaliasfn = _checkshellalias(lui, ui, args)
+    if shellaliasfn:
+        return shellaliasfn()
 
     # Configure extensions in phases: uisetup, extsetup, cmdtable, and
     # reposetup. Programs like TortoiseHg will call _dispatch several
