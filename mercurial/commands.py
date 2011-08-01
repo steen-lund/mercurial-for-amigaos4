@@ -119,6 +119,10 @@ diffopts2 = [
     ('', 'stat', None, _('output diffstat-style summary of changes')),
 ]
 
+mergetoolopts = [
+    ('t', 'tool', '', _('specify merge tool')),
+]
+
 similarityopts = [
     ('s', 'similarity', '',
      _('guess renamed files by similarity (0<=s<=100)'), _('SIMILARITY'))
@@ -349,9 +353,8 @@ def archive(ui, repo, dest, **opts):
 @command('backout',
     [('', 'merge', None, _('merge with old dirstate parent after backout')),
     ('', 'parent', '', _('parent to choose when backing out merge'), _('REV')),
-    ('t', 'tool', '', _('specify merge tool')),
     ('r', 'rev', '', _('revision to backout'), _('REV')),
-    ] + walkopts + commitopts + commitopts2,
+    ] + mergetoolopts + walkopts + commitopts + commitopts2,
     _('[OPTION]... [-r] REV'))
 def backout(ui, repo, node=None, rev=None, **opts):
     '''reverse effect of earlier changeset
@@ -1102,8 +1105,8 @@ def commit(ui, repo, *pats, **opts):
     ctx = repo[node]
     parents = ctx.parents()
 
-    if bheads and not [x for x in parents
-                       if x.node() in bheads and x.branch() == branch]:
+    if (bheads and node not in bheads and not
+        [x for x in parents if x.node() in bheads and x.branch() == branch]):
         ui.status(_('created new head\n'))
         # The message is not printed for initial roots. For the other
         # changesets, it is printed in the following situations:
@@ -1656,8 +1659,9 @@ def debuggetbundle(ui, repopath, bundlepath, head=None, common=None, **opts):
 def debugignore(ui, repo, *values, **opts):
     """display the combined ignore pattern"""
     ignore = repo.dirstate._ignore
-    if hasattr(ignore, 'includepat'):
-        ui.write("%s\n" % ignore.includepat)
+    includepat = getattr(ignore, 'includepat', None)
+    if includepat is not None:
+        ui.write("%s\n" % includepat)
     else:
         raise util.Abort(_("no ignore patterns found"))
 
@@ -2225,6 +2229,7 @@ def export(ui, repo, *changesets, **opts):
     :``%R``: changeset revision number
     :``%b``: basename of the exporting repository
     :``%h``: short-form changeset hash (12 hexadecimal digits)
+    :``%m``: first line of the commit message (only alphanumeric characters)
     :``%n``: zero-padded sequence number, starting at 1
     :``%r``: zero-padded changeset revision number
 
@@ -2644,7 +2649,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
         doc = gettext(entry[0].__doc__)
         if not doc:
             doc = _("(no help text available)")
-        if hasattr(entry[0], 'definition'):  # aliased command
+        if util.safehasattr(entry[0], 'definition'):  # aliased command
             if entry[0].definition.startswith('!'):  # shell alias
                 doc = _('shell alias for::\n\n    %s') % entry[0].definition[1:]
             else:
@@ -2729,7 +2734,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
         # description
         if not doc:
             doc = _("(no help text available)")
-        if hasattr(doc, '__call__'):
+        if util.safehasattr(doc, '__call__'):
             doc = doc()
 
         ui.write("%s\n\n" % header)
@@ -3505,10 +3510,10 @@ def manifest(ui, repo, node=None, rev=None, **opts):
 
 @command('^merge',
     [('f', 'force', None, _('force a merge with outstanding changes')),
-    ('t', 'tool', '', _('specify merge tool')),
     ('r', 'rev', '', _('revision to merge'), _('REV')),
     ('P', 'preview', None,
-     _('review revisions to merge (no merge is performed)'))],
+     _('review revisions to merge (no merge is performed)'))
+     ] + mergetoolopts,
     _('[-P] [-f] [[-r] REV]'))
 def merge(ui, repo, node=None, **opts):
     """merge working directory with another revision
@@ -3587,7 +3592,7 @@ def merge(ui, repo, node=None, **opts):
 
     try:
         # ui.forcemerge is an internal variable, do not document
-        ui.setconfig('ui', 'forcemerge', opts.get('tool', ''))
+        repo.ui.setconfig('ui', 'forcemerge', opts.get('tool', ''))
         return hg.merge(repo, node, force=opts.get('force'))
     finally:
         ui.setconfig('ui', 'forcemerge', '')
@@ -4049,9 +4054,8 @@ def rename(ui, repo, *pats, **opts):
     ('l', 'list', None, _('list state of files needing merge')),
     ('m', 'mark', None, _('mark files as resolved')),
     ('u', 'unmark', None, _('mark files as unresolved')),
-    ('t', 'tool', '', _('specify merge tool')),
     ('n', 'no-status', None, _('hide status prefix'))]
-    + walkopts,
+    + mergetoolopts + walkopts,
     _('[OPTION]... [FILE]...'))
 def resolve(ui, repo, *pats, **opts):
     """redo merges or set/view the merge status of files
@@ -4725,6 +4729,7 @@ def summary(ui, repo, **opts):
     ctx = repo[None]
     parents = ctx.parents()
     pnode = parents[0].node()
+    marks = []
 
     for p in parents:
         # label with log.changeset (instead of log.parent) since this
@@ -4733,7 +4738,7 @@ def summary(ui, repo, **opts):
                  label='log.changeset')
         ui.write(' '.join(p.tags()), label='log.tag')
         if p.bookmarks():
-            ui.write(' ' + ' '.join(p.bookmarks()), label='log.bookmark')
+            marks.extend(p.bookmarks())
         if p.rev() == -1:
             if not len(repo):
                 ui.write(_(' (empty repository)'))
@@ -4751,6 +4756,20 @@ def summary(ui, repo, **opts):
         ui.write(m, label='log.branch')
     else:
         ui.status(m, label='log.branch')
+
+    if marks:
+        current = repo._bookmarkcurrent
+        ui.write(_('bookmarks:'), label='log.bookmark')
+        if current is not None:
+            try:
+                marks.remove(current)
+                ui.write(' *' + current, label='bookmarks.current')
+            except ValueError:
+                # current bookmark not in parent ctx marks
+                pass
+        for m in marks:
+          ui.write(' ' + m, label='log.bookmark')
+        ui.write('\n', label='log.bookmark')
 
     st = list(repo.status(unknown=True))[:6]
 

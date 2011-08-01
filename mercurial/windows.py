@@ -9,6 +9,21 @@ from i18n import _
 import osutil
 import errno, msvcrt, os, re, sys
 
+from win32 import executablepath
+from win32 import getuser
+from win32 import hidewindow
+from win32 import lookupreg
+from win32 import makedir
+from win32 import nlinks
+from win32 import oslink
+from win32 import samedevice
+from win32 import samefile
+from win32 import setsignalhandler
+from win32 import spawndetached
+from win32 import termwidth
+from win32 import testpid
+from win32 import unlink
+
 nulldev = 'NUL:'
 umask = 002
 
@@ -99,8 +114,9 @@ def checklink(path):
 def setbinary(fd):
     # When run without console, pipes may expose invalid
     # fileno(), usually set to -1.
-    if hasattr(fd, 'fileno') and fd.fileno() >= 0:
-        msvcrt.setmode(fd.fileno(), os.O_BINARY)
+    fno = getattr(fd, 'fileno', None)
+    if fno is not None and fno() >= 0:
+        msvcrt.setmode(fno(), os.O_BINARY)
 
 def pconvert(path):
     return '/'.join(path.split(os.sep))
@@ -281,6 +297,14 @@ def groupmembers(name):
     # Don't support groups on Windows for now
     raise KeyError()
 
-from win32 import *
+def isexec(f):
+    return False
+
+class cachestat(object):
+    def __init__(self, path):
+        pass
+
+    def cacheable(self):
+        return False
 
 expandglobs = True

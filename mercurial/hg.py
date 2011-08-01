@@ -98,9 +98,9 @@ def repository(ui, path='', create=False):
             hook(ui, repo)
     return repo
 
-def peer(ui, opts, path, create=False):
+def peer(uiorrepo, opts, path, create=False):
     '''return a repository peer for the specified path'''
-    rui = remoteui(ui, opts)
+    rui = remoteui(uiorrepo, opts)
     return repository(rui, path, create)
 
 def defaultdest(source):
@@ -537,7 +537,7 @@ def verify(repo):
 
 def remoteui(src, opts):
     'build a remote ui from ui or repo and opts'
-    if hasattr(src, 'baseui'): # looks like a repository
+    if util.safehasattr(src, 'baseui'): # looks like a repository
         dst = src.baseui.copy() # drop repo-specific config
         src = src.ui # copy target options from repo
     else: # assume it's a global ui object

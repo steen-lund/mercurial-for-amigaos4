@@ -19,10 +19,65 @@ import errno, re, shutil, sys, tempfile, traceback
 import os, time, calendar, textwrap, unicodedata, signal
 import imp, socket, urllib
 
+if os.name == 'nt':
+    import windows as platform
+else:
+    import posix as platform
+
+cachestat = platform.cachestat
+checkexec = platform.checkexec
+checklink = platform.checklink
+executablepath = platform.executablepath
+expandglobs = platform.expandglobs
+explainexit = platform.explainexit
+findexe = platform.findexe
+gethgcmd = platform.gethgcmd
+getuser = platform.getuser
+groupmembers = platform.groupmembers
+groupname = platform.groupname
+hidewindow = platform.hidewindow
+isexec = platform.isexec
+isowner = platform.isowner
+localpath = platform.localpath
+lookupreg = platform.lookupreg
+makedir = platform.makedir
+nlinks = platform.nlinks
+normpath = platform.normpath
+nulldev = platform.nulldev
+openhardlinks = platform.openhardlinks
+oslink = platform.oslink
+parsepatchoutput = platform.parsepatchoutput
+pconvert = platform.pconvert
+popen = platform.popen
+posixfile = platform.posixfile
+quotecommand = platform.quotecommand
+realpath = platform.realpath
+rename = platform.rename
+samedevice = platform.samedevice
+samefile = platform.samefile
+samestat = platform.samestat
+setbinary = platform.setbinary
+setflags = platform.setflags
+setsignalhandler = platform.setsignalhandler
+shellquote = platform.shellquote
+spawndetached = platform.spawndetached
+sshargs = platform.sshargs
+statfiles = platform.statfiles
+termwidth = platform.termwidth
+testpid = platform.testpid
+umask = platform.umask
+unlink = platform.unlink
+unlinkpath = platform.unlinkpath
+username = platform.username
+
 # Python compatibility
 
 def sha1(s):
     return _fastsha1(s)
+
+_notset = object()
+def safehasattr(thing, attr):
+    return getattr(thing, attr, _notset) is not _notset
 
 def _fastsha1(s):
     # This function will import sha1 from hashlib or sha (whichever is
@@ -303,8 +358,8 @@ def mainfrozen():
     The code supports py2exe (most common, Windows only) and tools/freeze
     (portable, not much used).
     """
-    return (hasattr(sys, "frozen") or # new py2exe
-            hasattr(sys, "importers") or # old py2exe
+    return (safehasattr(sys, "frozen") or # new py2exe
+            safehasattr(sys, "importers") or # old py2exe
             imp.is_frozen("__main__")) # tools/freeze
 
 def hgexecutable():
@@ -389,18 +444,6 @@ def checksignature(func):
             raise
 
     return check
-
-def makedir(path, notindexed):
-    os.mkdir(path)
-
-def unlinkpath(f):
-    """unlink and remove the directory if it is empty"""
-    os.unlink(f)
-    # try removing directories that might now be empty
-    try:
-        os.removedirs(os.path.dirname(f))
-    except OSError:
-        pass
 
 def copyfile(src, dest):
     "copy a file, preserving mode and atime/mtime"
@@ -487,22 +530,10 @@ def checkwinfilename(path):
             return _("filename ends with '%s', which is not allowed "
                      "on Windows") % t
 
-def lookupreg(key, name=None, scope=None):
-    return None
-
-def hidewindow():
-    """Hide current shell window.
-
-    Used to hide the window opened when starting asynchronous
-    child process under Windows, unneeded on other systems.
-    """
-    pass
-
 if os.name == 'nt':
     checkosfilename = checkwinfilename
-    from windows import *
 else:
-    from posix import *
+    checkosfilename = platform.checkosfilename
 
 def makelock(info, pathname):
     try:
@@ -752,7 +783,7 @@ class atomictempfile(object):
             self._fp.close()
 
     def __del__(self):
-        if hasattr(self, '_fp'): # constructor actually did something
+        if safehasattr(self, '_fp'): # constructor actually did something
             self.close()
 
 def makedirs(name, mode=None):
@@ -1223,8 +1254,9 @@ def rundetached(args, condfn):
     def handler(signum, frame):
         terminated.add(os.wait())
     prevhandler = None
-    if hasattr(signal, 'SIGCHLD'):
-        prevhandler = signal.signal(signal.SIGCHLD, handler)
+    SIGCHLD = getattr(signal, 'SIGCHLD', None)
+    if SIGCHLD is not None:
+        prevhandler = signal.signal(SIGCHLD, handler)
     try:
         pid = spawndetached(args)
         while not condfn():
