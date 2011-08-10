@@ -433,9 +433,9 @@ def formatblock(block, width):
                      initindent=indent,
                      hangindent=subindent)
 
-
-def format(text, width, indent=0, keep=None):
-    """Parse and format the text according to width."""
+def parse(text, indent=0, keep=None):
+    """Parse text into a list of blocks"""
+    pruned = []
     blocks = findblocks(text)
     for b in blocks:
         b['indent'] += indent
@@ -450,12 +450,49 @@ def format(text, width, indent=0, keep=None):
     blocks = addmargins(blocks)
     blocks = prunecomments(blocks)
     blocks = findadmonitions(blocks)
+    return blocks, pruned
+
+def formatblocks(blocks, width):
+    text = '\n'.join(formatblock(b, width) for b in blocks)
+    return text
+
+def format(text, width, indent=0, keep=None):
+    """Parse and format the text according to width."""
+    blocks, pruned = parse(text, indent, keep or [])
     text = '\n'.join(formatblock(b, width) for b in blocks)
     if keep is None:
         return text
     else:
         return text, pruned
 
+def getsections(blocks):
+    '''return a list of (section name, nesting level, blocks) tuples'''
+    nest = ""
+    level = 0
+    secs = []
+    for b in blocks:
+        if b['type'] == 'section':
+            i = b['underline']
+            if i not in nest:
+                nest += i
+            level = nest.index(i) + 1
+            nest = nest[:level]
+            secs.append((b['lines'][0], level, [b]))
+        else:
+            if not secs:
+                # add an initial empty section
+                secs = [('', 0, [])]
+            secs[-1][2].append(b)
+    return secs
+
+def decorateblocks(blocks, width):
+    '''generate a list of (section name, line text) pairs for search'''
+    lines = []
+    for s in getsections(blocks):
+        section = s[0]
+        text = formatblocks(s[2], width)
+        lines.append([(section, l) for l in text.splitlines(True)])
+    return lines
 
 if __name__ == "__main__":
     from pprint import pprint

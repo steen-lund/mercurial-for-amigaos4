@@ -84,6 +84,21 @@ def setflags(f, l, x):
         # Turn off all +x bits
         os.chmod(f, s & 0666)
 
+def copymode(src, dst, mode=None):
+    '''Copy the file mode from the file at path src to dst.
+    If src doesn't exist, we're using mode instead. If mode is None, we're
+    using umask.'''
+    try:
+        st_mode = os.lstat(src).st_mode & 0777
+    except OSError, inst:
+        if inst.errno != errno.ENOENT:
+            raise
+        st_mode = mode
+        if st_mode is None:
+            st_mode = ~umask
+        st_mode &= 0666
+    os.chmod(dst, st_mode)
+
 def checkexec(path):
     """
     Check whether the given path is on a filesystem with UNIX-like exec flags
@@ -325,3 +340,45 @@ def termwidth():
     except ImportError:
         pass
     return 80
+
+def makedir(path, notindexed):
+    os.mkdir(path)
+
+def unlinkpath(f):
+    """unlink and remove the directory if it is empty"""
+    os.unlink(f)
+    # try removing directories that might now be empty
+    try:
+        os.removedirs(os.path.dirname(f))
+    except OSError:
+        pass
+
+def lookupreg(key, name=None, scope=None):
+    return None
+
+def hidewindow():
+    """Hide current shell window.
+
+    Used to hide the window opened when starting asynchronous
+    child process under Windows, unneeded on other systems.
+    """
+    pass
+
+class cachestat(object):
+    def __init__(self, path):
+        self.stat = os.stat(path)
+
+    def cacheable(self):
+        return bool(self.stat.st_ino)
+
+    def __eq__(self, other):
+        try:
+            return self.stat == other.stat
+        except AttributeError:
+            return False
+
+    def __ne__(self, other):
+        return not self == other
+
+def executablepath():
+    return None # available on Windows only
