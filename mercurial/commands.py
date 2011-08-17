@@ -119,6 +119,10 @@ diffopts2 = [
     ('', 'stat', None, _('output diffstat-style summary of changes')),
 ]
 
+mergetoolopts = [
+    ('t', 'tool', '', _('specify merge tool')),
+]
+
 similarityopts = [
     ('s', 'similarity', '',
      _('guess renamed files by similarity (0<=s<=100)'), _('SIMILARITY'))
@@ -349,9 +353,8 @@ def archive(ui, repo, dest, **opts):
 @command('backout',
     [('', 'merge', None, _('merge with old dirstate parent after backout')),
     ('', 'parent', '', _('parent to choose when backing out merge'), _('REV')),
-    ('t', 'tool', '', _('specify merge tool')),
     ('r', 'rev', '', _('revision to backout'), _('REV')),
-    ] + walkopts + commitopts + commitopts2,
+    ] + mergetoolopts + walkopts + commitopts + commitopts2,
     _('[OPTION]... [-r] REV'))
 def backout(ui, repo, node=None, rev=None, **opts):
     '''reverse effect of earlier changeset
@@ -1102,8 +1105,8 @@ def commit(ui, repo, *pats, **opts):
     ctx = repo[node]
     parents = ctx.parents()
 
-    if bheads and not [x for x in parents
-                       if x.node() in bheads and x.branch() == branch]:
+    if (bheads and node not in bheads and not
+        [x for x in parents if x.node() in bheads and x.branch() == branch]):
         ui.status(_('created new head\n'))
         # The message is not printed for initial roots. For the other
         # changesets, it is printed in the following situations:
@@ -1656,8 +1659,9 @@ def debuggetbundle(ui, repopath, bundlepath, head=None, common=None, **opts):
 def debugignore(ui, repo, *values, **opts):
     """display the combined ignore pattern"""
     ignore = repo.dirstate._ignore
-    if hasattr(ignore, 'includepat'):
-        ui.write("%s\n" % ignore.includepat)
+    includepat = getattr(ignore, 'includepat', None)
+    if includepat is not None:
+        ui.write("%s\n" % includepat)
     else:
         raise util.Abort(_("no ignore patterns found"))
 
@@ -2225,6 +2229,7 @@ def export(ui, repo, *changesets, **opts):
     :``%R``: changeset revision number
     :``%b``: basename of the exporting repository
     :``%h``: short-form changeset hash (12 hexadecimal digits)
+    :``%m``: first line of the commit message (only alphanumeric characters)
     :``%n``: zero-padded sequence number, starting at 1
     :``%r``: zero-padded changeset revision number
 
@@ -2574,7 +2579,7 @@ def heads(ui, repo, *branchrevs, **opts):
     [('e', 'extension', None, _('show only help for extensions')),
      ('c', 'command', None, _('show only help for commands'))],
     _('[-ec] [TOPIC]'))
-def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts):
+def help_(ui, name=None, unknowncmd=False, full=True, **opts):
     """show help for a given topic or a help overview
 
     With no arguments, print a list of commands with short help messages.
@@ -2584,14 +2589,71 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
 
     Returns 0 if successful.
     """
-    option_lists = []
+
+    optlist = []
     textwidth = min(ui.termwidth(), 80) - 2
+
+    # list all option lists
+    def opttext(optlist, width):
+        out = []
+        multioccur = False
+        for title, options in optlist:
+            out.append(("\n%s" % title, None))
+            for option in options:
+                if len(option) == 5:
+                    shortopt, longopt, default, desc, optlabel = option
+                else:
+                    shortopt, longopt, default, desc = option
+                    optlabel = _("VALUE") # default label
+
+                if _("DEPRECATED") in desc and not ui.verbose:
+                    continue
+                if isinstance(default, list):
+                    numqualifier = " %s [+]" % optlabel
+                    multioccur = True
+                elif (default is not None) and not isinstance(default, bool):
+                    numqualifier = " %s" % optlabel
+                else:
+                    numqualifier = ""
+                out.append(("%2s%s" %
+                            (shortopt and "-%s" % shortopt,
+                             longopt and " --%s%s" %
+                             (longopt, numqualifier)),
+                            "%s%s" % (desc,
+                                      default
+                                      and _(" (default: %s)") % default
+                                      or "")))
+        if multioccur:
+            msg = _("\n[+] marked option can be specified multiple times")
+            if ui.verbose and name != 'shortlist':
+                out.append((msg, None))
+            else:
+                out.insert(-1, (msg, None))
+
+        text = ""
+        if out:
+            colwidth = encoding.colwidth
+            # normalize: (opt or message, desc or None, width of opt)
+            entries = [desc and (opt, desc, colwidth(opt)) or (opt, None, 0)
+                       for opt, desc in out]
+            hanging = max([e[2] for e in entries])
+            for opt, desc, width in entries:
+                if desc:
+                    initindent = ' %s%s  ' % (opt, ' ' * (hanging - width))
+                    hangindent = ' ' * (hanging + 3)
+                    text += '%s\n' % (util.wrap(desc, width,
+                                                initindent=initindent,
+                                                hangindent=hangindent))
+                else:
+                    text +=  "%s\n" % opt
+
+        return text
 
     def addglobalopts(aliases):
         if ui.verbose:
-            option_lists.append((_("global options:"), globalopts))
+            optlist.append((_("global options:"), globalopts))
             if name == 'shortlist':
-                option_lists.append((_('use "hg help" for the full list '
+                optlist.append((_('use "hg help" for the full list '
                                        'of commands'), ()))
         else:
             if name == 'shortlist':
@@ -2604,13 +2666,9 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
                         'global options') % (name and " " + name or "")
             else:
                 msg = _('use "hg -v help %s" to show global options') % name
-            option_lists.append((msg, ()))
+            optlist.append((msg, ()))
 
     def helpcmd(name):
-        if with_version:
-            version_(ui)
-            ui.write('\n')
-
         try:
             aliases, entry = cmdutil.findcmd(name, table, strict=unknowncmd)
         except error.AmbiguousCommand, inst:
@@ -2644,7 +2702,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
         doc = gettext(entry[0].__doc__)
         if not doc:
             doc = _("(no help text available)")
-        if hasattr(entry[0], 'definition'):  # aliased command
+        if util.safehasattr(entry[0], 'definition'):  # aliased command
             if entry[0].definition.startswith('!'):  # shell alias
                 doc = _('shell alias for::\n\n    %s') % entry[0].definition[1:]
             else:
@@ -2660,7 +2718,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
         if not ui.quiet:
             # options
             if entry[1]:
-                option_lists.append((_("options:\n"), entry[1]))
+                optlist.append((_("options:\n"), entry[1]))
 
             addglobalopts(False)
 
@@ -2729,7 +2787,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
         # description
         if not doc:
             doc = _("(no help text available)")
-        if hasattr(doc, '__call__'):
+        if util.safehasattr(doc, '__call__'):
             doc = doc()
 
         ui.write("%s\n\n" % header)
@@ -2804,10 +2862,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
 
     else:
         # program name
-        if ui.verbose or with_version:
-            version_(ui)
-        else:
-            ui.status(_("Mercurial Distributed SCM\n"))
+        ui.status(_("Mercurial Distributed SCM\n"))
         ui.status('\n')
 
         # list of commands
@@ -2822,42 +2877,6 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
             if text:
                 ui.write("\n%s\n" % minirst.format(text, textwidth))
 
-    # list all option lists
-    opt_output = []
-    multioccur = False
-    for title, options in option_lists:
-        opt_output.append(("\n%s" % title, None))
-        for option in options:
-            if len(option) == 5:
-                shortopt, longopt, default, desc, optlabel = option
-            else:
-                shortopt, longopt, default, desc = option
-                optlabel = _("VALUE") # default label
-
-            if _("DEPRECATED") in desc and not ui.verbose:
-                continue
-            if isinstance(default, list):
-                numqualifier = " %s [+]" % optlabel
-                multioccur = True
-            elif (default is not None) and not isinstance(default, bool):
-                numqualifier = " %s" % optlabel
-            else:
-                numqualifier = ""
-            opt_output.append(("%2s%s" %
-                               (shortopt and "-%s" % shortopt,
-                                longopt and " --%s%s" %
-                                (longopt, numqualifier)),
-                               "%s%s" % (desc,
-                                         default
-                                         and _(" (default: %s)") % default
-                                         or "")))
-    if multioccur:
-        msg = _("\n[+] marked option can be specified multiple times")
-        if ui.verbose and name != 'shortlist':
-            opt_output.append((msg, None))
-        else:
-            opt_output.insert(-1, (msg, None))
-
     if not name:
         ui.write(_("\nadditional help topics:\n\n"))
         topics = []
@@ -2867,21 +2886,7 @@ def help_(ui, name=None, with_version=False, unknowncmd=False, full=True, **opts
         for t, desc in topics:
             ui.write(" %-*s  %s\n" % (topics_len, t, desc))
 
-    if opt_output:
-        colwidth = encoding.colwidth
-        # normalize: (opt or message, desc or None, width of opt)
-        entries = [desc and (opt, desc, colwidth(opt)) or (opt, None, 0)
-                   for opt, desc in opt_output]
-        hanging = max([e[2] for e in entries])
-        for opt, desc, width in entries:
-            if desc:
-                initindent = ' %s%s  ' % (opt, ' ' * (hanging - width))
-                hangindent = ' ' * (hanging + 3)
-                ui.write('%s\n' % (util.wrap(desc, textwidth,
-                                             initindent=initindent,
-                                             hangindent=hangindent)))
-            else:
-                ui.write("%s\n" % opt)
+    ui.write(opttext(optlist, textwidth))
 
 @command('identify|id',
     [('r', 'rev', '',
@@ -3505,10 +3510,10 @@ def manifest(ui, repo, node=None, rev=None, **opts):
 
 @command('^merge',
     [('f', 'force', None, _('force a merge with outstanding changes')),
-    ('t', 'tool', '', _('specify merge tool')),
     ('r', 'rev', '', _('revision to merge'), _('REV')),
     ('P', 'preview', None,
-     _('review revisions to merge (no merge is performed)'))],
+     _('review revisions to merge (no merge is performed)'))
+     ] + mergetoolopts,
     _('[-P] [-f] [[-r] REV]'))
 def merge(ui, repo, node=None, **opts):
     """merge working directory with another revision
@@ -3587,7 +3592,7 @@ def merge(ui, repo, node=None, **opts):
 
     try:
         # ui.forcemerge is an internal variable, do not document
-        ui.setconfig('ui', 'forcemerge', opts.get('tool', ''))
+        repo.ui.setconfig('ui', 'forcemerge', opts.get('tool', ''))
         return hg.merge(repo, node, force=opts.get('force'))
     finally:
         ui.setconfig('ui', 'forcemerge', '')
@@ -3945,13 +3950,16 @@ def remove(ui, repo, *pats, **opts):
     file states (columns) and option combinations (rows). The file
     states are Added [A], Clean [C], Modified [M] and Missing [!] (as
     reported by :hg:`status`). The actions are Warn, Remove (from
-    branch) and Delete (from disk)::
+    branch) and Delete (from disk):
 
-             A  C  M  !
-      none   W  RD W  R
-      -f     R  RD RD R
-      -A     W  W  W  R
-      -Af    R  R  R  R
+      ======= == == == ==
+              A  C  M  !
+      ======= == == == ==
+      none    W  RD W  R
+      -f      R  RD RD R
+      -A      W  W  W  R
+      -Af     R  R  R  R
+      ======= == == == ==
 
     Note that remove never deletes files in Added [A] state from the
     working directory, not even if option --force is specified.
@@ -4049,9 +4057,8 @@ def rename(ui, repo, *pats, **opts):
     ('l', 'list', None, _('list state of files needing merge')),
     ('m', 'mark', None, _('mark files as resolved')),
     ('u', 'unmark', None, _('mark files as unresolved')),
-    ('t', 'tool', '', _('specify merge tool')),
     ('n', 'no-status', None, _('hide status prefix'))]
-    + walkopts,
+    + mergetoolopts + walkopts,
     _('[OPTION]... [FILE]...'))
 def resolve(ui, repo, *pats, **opts):
     """redo merges or set/view the merge status of files
@@ -4143,7 +4150,7 @@ def resolve(ui, repo, *pats, **opts):
     [('a', 'all', None, _('revert all changes when no arguments given')),
     ('d', 'date', '', _('tipmost revision matching date'), _('DATE')),
     ('r', 'rev', '', _('revert to the specified revision'), _('REV')),
-    ('', 'no-backup', None, _('do not save backup copies of files')),
+    ('C', 'no-backup', None, _('do not save backup copies of files')),
     ] + walkopts + dryrunopts,
     _('[OPTION]... [-r REV] [NAME]...'))
 def revert(ui, repo, *pats, **opts):
@@ -4725,6 +4732,7 @@ def summary(ui, repo, **opts):
     ctx = repo[None]
     parents = ctx.parents()
     pnode = parents[0].node()
+    marks = []
 
     for p in parents:
         # label with log.changeset (instead of log.parent) since this
@@ -4733,7 +4741,7 @@ def summary(ui, repo, **opts):
                  label='log.changeset')
         ui.write(' '.join(p.tags()), label='log.tag')
         if p.bookmarks():
-            ui.write(' ' + ' '.join(p.bookmarks()), label='log.bookmark')
+            marks.extend(p.bookmarks())
         if p.rev() == -1:
             if not len(repo):
                 ui.write(_(' (empty repository)'))
@@ -4751,6 +4759,20 @@ def summary(ui, repo, **opts):
         ui.write(m, label='log.branch')
     else:
         ui.status(m, label='log.branch')
+
+    if marks:
+        current = repo._bookmarkcurrent
+        ui.write(_('bookmarks:'), label='log.bookmark')
+        if current is not None:
+            try:
+                marks.remove(current)
+                ui.write(' *' + current, label='bookmarks.current')
+            except ValueError:
+                # current bookmark not in parent ctx marks
+                pass
+        for m in marks:
+          ui.write(' ' + m, label='log.bookmark')
+        ui.write('\n', label='log.bookmark')
 
     st = list(repo.status(unknown=True))[:6]
 
