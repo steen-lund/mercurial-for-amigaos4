@@ -18,7 +18,7 @@ Remember to update http://mercurial.selenic.com/wiki/HelpStyleGuide
 when adding support for new constructs.
 """
 
-import re, sys
+import re
 import util, encoding
 from i18n import _
 
@@ -39,7 +39,7 @@ def findblocks(text):
     has an 'indent' field and a 'lines' field.
     """
     blocks = []
-    for b in _blockre.split(text.strip()):
+    for b in _blockre.split(text.lstrip('\n').rstrip()):
         lines = b.splitlines()
         indent = min((len(l) - len(l.lstrip())) for l in lines)
         lines = [l[indent:] for l in lines]
@@ -103,6 +103,7 @@ _optionre = re.compile(r'^(-([a-zA-Z0-9]), )?(--[a-z0-9-]+)'
                        r'((.*)  +)(.*)$')
 _fieldre = re.compile(r':(?![: ])([^:]*)(?<! ):[ ]+(.*)')
 _definitionre = re.compile(r'[^ ]')
+_tablere = re.compile(r'(=+\s+)*=+')
 
 def splitparagraphs(blocks):
     """Split paragraphs into lists."""
@@ -251,6 +252,46 @@ def prunecontainers(blocks, keep):
 
 _sectionre = re.compile(r"""^([-=`:.'"~^_*+#])\1+$""")
 
+def findtables(blocks):
+    '''Find simple tables
+
+       Only simple one-line table elements are supported
+    '''
+
+    for block in blocks:
+        # Searching for a block that looks like this:
+        #
+        # === ==== ===
+        #  A    B   C
+        # === ==== ===  <- optional
+        #  1    2   3
+        #  x    y   z
+        # === ==== ===
+        if (block['type'] == 'paragraph' and
+            len(block['lines']) > 4 and
+            _tablere.match(block['lines'][0]) and
+            block['lines'][0] == block['lines'][-1]):
+            block['type'] = 'table'
+            block['header'] = False
+            div = block['lines'][0]
+            columns = [x for x in xrange(len(div))
+                       if div[x] == '=' and (x == 0 or div[x - 1] == ' ')]
+            rows = []
+            for l in block['lines'][1:-1]:
+                if l == div:
+                    block['header'] = True
+                    continue
+                row = []
+                for n, start in enumerate(columns):
+                    if n + 1 < len(columns):
+                        row.append(l[start:columns[n + 1]].strip())
+                    else:
+                        row.append(l[start:].strip())
+                rows.append(row)
+            block['table'] = rows
+
+    return blocks
+
 def findsections(blocks):
     """Finds sections.
 
@@ -392,6 +433,24 @@ def formatblock(block, width):
     if block['type'] == 'section':
         underline = encoding.colwidth(block['lines'][0]) * block['underline']
         return "%s%s\n%s%s" % (indent, block['lines'][0],indent, underline)
+    if block['type'] == 'table':
+        table = block['table']
+        # compute column widths
+        widths = [max([encoding.colwidth(e) for e in c]) for c in zip(*table)]
+        text = ''
+        span = sum(widths) + len(widths) - 1
+        indent = ' ' * block['indent']
+        hang = ' ' * (len(indent) + span - widths[-1])
+        f = ' '.join('%%-%ds' % n for n in widths)
+
+        for row in table:
+            l = f % tuple(row)
+            l = util.wrap(l, width=width, initindent=indent, hangindent=hang)
+            if not text and block['header']:
+                text = l + '\n' + indent + '-' * (min(width, span)) + '\n'
+            else:
+                text += l + "\n"
+        return text
     if block['type'] == 'definition':
         term = indent + block['lines'][0]
         hang = len(block['lines'][-1]) - len(block['lines'][-1].lstrip())
@@ -433,13 +492,14 @@ def formatblock(block, width):
                      initindent=indent,
                      hangindent=subindent)
 
-
-def format(text, width, indent=0, keep=None):
-    """Parse and format the text according to width."""
+def parse(text, indent=0, keep=None):
+    """Parse text into a list of blocks"""
+    pruned = []
     blocks = findblocks(text)
     for b in blocks:
         b['indent'] += indent
     blocks = findliteralblocks(blocks)
+    blocks = findtables(blocks)
     blocks, pruned = prunecontainers(blocks, keep or [])
     blocks = findsections(blocks)
     blocks = inlineliterals(blocks)
@@ -450,33 +510,62 @@ def format(text, width, indent=0, keep=None):
     blocks = addmargins(blocks)
     blocks = prunecomments(blocks)
     blocks = findadmonitions(blocks)
+    return blocks, pruned
+
+def formatblocks(blocks, width):
+    text = '\n'.join(formatblock(b, width) for b in blocks)
+    return text
+
+def format(text, width, indent=0, keep=None):
+    """Parse and format the text according to width."""
+    blocks, pruned = parse(text, indent, keep or [])
     text = '\n'.join(formatblock(b, width) for b in blocks)
     if keep is None:
         return text
     else:
         return text, pruned
 
+def getsections(blocks):
+    '''return a list of (section name, nesting level, blocks) tuples'''
+    nest = ""
+    level = 0
+    secs = []
+    for b in blocks:
+        if b['type'] == 'section':
+            i = b['underline']
+            if i not in nest:
+                nest += i
+            level = nest.index(i) + 1
+            nest = nest[:level]
+            secs.append((b['lines'][0], level, [b]))
+        else:
+            if not secs:
+                # add an initial empty section
+                secs = [('', 0, [])]
+            secs[-1][2].append(b)
+    return secs
 
-if __name__ == "__main__":
-    from pprint import pprint
+def decorateblocks(blocks, width):
+    '''generate a list of (section name, line text) pairs for search'''
+    lines = []
+    for s in getsections(blocks):
+        section = s[0]
+        text = formatblocks(s[2], width)
+        lines.append([(section, l) for l in text.splitlines(True)])
+    return lines
 
-    def debug(func, *args):
-        blocks = func(*args)
-        print "*** after %s:" % func.__name__
-        pprint(blocks)
-        print
-        return blocks
+def maketable(data, indent=0, header=False):
+    '''Generate an RST table for the given table data'''
 
-    text = sys.stdin.read()
-    blocks = debug(findblocks, text)
-    blocks = debug(findliteralblocks, blocks)
-    blocks, pruned = debug(prunecontainers, blocks, sys.argv[1:])
-    blocks = debug(inlineliterals, blocks)
-    blocks = debug(splitparagraphs, blocks)
-    blocks = debug(updatefieldlists, blocks)
-    blocks = debug(updateoptionlists, blocks)
-    blocks = debug(findsections, blocks)
-    blocks = debug(addmargins, blocks)
-    blocks = debug(prunecomments, blocks)
-    blocks = debug(findadmonitions, blocks)
-    print '\n'.join(formatblock(b, 30) for b in blocks)
+    widths = [max(encoding.colwidth(e) for e in c) for c in zip(*data)]
+    indent = ' ' * indent
+    f = indent + ' '.join('%%-%ds' % w for w in widths) + '\n'
+    div = indent + ' '.join('=' * w for w in widths) + '\n'
+
+    out = [div]
+    for row in data:
+        out.append(f % tuple(row))
+    if header and len(data) > 1:
+        out.insert(2, div)
+    out.append(div)
+    return ''.join(out)
