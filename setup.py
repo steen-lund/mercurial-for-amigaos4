@@ -5,7 +5,7 @@
 # 'python setup.py --help' for more options
 
 import sys, platform
-if not hasattr(sys, 'version_info') or sys.version_info < (2, 4, 0, 'final'):
+if getattr(sys, 'version_info', (0, 0, 0)) < (2, 4, 0, 'final'):
     raise SystemExit("Mercurial requires Python 2.4 or later.")
 
 if sys.version_info[0] >= 3:
@@ -366,7 +366,7 @@ else:
     extmodules.append(Extension('mercurial.osutil', ['mercurial/osutil.c'],
                                 extra_link_args=osutil_ldflags))
 
-if sys.platform == 'linux2' and os.uname()[2] > '2.6':
+if sys.platform.startswith('linux') and os.uname()[2] > '2.6':
     # The inotify extension is only usable with Linux 2.6 kernels.
     # You also need a reasonably recent C library.
     # In any case, if it fails to build the error will be skipped ('optional').
