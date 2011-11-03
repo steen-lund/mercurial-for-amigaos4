@@ -2534,16 +2534,16 @@ def graft(ui, repo, *revs, **opts):
         revs = scmutil.revrange(repo, revs)
 
     # check for merges
-    for ctx in repo.set('%ld and merge()', revs):
-        ui.warn(_('skipping ungraftable merge revision %s\n') % ctx.rev())
-        revs.remove(ctx.rev())
+    for rev in repo.revs('%ld and merge()', revs):
+        ui.warn(_('skipping ungraftable merge revision %s\n') % rev)
+        revs.remove(rev)
     if not revs:
         return -1
 
     # check for ancestors of dest branch
-    for ctx in repo.set('::. and %ld', revs):
-        ui.warn(_('skipping ancestor revision %s\n') % ctx.rev())
-        revs.remove(ctx.rev())
+    for rev in repo.revs('::. and %ld', revs):
+        ui.warn(_('skipping ancestor revision %s\n') % rev)
+        revs.remove(rev)
     if not revs:
         return -1
 
@@ -3705,14 +3705,14 @@ def locate(ui, repo, *pats, **opts):
     [('f', 'follow', None,
      _('follow changeset history, or file history across copies and renames')),
     ('', 'follow-first', None,
-     _('only follow the first parent of merge changesets')),
+     _('only follow the first parent of merge changesets (DEPRECATED)')),
     ('d', 'date', '', _('show revisions matching date spec'), _('DATE')),
     ('C', 'copies', None, _('show copied files')),
     ('k', 'keyword', [],
      _('do case-insensitive search for a given text'), _('TEXT')),
     ('r', 'rev', [], _('show the specified revision or range'), _('REV')),
     ('', 'removed', None, _('include revisions where files were removed')),
-    ('m', 'only-merges', None, _('show only merges')),
+    ('m', 'only-merges', None, _('show only merges (DEPRECATED)')),
     ('u', 'user', [], _('revisions committed by user'), _('USER')),
     ('', 'only-branch', [],
      _('show only changesets within the given named branch (DEPRECATED)'),
