@@ -186,6 +186,12 @@ try:
 except ImportError:
     version = 'unknown'
 
+class hgbuild(build):
+    # Insert hgbuildmo first so that files in mercurial/locale/ are found
+    # when build_py is run next.
+    sub_commands = [('build_mo', None),
+                   ] + build.sub_commands
+
 class hgbuildmo(build):
 
     description = "build translations (.mo files)"
@@ -217,13 +223,18 @@ class hgbuildmo(build):
             self.make_file([pofile], mobuildfile, spawn, (cmd,))
 
 
-# Insert hgbuildmo first so that files in mercurial/locale/ are found
-# when build_py is run next.
-build.sub_commands.insert(0, ('build_mo', None))
+class hgdist(Distribution):
+    pure = 0
 
-Distribution.pure = 0
-Distribution.global_options.append(('pure', None, "use pure (slow) Python "
-                                    "code instead of C extensions"))
+    global_options = Distribution.global_options + \
+                     [('pure', None, "use pure (slow) Python "
+                        "code instead of C extensions"),
+                     ]
+
+    def has_ext_modules(self):
+        # self.ext_modules is emptied in hgbuildpy.finalize_options which is
+        # too late for some cases
+        return not self.pure and Distribution.has_ext_modules(self)
 
 class hgbuildext(build_ext):
 
@@ -335,7 +346,8 @@ class hginstallscripts(install_scripts):
             fp.write(data)
             fp.close()
 
-cmdclass = {'build_mo': hgbuildmo,
+cmdclass = {'build': hgbuild,
+            'build_mo': hgbuildmo,
             'build_ext': hgbuildext,
             'build_py': hgbuildpy,
             'build_hgextindex': buildhgextindex,
@@ -435,6 +447,7 @@ setup(name='mercurial',
       data_files=datafiles,
       package_data=packagedata,
       cmdclass=cmdclass,
+      distclass=hgdist,
       options=dict(py2exe=dict(packages=['hgext', 'email']),
                    bdist_mpkg=dict(zipdist=True,
                                    license='COPYING',
