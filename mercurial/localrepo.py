@@ -8,7 +8,7 @@
 from node import bin, hex, nullid, nullrev, short
 from i18n import _
 import repo, changegroup, subrepo, discovery, pushkey
-import changelog, dirstate, filelog, manifest, context, bookmarks
+import changelog, dirstate, filelog, manifest, context, bookmarks, phases
 import lock, transaction, store, encoding
 import scmutil, util, extensions, hook, error, revset
 import match as matchmod
@@ -36,6 +36,7 @@ class localrepository(repo.repository):
         self.wopener = scmutil.opener(self.root)
         self.baseui = baseui
         self.ui = baseui.copy()
+        self._dirtyphases = False
 
         try:
             self.ui.readconfig(self.join("hgrc"), self.root)
@@ -170,6 +171,25 @@ class localrepository(repo.repository):
     def _writebookmarks(self, marks):
       bookmarks.write(self)
 
+    @filecache('phaseroots')
+    def _phaseroots(self):
+        self._dirtyphases = False
+        phaseroots = phases.readroots(self)
+        phases.filterunknown(self, phaseroots)
+        return phaseroots
+
+    @propertycache
+    def _phaserev(self):
+        cache = [0] * len(self)
+        for phase in phases.trackedphases:
+            roots = map(self.changelog.rev, self._phaseroots[phase])
+            if roots:
+                for rev in roots:
+                    cache[rev] = phase
+                for rev in self.changelog.descendants(*roots):
+                    cache[rev] = phase
+        return cache
+
     @filecache('00changelog.i', True)
     def changelog(self):
         c = changelog.changelog(self.sopener)
@@ -220,15 +240,18 @@ class localrepository(repo.repository):
         for i in xrange(len(self)):
             yield i
 
+    def revs(self, expr, *args):
+        '''Return a list of revisions matching the given revset'''
+        expr = revset.formatspec(expr, *args)
+        m = revset.match(None, expr)
+        return [r for r in m(self, range(len(self)))]
+
     def set(self, expr, *args):
         '''
         Yield a context for each matching revision, after doing arg
         replacement via revset.formatspec
         '''
-
-        expr = revset.formatspec(expr, *args)
-        m = revset.match(None, expr)
-        for r in m(self, range(len(self))):
+        for r in self.revs(expr, *args):
             yield self[r]
 
     def url(self):
@@ -737,10 +760,16 @@ class localrepository(repo.repository):
             util.copyfile(bkname, self.join('journal.bookmarks'))
         else:
             self.opener.write('journal.bookmarks', '')
+        phasesname = self.sjoin('phaseroots')
+        if os.path.exists(phasesname):
+            util.copyfile(phasesname, self.sjoin('journal.phaseroots'))
+        else:
+            self.sopener.write('journal.phaseroots', '')
 
         return (self.sjoin('journal'), self.join('journal.dirstate'),
                 self.join('journal.branch'), self.join('journal.desc'),
-                self.join('journal.bookmarks'))
+                self.join('journal.bookmarks'),
+                self.sjoin('journal.phaseroots'))
 
     def recover(self):
         lock = self.lock()
@@ -805,6 +834,9 @@ class localrepository(repo.repository):
         if os.path.exists(self.join('undo.bookmarks')):
             util.rename(self.join('undo.bookmarks'),
                         self.join('bookmarks'))
+        if os.path.exists(self.sjoin('undo.phaseroots')):
+            util.rename(self.sjoin('undo.phaseroots'),
+                        self.sjoin('phaseroots'))
         self.invalidate()
 
         parentgone = (parents[0] not in self.changelog.nodemap or
@@ -891,6 +923,8 @@ class localrepository(repo.repository):
 
         def unlock():
             self.store.write()
+            if self._dirtyphases:
+                phases.writeroots(self)
             for k, ce in self._filecache.items():
                 if k == 'dirstate':
                     continue
