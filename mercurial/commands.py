@@ -13,6 +13,7 @@ import hg, scmutil, util, revlog, extensions, copies, error, bookmarks
 import patch, help, url, encoding, templatekw, discovery
 import archival, changegroup, cmdutil, hbisect
 import sshserver, hgweb, hgweb.server, commandserver
+import match as matchmod
 import merge as mergemod
 import minirst, revset, fileset
 import dagparser, context, simplemerge
@@ -2189,7 +2190,7 @@ def debugstate(ui, repo, nodates=None, datesort=None):
         if ent[1] & 020000:
             mode = 'lnk'
         else:
-            mode = '%3o' % (ent[1] & 0777)
+            mode = '%3o' % (ent[1] & 0777 & ~util.umask)
         ui.write("%c %s %10d %s%s\n" % (ent[0], mode, ent[2], timestr, file_))
     for f in repo.dirstate.copies():
         ui.write(_("copy: %s -> %s\n") % (repo.dirstate.copied(f), f))
@@ -2432,23 +2433,45 @@ def forget(ui, repo, *pats, **opts):
     if not pats:
         raise util.Abort(_('no files specified'))
 
-    m = scmutil.match(repo[None], pats, opts)
+    wctx = repo[None]
+    m = scmutil.match(wctx, pats, opts)
     s = repo.status(match=m, clean=True)
     forget = sorted(s[0] + s[1] + s[3] + s[6])
+    subforget = {}
     errs = 0
+
+    for subpath in wctx.substate:
+        sub = wctx.sub(subpath)
+        try:
+            submatch = matchmod.narrowmatcher(subpath, m)
+            for fsub in sub.walk(submatch):
+                if submatch.exact(fsub):
+                    subforget[os.path.join(subpath, fsub)] = (fsub, sub)
+        except error.LookupError:
+            ui.status(_("skipping missing subrepository: %s\n") % subpath)
 
     for f in m.files():
         if f not in repo.dirstate and not os.path.isdir(m.rel(f)):
-            if os.path.exists(m.rel(f)):
-                ui.warn(_('not removing %s: file is already untracked\n')
-                        % m.rel(f))
-            errs = 1
+            if f not in subforget:
+                if os.path.exists(m.rel(f)):
+                    ui.warn(_('not removing %s: file is already untracked\n')
+                            % m.rel(f))
+                errs = 1
 
     for f in forget:
         if ui.verbose or not m.exact(f):
             ui.status(_('removing %s\n') % m.rel(f))
 
-    repo[None].forget(forget)
+    if ui.verbose:
+        for f in sorted(subforget.keys()):
+            ui.status(_('removing %s\n') % m.rel(f))
+
+    wctx.forget(forget)
+
+    for f in sorted(subforget.keys()):
+        fsub, sub = subforget[f]
+        sub.forget([fsub])
+
     return errs
 
 @command(
@@ -2534,16 +2557,16 @@ def graft(ui, repo, *revs, **opts):
         revs = scmutil.revrange(repo, revs)
 
     # check for merges
-    for ctx in repo.set('%ld and merge()', revs):
-        ui.warn(_('skipping ungraftable merge revision %s\n') % ctx.rev())
-        revs.remove(ctx.rev())
+    for rev in repo.revs('%ld and merge()', revs):
+        ui.warn(_('skipping ungraftable merge revision %s\n') % rev)
+        revs.remove(rev)
     if not revs:
         return -1
 
     # check for ancestors of dest branch
-    for ctx in repo.set('::. and %ld', revs):
-        ui.warn(_('skipping ancestor revision %s\n') % ctx.rev())
-        revs.remove(ctx.rev())
+    for rev in repo.revs('::. and %ld', revs):
+        ui.warn(_('skipping ancestor revision %s\n') % rev)
+        revs.remove(rev)
     if not revs:
         return -1
 
@@ -3705,14 +3728,14 @@ def locate(ui, repo, *pats, **opts):
     [('f', 'follow', None,
      _('follow changeset history, or file history across copies and renames')),
     ('', 'follow-first', None,
-     _('only follow the first parent of merge changesets')),
+     _('only follow the first parent of merge changesets (DEPRECATED)')),
     ('d', 'date', '', _('show revisions matching date spec'), _('DATE')),
     ('C', 'copies', None, _('show copied files')),
     ('k', 'keyword', [],
      _('do case-insensitive search for a given text'), _('TEXT')),
     ('r', 'rev', [], _('show the specified revision or range'), _('REV')),
     ('', 'removed', None, _('include revisions where files were removed')),
-    ('m', 'only-merges', None, _('show only merges')),
+    ('m', 'only-merges', None, _('show only merges (DEPRECATED)')),
     ('u', 'user', [], _('revisions committed by user'), _('USER')),
     ('', 'only-branch', [],
      _('show only changesets within the given named branch (DEPRECATED)'),
@@ -3721,7 +3744,7 @@ def locate(ui, repo, *pats, **opts):
      _('show changesets within the given named branch'), _('BRANCH')),
     ('P', 'prune', [],
      _('do not display revision or any of its ancestors'), _('REV')),
-    ('', 'hidden', False, _('show hidden changesets')),
+    ('', 'hidden', False, _('show hidden changesets (DEPRECATED)')),
     ] + logopts + walkopts,
     _('[OPTION]... [FILE]'))
 def log(ui, repo, *pats, **opts):
