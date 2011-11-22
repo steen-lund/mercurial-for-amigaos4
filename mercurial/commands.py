@@ -13,6 +13,7 @@ import hg, scmutil, util, revlog, extensions, copies, error, bookmarks
 import patch, help, url, encoding, templatekw, discovery
 import archival, changegroup, cmdutil, hbisect
 import sshserver, hgweb, hgweb.server, commandserver
+import match as matchmod
 import merge as mergemod
 import minirst, revset, fileset
 import dagparser, context, simplemerge
@@ -105,15 +106,19 @@ diffopts = [
     ('', 'nodates', None, _('omit dates from diff headers'))
 ]
 
-diffopts2 = [
-    ('p', 'show-function', None, _('show which function each change is in')),
-    ('', 'reverse', None, _('produce a diff that undoes the changes')),
+diffwsopts = [
     ('w', 'ignore-all-space', None,
      _('ignore white space when comparing lines')),
     ('b', 'ignore-space-change', None,
      _('ignore changes in the amount of white space')),
     ('B', 'ignore-blank-lines', None,
      _('ignore changes whose lines are all blank')),
+    ]
+
+diffopts2 = [
+    ('p', 'show-function', None, _('show which function each change is in')),
+    ('', 'reverse', None, _('produce a diff that undoes the changes')),
+    ] + diffwsopts + [
     ('U', 'unified', '',
      _('number of lines of context to show'), _('NUM')),
     ('', 'stat', None, _('output diffstat-style summary of changes')),
@@ -214,7 +219,7 @@ def addremove(ui, repo, *pats, **opts):
     ('n', 'number', None, _('list the revision number (default)')),
     ('c', 'changeset', None, _('list the changeset')),
     ('l', 'line-number', None, _('show line number at the first appearance'))
-    ] + walkopts,
+    ] + diffwsopts + walkopts,
     _('[-r REV] [-f] [-a] [-u] [-d] [-n] [-c] [-l] FILE...'))
 def annotate(ui, repo, *pats, **opts):
     """show changeset information by line for each file
@@ -269,13 +274,15 @@ def annotate(ui, repo, *pats, **opts):
     m = scmutil.match(ctx, pats, opts)
     m.bad = bad
     follow = not opts.get('no_follow')
+    diffopts = patch.diffopts(ui, opts, section='annotate')
     for abs in ctx.walk(m):
         fctx = ctx[abs]
         if not opts.get('text') and util.binary(fctx.data()):
             ui.write(_("%s: binary file\n") % ((pats and m.rel(abs)) or abs))
             continue
 
-        lines = fctx.annotate(follow=follow, linenumber=linenumber)
+        lines = fctx.annotate(follow=follow, linenumber=linenumber,
+                              diffopts=diffopts)
         pieces = []
 
         for f, sep in funcmap:
@@ -738,6 +745,17 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
     marks = repo._bookmarks
     cur   = repo.changectx('.').node()
 
+    if delete:
+        if mark is None:
+            raise util.Abort(_("bookmark name required"))
+        if mark not in marks:
+            raise util.Abort(_("bookmark '%s' does not exist") % mark)
+        if mark == repo._bookmarkcurrent:
+            bookmarks.setcurrent(repo, None)
+        del marks[mark]
+        bookmarks.write(repo)
+        return
+
     if rename:
         if rename not in marks:
             raise util.Abort(_("bookmark '%s' does not exist") % rename)
@@ -750,17 +768,6 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
         if repo._bookmarkcurrent == rename and not inactive:
             bookmarks.setcurrent(repo, mark)
         del marks[rename]
-        bookmarks.write(repo)
-        return
-
-    if delete:
-        if mark is None:
-            raise util.Abort(_("bookmark name required"))
-        if mark not in marks:
-            raise util.Abort(_("bookmark '%s' does not exist") % mark)
-        if mark == repo._bookmarkcurrent:
-            bookmarks.setcurrent(repo, None)
-        del marks[mark]
         bookmarks.write(repo)
         return
 
@@ -784,8 +791,8 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
         if rev:
             marks[mark] = repo.lookup(rev)
         else:
-            marks[mark] = repo.changectx('.').node()
-        if not inactive and repo.changectx('.').node() == marks[mark]:
+            marks[mark] = cur
+        if not inactive and cur == marks[mark]:
             bookmarks.setcurrent(repo, mark)
         bookmarks.write(repo)
         return
@@ -2189,7 +2196,7 @@ def debugstate(ui, repo, nodates=None, datesort=None):
         if ent[1] & 020000:
             mode = 'lnk'
         else:
-            mode = '%3o' % (ent[1] & 0777)
+            mode = '%3o' % (ent[1] & 0777 & ~util.umask)
         ui.write("%c %s %10d %s%s\n" % (ent[0], mode, ent[2], timestr, file_))
     for f in repo.dirstate.copies():
         ui.write(_("copy: %s -> %s\n") % (repo.dirstate.copied(f), f))
@@ -2432,23 +2439,45 @@ def forget(ui, repo, *pats, **opts):
     if not pats:
         raise util.Abort(_('no files specified'))
 
-    m = scmutil.match(repo[None], pats, opts)
+    wctx = repo[None]
+    m = scmutil.match(wctx, pats, opts)
     s = repo.status(match=m, clean=True)
     forget = sorted(s[0] + s[1] + s[3] + s[6])
+    subforget = {}
     errs = 0
+
+    for subpath in wctx.substate:
+        sub = wctx.sub(subpath)
+        try:
+            submatch = matchmod.narrowmatcher(subpath, m)
+            for fsub in sub.walk(submatch):
+                if submatch.exact(fsub):
+                    subforget[subpath + '/' + fsub] = (fsub, sub)
+        except error.LookupError:
+            ui.status(_("skipping missing subrepository: %s\n") % subpath)
 
     for f in m.files():
         if f not in repo.dirstate and not os.path.isdir(m.rel(f)):
-            if os.path.exists(m.rel(f)):
-                ui.warn(_('not removing %s: file is already untracked\n')
-                        % m.rel(f))
-            errs = 1
+            if f not in subforget:
+                if os.path.exists(m.rel(f)):
+                    ui.warn(_('not removing %s: file is already untracked\n')
+                            % m.rel(f))
+                errs = 1
 
     for f in forget:
         if ui.verbose or not m.exact(f):
             ui.status(_('removing %s\n') % m.rel(f))
 
-    repo[None].forget(forget)
+    if ui.verbose:
+        for f in sorted(subforget.keys()):
+            ui.status(_('removing %s\n') % m.rel(f))
+
+    wctx.forget(forget)
+
+    for f in sorted(subforget.keys()):
+        fsub, sub = subforget[f]
+        sub.forget([fsub])
+
     return errs
 
 @command(
@@ -2534,16 +2563,16 @@ def graft(ui, repo, *revs, **opts):
         revs = scmutil.revrange(repo, revs)
 
     # check for merges
-    for ctx in repo.set('%ld and merge()', revs):
-        ui.warn(_('skipping ungraftable merge revision %s\n') % ctx.rev())
-        revs.remove(ctx.rev())
+    for rev in repo.revs('%ld and merge()', revs):
+        ui.warn(_('skipping ungraftable merge revision %s\n') % rev)
+        revs.remove(rev)
     if not revs:
         return -1
 
     # check for ancestors of dest branch
-    for ctx in repo.set('::. and %ld', revs):
-        ui.warn(_('skipping ancestor revision %s\n') % ctx.rev())
-        revs.remove(ctx.rev())
+    for rev in repo.revs('::. and %ld', revs):
+        ui.warn(_('skipping ancestor revision %s\n') % rev)
+        revs.remove(rev)
     if not revs:
         return -1
 
@@ -3734,14 +3763,14 @@ def locate(ui, repo, *pats, **opts):
     [('f', 'follow', None,
      _('follow changeset history, or file history across copies and renames')),
     ('', 'follow-first', None,
-     _('only follow the first parent of merge changesets')),
+     _('only follow the first parent of merge changesets (DEPRECATED)')),
     ('d', 'date', '', _('show revisions matching date spec'), _('DATE')),
     ('C', 'copies', None, _('show copied files')),
     ('k', 'keyword', [],
      _('do case-insensitive search for a given text'), _('TEXT')),
     ('r', 'rev', [], _('show the specified revision or range'), _('REV')),
     ('', 'removed', None, _('include revisions where files were removed')),
-    ('m', 'only-merges', None, _('show only merges')),
+    ('m', 'only-merges', None, _('show only merges (DEPRECATED)')),
     ('u', 'user', [], _('revisions committed by user'), _('USER')),
     ('', 'only-branch', [],
      _('show only changesets within the given named branch (DEPRECATED)'),
@@ -3750,7 +3779,7 @@ def locate(ui, repo, *pats, **opts):
      _('show changesets within the given named branch'), _('BRANCH')),
     ('P', 'prune', [],
      _('do not display revision or any of its ancestors'), _('REV')),
-    ('', 'hidden', False, _('show hidden changesets')),
+    ('', 'hidden', False, _('show hidden changesets (DEPRECATED)')),
     ] + logopts + walkopts,
     _('[OPTION]... [FILE]'))
 def log(ui, repo, *pats, **opts):
