@@ -1,3 +1,5 @@
+  $ "$TESTDIR/hghave" no-windows || exit 80
+
 This test tries to exercise the ssh functionality with a dummy script
 
   $ checknewrepo()
@@ -103,13 +105,13 @@ clone to existing repo
 output of dummyssh
 
   $ cat dummylog
-  Got arguments 1:user@dummy 2:hg init remote2
-  Got arguments 1:user@dummy 2:hg -R remote2 serve --stdio
-  Got arguments 1:user@dummy 2:hg -R remote2 serve --stdio
-  Got arguments 1:user@dummy 2:hg init remote1
-  Got arguments 1:user@dummy 2:hg -R remote1 serve --stdio
-  Got arguments 1:user@dummy 2:hg init remote1
-  Got arguments 1:user@dummy 2:hg init remote1
+  Got arguments 1:user@dummy 2:'hg' init 'remote2'
+  Got arguments 1:user@dummy 2:'hg' -R 'remote2' serve --stdio
+  Got arguments 1:user@dummy 2:'hg' -R 'remote2' serve --stdio
+  Got arguments 1:user@dummy 2:'hg' init 'remote1'
+  Got arguments 1:user@dummy 2:'hg' -R 'remote1' serve --stdio
+  Got arguments 1:user@dummy 2:'hg' init 'remote1'
+  Got arguments 1:user@dummy 2:'hg' init 'remote1'
 
 comparing repositories
 
