@@ -1,6 +1,6 @@
 Proper https client requires the built-in ssl from Python 2.6.
 
-  $ "$TESTDIR/hghave" ssl || exit 80
+  $ "$TESTDIR/hghave" serve ssl || exit 80
 
 Certificates created with:
  printf '.\n.\n.\n.\n.\nlocalhost\nhg@localhost\n' | \
@@ -118,9 +118,9 @@ clone via pull
   adding manifests
   adding file changes
   added 1 changesets with 4 changes to 4 files
+  warning: localhost certificate with fingerprint 91:4f:1a:ff:87:24:9c:09:b6:85:9b:88:b1:90:6d:30:75:64:91:ca not verified (check hostfingerprints or web.cacerts config setting)
   updating to branch default
   4 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  warning: localhost certificate with fingerprint 91:4f:1a:ff:87:24:9c:09:b6:85:9b:88:b1:90:6d:30:75:64:91:ca not verified (check hostfingerprints or web.cacerts config setting)
   $ hg verify -R copy-pull
   checking changesets
   checking manifests

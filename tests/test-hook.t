@@ -1,3 +1,5 @@
+  $ "$TESTDIR/hghave" system-sh || exit 80
+
 commit hooks can see env vars
 
   $ hg init a
@@ -66,7 +68,7 @@ pretxncommit and commit hooks can see both parents of merge
 test generic hooks
 
   $ hg id
-  pre-identify hook: HG_ARGS=id HG_OPTS={'bookmarks': None, 'branch': None, 'id': None, 'num': None, 'rev': '', 'tags': None} HG_PATS=[] 
+  pre-identify hook: HG_ARGS=id HG_OPTS={'bookmarks': None, 'branch': None, 'id': None, 'insecure': None, 'num': None, 'remotecmd': '', 'rev': '', 'ssh': '', 'tags': None} HG_PATS=[] 
   warning: pre-identify hook exited with status 1
   [1]
   $ hg cat b
