@@ -1,9 +1,11 @@
+  $ "$TESTDIR/hghave" serve || exit 80
+
 Preparing the subrepository 'sub'
 
   $ hg init sub
   $ echo sub > sub/sub
   $ hg add -R sub
-  adding sub/sub
+  adding sub/sub (glob)
   $ hg commit -R sub -m "sub import"
 
 Preparing the 'main' repo which depends on the subrepo 'sub'
@@ -15,8 +17,8 @@ Preparing the 'main' repo which depends on the subrepo 'sub'
   updating to branch default
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg add -R main
-  adding main/.hgsub
-  adding main/main
+  adding main/.hgsub (glob)
+  adding main/main (glob)
   $ hg commit -R main -m "main import"
   committing subrepository sub
 
@@ -96,8 +98,8 @@ subrepo paths with ssh urls
   no changes found
 
   $ cat dummylog
-  Got arguments 1:user@dummy 2:hg -R cloned serve --stdio
-  Got arguments 1:user@dummy 2:hg -R sub serve --stdio
-  Got arguments 1:user@dummy 2:hg -R $TESTTMP/cloned serve --stdio
-  Got arguments 1:user@dummy 2:hg -R $TESTTMP/sub serve --stdio
+  Got arguments 1:user@dummy 2:'hg' -R 'cloned' serve --stdio
+  Got arguments 1:user@dummy 2:'hg' -R 'sub' serve --stdio
+  Got arguments 1:user@dummy 2:'hg' -R '$TESTTMP/cloned' serve --stdio
+  Got arguments 1:user@dummy 2:'hg' -R '$TESTTMP/sub' serve --stdio
   $ rm $BINDIR/ssh
