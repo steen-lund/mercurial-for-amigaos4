@@ -1495,7 +1495,7 @@ class url(object):
     """
 
     _safechars = "!~*'()+"
-    _safepchars = "/!~*'()+"
+    _safepchars = "/!~*'()+:"
     _matchscheme = re.compile(r'^[a-zA-Z0-9+.\-]+:').match
 
     def __init__(self, path, parsequery=True, parsefragment=True):
@@ -1607,8 +1607,8 @@ class url(object):
 
         Examples:
 
-        >>> str(url('http://user:pw@host:80/?foo#bar'))
-        'http://user:pw@host:80/?foo#bar'
+        >>> str(url('http://user:pw@host:80/c:/bob?fo:oo#ba:ar'))
+        'http://user:pw@host:80/c:/bob?fo:oo#ba:ar'
         >>> str(url('http://user:pw@host:80/?foo=bar&baz=42'))
         'http://user:pw@host:80/?foo=bar&baz=42'
         >>> str(url('http://user:pw@host:80/?foo=bar%3dbaz'))
@@ -1630,7 +1630,7 @@ class url(object):
         >>> str(url('file:///tmp/foo/bar'))
         'file:///tmp/foo/bar'
         >>> str(url('file:///c:/tmp/foo/bar'))
-        'file:///c%3A/tmp/foo/bar'
+        'file:///c:/tmp/foo/bar'
         >>> print url(r'bundle:foo\bar')
         bundle:foo\bar
         """

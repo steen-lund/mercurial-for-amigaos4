@@ -1,3 +1,5 @@
+  $ "$TESTDIR/hghave" serve || exit 80
+
 initialize
 
   $ hg init a
@@ -108,17 +110,18 @@ divergent bookmarks
      foo                       -1:000000000000
      foobar                    -1:000000000000
 
-  $ hg pull ../a
-  pulling from ../a
+  $ hg pull --config paths.foo=../a foo
+  pulling from $TESTTMP/a
   searching for changes
   adding changesets
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files (+1 heads)
-  not updating divergent bookmark X
+  divergent bookmark X stored as X@foo
   (run 'hg heads' to see heads, 'hg merge' to merge)
   $ hg book
    * X                         1:9b140be10808
+     X@foo                     2:0d2164f0ce0d
      Y                         0:4e3505fd9583
      foo                       -1:000000000000
      foobar                    -1:000000000000
@@ -173,7 +176,7 @@ hgweb
   $ hg pull -B Z http://localhost:$HGPORT/
   pulling from http://localhost:$HGPORT/
   no changes found
-  not updating divergent bookmark X
+  divergent bookmark X stored as X@1
   importing bookmark Z
   $ hg clone http://localhost:$HGPORT/ cloned-bookmarks
   requesting all changes

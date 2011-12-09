@@ -8,7 +8,7 @@
 from node import bin, hex, nullid, nullrev, short
 from i18n import _
 import repo, changegroup, subrepo, discovery, pushkey
-import changelog, dirstate, filelog, manifest, context, bookmarks
+import changelog, dirstate, filelog, manifest, context, bookmarks, phases
 import lock, transaction, store, encoding
 import scmutil, util, extensions, hook, error, revset
 import match as matchmod
@@ -36,6 +36,7 @@ class localrepository(repo.repository):
         self.wopener = scmutil.opener(self.root)
         self.baseui = baseui
         self.ui = baseui.copy()
+        self._dirtyphases = False
 
         try:
             self.ui.readconfig(self.join("hgrc"), self.root)
@@ -170,6 +171,25 @@ class localrepository(repo.repository):
     def _writebookmarks(self, marks):
       bookmarks.write(self)
 
+    @filecache('phaseroots')
+    def _phaseroots(self):
+        self._dirtyphases = False
+        phaseroots = phases.readroots(self)
+        phases.filterunknown(self, phaseroots)
+        return phaseroots
+
+    @propertycache
+    def _phaserev(self):
+        cache = [0] * len(self)
+        for phase in phases.trackedphases:
+            roots = map(self.changelog.rev, self._phaseroots[phase])
+            if roots:
+                for rev in roots:
+                    cache[rev] = phase
+                for rev in self.changelog.descendants(*roots):
+                    cache[rev] = phase
+        return cache
+
     @filecache('00changelog.i', True)
     def changelog(self):
         c = changelog.changelog(self.sopener)
@@ -220,15 +240,18 @@ class localrepository(repo.repository):
         for i in xrange(len(self)):
             yield i
 
+    def revs(self, expr, *args):
+        '''Return a list of revisions matching the given revset'''
+        expr = revset.formatspec(expr, *args)
+        m = revset.match(None, expr)
+        return [r for r in m(self, range(len(self)))]
+
     def set(self, expr, *args):
         '''
         Yield a context for each matching revision, after doing arg
         replacement via revset.formatspec
         '''
-
-        expr = revset.formatspec(expr, *args)
-        m = revset.match(None, expr)
-        for r in m(self, range(len(self))):
+        for r in self.revs(expr, *args):
             yield self[r]
 
     def url(self):
@@ -737,10 +760,16 @@ class localrepository(repo.repository):
             util.copyfile(bkname, self.join('journal.bookmarks'))
         else:
             self.opener.write('journal.bookmarks', '')
+        phasesname = self.sjoin('phaseroots')
+        if os.path.exists(phasesname):
+            util.copyfile(phasesname, self.sjoin('journal.phaseroots'))
+        else:
+            self.sopener.write('journal.phaseroots', '')
 
         return (self.sjoin('journal'), self.join('journal.dirstate'),
                 self.join('journal.branch'), self.join('journal.desc'),
-                self.join('journal.bookmarks'))
+                self.join('journal.bookmarks'),
+                self.sjoin('journal.phaseroots'))
 
     def recover(self):
         lock = self.lock()
@@ -805,6 +834,9 @@ class localrepository(repo.repository):
         if os.path.exists(self.join('undo.bookmarks')):
             util.rename(self.join('undo.bookmarks'),
                         self.join('bookmarks'))
+        if os.path.exists(self.sjoin('undo.phaseroots')):
+            util.rename(self.sjoin('undo.phaseroots'),
+                        self.sjoin('phaseroots'))
         self.invalidate()
 
         parentgone = (parents[0] not in self.changelog.nodemap or
@@ -880,6 +912,14 @@ class localrepository(repo.repository):
             acquirefn()
         return l
 
+    def _afterlock(self, callback):
+        """add a callback to the current repository lock.
+
+        The callback will be executed on lock release."""
+        l = self._lockref and self._lockref()
+        if l:
+            l.postrelease.append(callback)
+
     def lock(self, wait=True):
         '''Lock the repository store (.hg/store) and return a weak reference
         to the lock. Use this before modifying the store (e.g. committing or
@@ -891,6 +931,8 @@ class localrepository(repo.repository):
 
         def unlock():
             self.store.write()
+            if self._dirtyphases:
+                phases.writeroots(self)
             for k, ce in self._filecache.items():
                 if k == 'dirstate':
                     continue
@@ -1209,6 +1251,8 @@ class localrepository(repo.repository):
             self.hook('pretxncommit', throw=True, node=hex(n), parent1=xp1,
                       parent2=xp2, pending=p)
             self.changelog.finalize(trp)
+            # ensure the new commit is 1-phase
+            phases.retractboundary(self, 1, [n])
             tr.close()
 
             if self._branchcache:
@@ -1482,8 +1526,8 @@ class localrepository(repo.repository):
                                            "changegroupsubset."))
                 else:
                     cg = remote.changegroupsubset(fetch, heads, 'pull')
-                result = self.addchangegroup(cg, 'pull', remote.url(),
-                                             lock=lock)
+                result = self.addchangegroup(cg, 'pull', remote.url())
+            phases.advanceboundary(self, 0, common)
         finally:
             lock.release()
 
@@ -1518,24 +1562,31 @@ class localrepository(repo.repository):
         if not unbundle:
             lock = remote.lock()
         try:
-            cg, remote_heads = discovery.prepush(self, remote, force, revs,
-                                                 newbranch)
-            ret = remote_heads
-            if cg is not None:
-                if unbundle:
-                    # local repo finds heads on server, finds out what
-                    # revs it must push. once revs transferred, if server
-                    # finds it has different heads (someone else won
-                    # commit/push race), server aborts.
-                    if force:
-                        remote_heads = ['force']
-                    # ssh: return remote's addchangegroup()
-                    # http: return remote's addchangegroup() or 0 for error
-                    ret = remote.unbundle(cg, remote_heads, 'push')
-                else:
-                    # we return an integer indicating remote head count change
-                    ret = remote.addchangegroup(cg, 'push', self.url(),
-                                                lock=lock)
+            # get local lock as we might write phase data
+            locallock = self.lock()
+            try:
+                cg, remote_heads, fut = discovery.prepush(self, remote, force,
+                                                           revs, newbranch)
+                ret = remote_heads
+                if cg is not None:
+                    if unbundle:
+                        # local repo finds heads on server, finds out what
+                        # revs it must push. once revs transferred, if server
+                        # finds it has different heads (someone else won
+                        # commit/push race), server aborts.
+                        if force:
+                            remote_heads = ['force']
+                        # ssh: return remote's addchangegroup()
+                        # http: return remote's addchangegroup() or 0 for error
+                        ret = remote.unbundle(cg, remote_heads, 'push')
+                    else:
+                        # we return an integer indicating remote head count change
+                        ret = remote.addchangegroup(cg, 'push', self.url())
+                # if we don't push, the common data is already useful
+                # everything exchange is public for now
+                phases.advanceboundary(self, 0, fut)
+            finally:
+                locallock.release()
         finally:
             if lock is not None:
                 lock.release()
@@ -1795,12 +1846,10 @@ class localrepository(repo.repository):
 
         return changegroup.unbundle10(util.chunkbuffer(gengroup()), 'UN')
 
-    def addchangegroup(self, source, srctype, url, emptyok=False, lock=None):
+    def addchangegroup(self, source, srctype, url, emptyok=False):
         """Add the changegroup returned by source.read() to this repo.
         srctype is a string like 'push', 'pull', or 'unbundle'.  url is
         the URL of the repo where this changegroup is coming from.
-        If lock is not None, the function takes ownership of the lock
-        and releases it after the changegroup is added.
 
         Return an integer summarizing the change to this repo:
         - nothing changed or no source: 0
@@ -1942,26 +1991,29 @@ class localrepository(repo.repository):
                           node=hex(cl.node(clstart)), source=srctype,
                           url=url, pending=p)
 
+            added = [cl.node(r) for r in xrange(clstart, clend)]
+            if srctype != 'strip':
+                phases.advanceboundary(self, 0, added)
             # make changelog see real files again
             cl.finalize(trp)
 
             tr.close()
+
+            if changesets > 0:
+                def runhooks():
+                    # forcefully update the on-disk branch cache
+                    self.ui.debug("updating the branch cache\n")
+                    self.updatebranchcache()
+                    self.hook("changegroup", node=hex(cl.node(clstart)),
+                              source=srctype, url=url)
+
+                    for n in added:
+                        self.hook("incoming", node=hex(n), source=srctype,
+                                  url=url)
+                self._afterlock(runhooks)
+
         finally:
             tr.release()
-            if lock:
-                lock.release()
-
-        if changesets > 0:
-            # forcefully update the on-disk branch cache
-            self.ui.debug("updating the branch cache\n")
-            self.updatebranchcache()
-            self.hook("changegroup", node=hex(cl.node(clstart)),
-                      source=srctype, url=url)
-
-            for i in xrange(clstart, clend):
-                self.hook("incoming", node=hex(cl.node(i)),
-                          source=srctype, url=url)
-
         # never return 0 here:
         if dh < 0:
             return dh - 1
