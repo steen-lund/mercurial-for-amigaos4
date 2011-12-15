@@ -1,3 +1,5 @@
+  $ "$TESTDIR/hghave" execbit || exit 80
+
   $ hg init a
 
   $ cd a
@@ -921,7 +923,7 @@ log -p -R repo
   $ hg merge 7
   merging foo
   warning: conflicts during merge.
-  merging foo failed!
+  merging foo incomplete! (edit conflicts, then use 'hg resolve --mark')
   0 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges or 'hg update -C .' to abandon
   [1]
@@ -932,7 +934,7 @@ log -p -R repo
   $ hg merge 4
   merging foo
   warning: conflicts during merge.
-  merging foo failed!
+  merging foo incomplete! (edit conflicts, then use 'hg resolve --mark')
   1 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges or 'hg update -C .' to abandon
   [1]

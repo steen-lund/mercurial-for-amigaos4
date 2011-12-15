@@ -353,6 +353,15 @@ class abstractsubrepo(object):
                         unit=_('files'), total=total)
         ui.progress(_('archiving (%s)') % relpath, None)
 
+    def walk(self, match):
+        '''
+        walk recursively through the directory tree, finding all files
+        matched by the match function
+        '''
+        pass
+
+    def forget(self, files):
+        pass
 
 class hgsubrepo(abstractsubrepo):
     def __init__(self, ctx, path, state):
@@ -475,7 +484,8 @@ class hgsubrepo(abstractsubrepo):
                 self._repo.ui.status(_('pulling subrepo %s from %s\n')
                                      % (subrelpath(self), srcurl))
                 self._repo.pull(other)
-            bookmarks.updatefromremote(self._repo.ui, self._repo, other)
+            bookmarks.updatefromremote(self._repo.ui, self._repo, other,
+                                       srcurl)
 
     def get(self, state, overwrite=False):
         self._get(state)
@@ -543,6 +553,13 @@ class hgsubrepo(abstractsubrepo):
         ctx = self._repo[rev]
         return ctx.flags(name)
 
+    def walk(self, match):
+        ctx = self._repo[None]
+        return ctx.walk(match)
+
+    def forget(self, files):
+        ctx = self._repo[None]
+        ctx.forget(files)
 
 class svnsubrepo(abstractsubrepo):
     def __init__(self, ctx, path, state):
