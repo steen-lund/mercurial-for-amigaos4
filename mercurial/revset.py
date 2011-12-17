@@ -1127,7 +1127,7 @@ def formatspec(expr, *args):
                 # a list of some type
                 pos += 1
                 d = expr[pos]
-                ret += listexp(args[arg], d)
+                ret += listexp(list(args[arg]), d)
                 arg += 1
             else:
                 raise util.Abort('unexpected revspec format character %s' % d)
