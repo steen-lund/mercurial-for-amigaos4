@@ -14,7 +14,7 @@ Testing a.i/b:
   $ mkdir a.i
   $ echo "some other text" > a.i/b
   $ hg add
-  adding a.i/b
+  adding a.i/b (glob)
   $ hg ci -m second
   $ cat .hg/store/fncache | sort
   data/a.i
@@ -25,7 +25,7 @@ Testing a.i.hg/c:
   $ mkdir a.i.hg
   $ echo "yet another text" > a.i.hg/c
   $ hg add
-  adding a.i.hg/c
+  adding a.i.hg/c (glob)
   $ hg ci -m third
   $ cat .hg/store/fncache | sort
   data/a.i
@@ -74,12 +74,14 @@ Non store repo:
   .hg/data/tst.d.hg/foo.i
   .hg/dirstate
   .hg/last-message.txt
+  .hg/phaseroots
   .hg/requires
   .hg/undo
   .hg/undo.bookmarks
   .hg/undo.branch
   .hg/undo.desc
   .hg/undo.dirstate
+  .hg/undo.phaseroots
   $ cd ..
 
 Non fncache repo:
@@ -102,7 +104,9 @@ Non fncache repo:
   .hg/store/data
   .hg/store/data/tst.d.hg
   .hg/store/data/tst.d.hg/_foo.i
+  .hg/store/phaseroots
   .hg/store/undo
+  .hg/store/undo.phaseroots
   .hg/undo.bookmarks
   .hg/undo.branch
   .hg/undo.desc
