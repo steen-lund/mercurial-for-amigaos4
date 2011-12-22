@@ -1,3 +1,5 @@
+  $ "$TESTDIR/hghave" system-sh || exit 80
+
 commit hooks can see env vars
 
   $ hg init a
@@ -66,7 +68,7 @@ pretxncommit and commit hooks can see both parents of merge
 test generic hooks
 
   $ hg id
-  pre-identify hook: HG_ARGS=id HG_OPTS={'bookmarks': None, 'branch': None, 'id': None, 'num': None, 'rev': '', 'tags': None} HG_PATS=[] 
+  pre-identify hook: HG_ARGS=id HG_OPTS={'bookmarks': None, 'branch': None, 'id': None, 'insecure': None, 'num': None, 'remotecmd': '', 'rev': '', 'ssh': '', 'tags': None} HG_PATS=[] 
   warning: pre-identify hook exited with status 1
   [1]
   $ hg cat b
@@ -177,6 +179,7 @@ pushkey hook
   pushing to ../a
   searching for changes
   no changes found
+  pushkey hook: HG_KEY=07f3376c1e655977439df2a814e3cc14b27abac2 HG_NAMESPACE=phases HG_NEW=0 HG_OLD=1 HG_RET=1 
   exporting bookmark foo
   pushkey hook: HG_KEY=foo HG_NAMESPACE=bookmarks HG_NEW=0000000000000000000000000000000000000000 HG_RET=1 
   $ cd ../a
@@ -190,6 +193,7 @@ listkeys hook
   pulling from ../a
   listkeys hook: HG_NAMESPACE=bookmarks HG_VALUES={'bar': '0000000000000000000000000000000000000000', 'foo': '0000000000000000000000000000000000000000'} 
   no changes found
+  listkeys hook: HG_NAMESPACE=phases HG_VALUES={'539e4b31b6dc99b3cfbaa6b53cbc1c1f9a1e3a10': '1', 'publishing': 'True'} 
   listkeys hook: HG_NAMESPACE=bookmarks HG_VALUES={'bar': '0000000000000000000000000000000000000000', 'foo': '0000000000000000000000000000000000000000'} 
   importing bookmark bar
   $ cd ../a
@@ -203,6 +207,7 @@ test that prepushkey can prevent incoming keys
   pushing to ../a
   searching for changes
   no changes found
+  listkeys hook: HG_NAMESPACE=phases HG_VALUES={'539e4b31b6dc99b3cfbaa6b53cbc1c1f9a1e3a10': '1', 'publishing': 'True'} 
   listkeys hook: HG_NAMESPACE=bookmarks HG_VALUES={'bar': '0000000000000000000000000000000000000000', 'foo': '0000000000000000000000000000000000000000'} 
   listkeys hook: HG_NAMESPACE=bookmarks HG_VALUES={'bar': '0000000000000000000000000000000000000000', 'foo': '0000000000000000000000000000000000000000'} 
   exporting bookmark baz

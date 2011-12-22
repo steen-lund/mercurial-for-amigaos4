@@ -10,6 +10,7 @@ from i18n import _
 from node import bin, hex
 import changegroup as changegroupmod
 import repo, error, encoding, util, store
+import phases
 
 # abstract batching support
 
@@ -239,11 +240,14 @@ class wirerepository(repo.repository):
                      old=encoding.fromlocal(old),
                      new=encoding.fromlocal(new)), f
         d = f.value
+        d, output = d.split('\n', 1)
         try:
             d = bool(int(d))
         except ValueError:
             raise error.ResponseError(
                 _('push failed (unexpected response):'), d)
+        for l in output.splitlines(True):
+            self.ui.status(_('remote: '), l)
         yield d
 
     @batchable
@@ -446,7 +450,7 @@ def getbundle(repo, proto, others):
     return streamres(proto.groupchunks(cg))
 
 def heads(repo, proto):
-    h = repo.heads()
+    h = phases.visibleheads(repo)
     return encodelist(h) + "\n"
 
 def hello(repo, proto):
@@ -574,8 +578,7 @@ def unbundle(repo, proto, heads):
             gen = changegroupmod.readbundle(fp, None)
 
             try:
-                r = repo.addchangegroup(gen, 'serve', proto._client(),
-                                        lock=lock)
+                r = repo.addchangegroup(gen, 'serve', proto._client())
             except util.Abort, inst:
                 sys.stderr.write("abort: %s\n" % inst)
         finally:

@@ -1765,6 +1765,9 @@ class queue(object):
 
             diffopts = self.diffopts({'git': git})
             for r in rev:
+                if not repo[r].mutable():
+                    raise util.Abort(_('revision %d is not mutable') % r,
+                                     hint=_('see "hg help phases" for details'))
                 p1, p2 = repo.changelog.parentrevs(r)
                 n = repo.changelog.node(r)
                 if p2 != nullrev:
@@ -2915,6 +2918,9 @@ def finish(ui, repo, *revrange, **opts):
         return 0
 
     revs = scmutil.revrange(repo, revrange)
+    if repo['.'].rev() in revs and repo[None].files():
+        ui.warn(_('warning: uncommitted changes in the working directory\n'))
+
     q.finish(repo, revs)
     q.savedirty()
     return 0

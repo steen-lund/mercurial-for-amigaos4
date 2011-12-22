@@ -7,7 +7,7 @@
 
 from node import nullid, nullrev, short, hex
 from i18n import _
-import ancestor, bdiff, error, util, scmutil, subrepo, patch, encoding
+import ancestor, mdiff, error, util, scmutil, subrepo, patch, encoding
 import match as matchmod
 import os, errno, stat
 
@@ -117,6 +117,15 @@ class changectx(object):
         return self._repo.nodetags(self._node)
     def bookmarks(self):
         return self._repo.nodebookmarks(self._node)
+    def phase(self):
+        if self._rev == -1:
+            return 0
+        if self._rev >= len(self._repo._phaserev):
+            # outdated cache
+            del self._repo._phaserev
+        return self._repo._phaserev[self._rev]
+    def mutable(self):
+        return self._repo._phaserev[self._rev] > 0
     def hidden(self):
         return self._rev in self._repo.changelog.hiddenrevs
 
@@ -426,7 +435,7 @@ class filectx(object):
         return [filectx(self._repo, self._path, fileid=x,
                         filelog=self._filelog) for x in c]
 
-    def annotate(self, follow=False, linenumber=None):
+    def annotate(self, follow=False, linenumber=None, diffopts=None):
         '''returns a list of tuples of (ctx, line) for each line
         in the file, where ctx is the filectx of the node where
         that line was last changed.
@@ -453,8 +462,13 @@ class filectx(object):
                     without_linenumber)
 
         def pair(parent, child):
-            for a1, a2, b1, b2 in bdiff.blocks(parent[1], child[1]):
-                child[0][b1:b2] = parent[0][a1:a2]
+            blocks = mdiff.allblocks(parent[1], child[1], opts=diffopts,
+                                     refine=True)
+            for (a1, a2, b1, b2), t in blocks:
+                # Changed blocks ('!') or blocks made only of blank lines ('~')
+                # belong to the child.
+                if t == '=':
+                    child[0][b1:b2] = parent[0][a1:a2]
             return child
 
         getlog = util.lrucachefunc(lambda x: self._repo.file(x))
@@ -790,6 +804,15 @@ class workingctx(changectx):
         for p in self.parents():
             b.extend(p.bookmarks())
         return b
+
+    def phase(self):
+        phase = 1 # default phase to draft
+        for p in self.parents():
+            phase = max(phase, p.phase())
+        return phase
+
+    def hidden(self):
+        return False
 
     def children(self):
         return []
