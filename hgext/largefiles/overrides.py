@@ -63,7 +63,7 @@ def override_add(orig, ui, repo, *pats, **opts):
         ui, lfutil.islfilesrepo(repo), opts.pop('lfsize', None))
 
     lfmatcher = None
-    if os.path.exists(repo.wjoin(lfutil.shortname)):
+    if lfutil.islfilesrepo(repo):
         lfpats = ui.configlist(lfutil.longname, 'patterns', default=[])
         if lfpats:
             lfmatcher = match_.match(repo.root, '', list(lfpats))
@@ -719,10 +719,7 @@ def override_archive(orig, repo, dest, node, kind, decode=True, matchfn=None,
     if subrepos:
         for subpath in ctx.substate:
             sub = ctx.sub(subpath)
-            try:
-                sub.archive(repo.ui, archiver, prefix)
-            except TypeError:
-                sub.archive(archiver, prefix)
+            sub.archive(repo.ui, archiver, prefix)
 
     archiver.done()
 

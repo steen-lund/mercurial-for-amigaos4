@@ -1,3 +1,5 @@
+  $ "$TESTDIR/hghave" execbit || exit 80
+
   $ checkundo()
   > {
   >     if [ -f .hg/store/undo ]; then
@@ -135,7 +137,7 @@ qinit -c should create both files if they don't exist
   guards
   $ cat .hg/patches/series
   $ hg qinit -c
-  abort: repository $TESTTMP/d/.hg/patches already exists!
+  abort: repository $TESTTMP/d/.hg/patches already exists! (glob)
   [255]
   $ cd ..
 
@@ -154,8 +156,8 @@ qinit -c should create both files if they don't exist
   $ echo status >> .hg/patches/.hgignore
   $ echo bleh >> .hg/patches/.hgignore
   $ hg qinit -c
-  adding .hg/patches/A
-  adding .hg/patches/B
+  adding .hg/patches/A (glob)
+  adding .hg/patches/B (glob)
   $ hg -R .hg/patches status
   A .hgignore
   A A
@@ -1191,7 +1193,7 @@ repo with unversioned patch dir
 
   $ cd qclonesource
   $ hg qinit -c
-  adding .hg/patches/patch1
+  adding .hg/patches/patch1 (glob)
   $ hg qci -m checkpoint
   $ qlog
   main repo:
@@ -1392,3 +1394,46 @@ test popping must remove files added in subdirectories first
   patch queue now empty
   $ cd ..
 
+
+test case preservation through patch pushing especially on case
+insensitive filesystem
+
+  $ hg init casepreserve
+  $ cd casepreserve
+
+  $ hg qnew add-file1
+  $ echo a > TeXtFiLe.TxT
+  $ hg add TeXtFiLe.TxT
+  $ hg qrefresh
+
+  $ hg qnew add-file2
+  $ echo b > AnOtHeRFiLe.TxT
+  $ hg add AnOtHeRFiLe.TxT
+  $ hg qrefresh
+
+  $ hg qnew modify-file
+  $ echo c >> AnOtHeRFiLe.TxT
+  $ hg qrefresh
+
+  $ hg qapplied
+  add-file1
+  add-file2
+  modify-file
+  $ hg qpop -a
+  popping modify-file
+  popping add-file2
+  popping add-file1
+  patch queue now empty
+
+this qpush causes problems below, if case preservation on case
+insensitive filesystem is not enough:
+(1) unexpected "adding ..." messages are shown
+(2) patching fails in modification of (1) files
+
+  $ hg qpush -a
+  applying add-file1
+  applying add-file2
+  applying modify-file
+  now at: modify-file
+
+  $ cd ..

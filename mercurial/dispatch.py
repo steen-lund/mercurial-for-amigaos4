@@ -24,7 +24,7 @@ class request(object):
 
 def run():
     "run the command in sys.argv"
-    sys.exit(dispatch(request(sys.argv[1:])))
+    sys.exit((dispatch(request(sys.argv[1:])) or 0) & 255)
 
 def dispatch(req):
     "run the command specified in req.args"
@@ -259,7 +259,6 @@ class cmdalias(object):
                 return 1
             self.fn = fn
             self.badalias = True
-
             return
 
         if self.definition.startswith('!'):
