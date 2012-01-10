@@ -101,19 +101,11 @@ Graft out of order, skipping a merge and a duplicate
      b -> a *
     checking for directory renames
   resolving manifests
-   overwrite False partial False
-   ancestor 68795b066622 local d2e44c99fd3f+ remote 5d205f8b35b6
+   overwrite: False, partial: False
+   ancestor: 68795b066622, local: d2e44c99fd3f+, remote: 5d205f8b35b6
    b: local copied/moved to a -> m
   preserving b for resolve of b
   updating: b 1/1 files (100.00%)
-    searching for copies back to rev 1
-    unmatched files in local:
-     a
-    unmatched files in other:
-     b
-    all copies found (* = to merge, ! = divergent):
-     b -> a *
-    checking for directory renames
   b
    b: searching for copy revision for a
    b: copy a:b789fdd96dc2f3bd229c1dd8eedf0fc60e2b68e3
@@ -122,25 +114,19 @@ Graft out of order, skipping a merge and a duplicate
     unmatched files in local:
      a.orig
   resolving manifests
-   overwrite False partial False
-   ancestor 4c60f11aa304 local 6f5ea6ac8b70+ remote 97f8bfe72746
+   overwrite: False, partial: False
+   ancestor: 4c60f11aa304, local: 6f5ea6ac8b70+, remote: 97f8bfe72746
    e: remote is newer -> g
   updating: e 1/1 files (100.00%)
   getting e
-    searching for copies back to rev 1
-    unmatched files in local:
-     c
-    all copies found (* = to merge, ! = divergent):
-     c -> b *
-    checking for directory renames
   e
   grafting revision 4
     searching for copies back to rev 1
     unmatched files in local:
      a.orig
   resolving manifests
-   overwrite False partial False
-   ancestor 4c60f11aa304 local 77eb504366ab+ remote 9c233e8e184d
+   overwrite: False, partial: False
+   ancestor: 4c60f11aa304, local: 77eb504366ab+, remote: 9c233e8e184d
    e: versions differ -> m
    d: remote is newer -> g
   preserving e for resolve of e
@@ -151,13 +137,7 @@ Graft out of order, skipping a merge and a duplicate
   merging e
   my e@77eb504366ab+ other e@9c233e8e184d ancestor e@68795b066622
   warning: conflicts during merge.
-  merging e failed!
-    searching for copies back to rev 1
-    unmatched files in local:
-     c
-    all copies found (* = to merge, ! = divergent):
-     c -> b *
-    checking for directory renames
+  merging e incomplete! (edit conflicts, then use 'hg resolve --mark')
   abort: unresolved conflicts, can't continue
   (use hg resolve and hg graft --continue)
   [255]
