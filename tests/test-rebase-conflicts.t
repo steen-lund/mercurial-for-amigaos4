@@ -3,6 +3,9 @@
   > graphlog=
   > rebase=
   > 
+  > [phases]
+  > publish=False
+  > 
   > [alias]
   > tglog = log -G --template "{rev}: '{desc}' {branches}\n"
   > EOF
@@ -58,7 +61,7 @@ Conflicting rebase:
   $ hg rebase -s 3 -d 2
   merging common
   warning: conflicts during merge.
-  merging common failed!
+  merging common incomplete! (edit conflicts, then use 'hg resolve --mark')
   abort: unresolved conflicts (see hg resolve, then hg rebase --continue)
   [255]
 

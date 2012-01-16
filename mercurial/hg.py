@@ -183,7 +183,10 @@ def copystore(ui, srcrepo, destpath):
     try:
         hardlink = None
         num = 0
+        srcpublishing = srcrepo.ui.configbool('phases', 'publish', True)
         for f in srcrepo.store.copylist():
+            if srcpublishing and f.endswith('phaseroots'):
+                continue
             src = os.path.join(srcrepo.sharedpath, f)
             dst = os.path.join(destpath, f)
             dstbase = os.path.dirname(dst)
@@ -276,7 +279,7 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
             if self.dir_:
                 self.rmtree(self.dir_, True)
 
-    srclock = destlock = dircleanup = None
+    srclock = destwlock = destlock = dircleanup = None
     try:
         abspath = origsource
         if islocal(origsource):
@@ -322,6 +325,11 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
             # we need to re-init the repo after manually copying the data
             # into it
             destrepo = repository(remoteui(ui, peeropts), dest)
+            # we need full recursive locking of the new repo instance
+            destwlock = destrepo.wlock()
+            if destlock:
+                destlock.release() # a little race condition - but no deadlock
+            destlock = destrepo.lock()
             srcrepo.hook('outgoing', source='clone',
                           node=node.hex(node.nullid))
         else:
@@ -353,6 +361,21 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
         if dircleanup:
             dircleanup.close()
 
+        # clone all bookmarks
+        if destrepo.local() and srcrepo.capable("pushkey"):
+            rb = srcrepo.listkeys('bookmarks')
+            for k, n in rb.iteritems():
+                try:
+                    m = destrepo.lookup(n)
+                    destrepo._bookmarks[k] = m
+                except error.RepoLookupError:
+                    pass
+            if rb:
+                bookmarks.write(destrepo)
+        elif srcrepo.local() and destrepo.capable("pushkey"):
+            for k, n in srcrepo._bookmarks.iteritems():
+                destrepo.pushkey('bookmarks', k, '', hex(n))
+
         if destrepo.local():
             fp = destrepo.opener("hgrc", "w", text=True)
             fp.write("[paths]\n")
@@ -381,24 +404,9 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
                 destrepo.ui.status(_("updating to branch %s\n") % bn)
                 _update(destrepo, uprev)
 
-        # clone all bookmarks
-        if destrepo.local() and srcrepo.capable("pushkey"):
-            rb = srcrepo.listkeys('bookmarks')
-            for k, n in rb.iteritems():
-                try:
-                    m = destrepo.lookup(n)
-                    destrepo._bookmarks[k] = m
-                except error.RepoLookupError:
-                    pass
-            if rb:
-                bookmarks.write(destrepo)
-        elif srcrepo.local() and destrepo.capable("pushkey"):
-            for k, n in srcrepo._bookmarks.iteritems():
-                destrepo.pushkey('bookmarks', k, '', hex(n))
-
         return srcrepo, destrepo
     finally:
-        release(srclock, destlock)
+        release(srclock, destlock, destwlock)
         if dircleanup is not None:
             dircleanup.cleanup()
 
@@ -504,9 +512,9 @@ def _outgoing(ui, repo, dest, opts):
         revs = [repo.lookup(rev) for rev in revs]
 
     other = peer(repo, opts, dest)
-    common, outheads = discovery.findcommonoutgoing(repo, other, revs,
-                                                    force=opts.get('force'))
-    o = repo.changelog.findmissing(common, outheads)
+    outgoing = discovery.findcommonoutgoing(repo, other, revs,
+                                            force=opts.get('force'))
+    o = outgoing.missing
     if not o:
         ui.status(_("no changes found\n"))
         return None

@@ -303,7 +303,7 @@ class abstractsubrepo(object):
         """merge currently-saved state with the new state."""
         raise NotImplementedError
 
-    def push(self, force):
+    def push(self, opts):
         """perform whatever action is analogous to 'hg push'
 
         This may be a no-op on some systems.
@@ -353,6 +353,15 @@ class abstractsubrepo(object):
                         unit=_('files'), total=total)
         ui.progress(_('archiving (%s)') % relpath, None)
 
+    def walk(self, match):
+        '''
+        walk recursively through the directory tree, finding all files
+        matched by the match function
+        '''
+        pass
+
+    def forget(self, files):
+        pass
 
 class hgsubrepo(abstractsubrepo):
     def __init__(self, ctx, path, state):
@@ -475,7 +484,8 @@ class hgsubrepo(abstractsubrepo):
                 self._repo.ui.status(_('pulling subrepo %s from %s\n')
                                      % (subrelpath(self), srcurl))
                 self._repo.pull(other)
-            bookmarks.updatefromremote(self._repo.ui, self._repo, other)
+                bookmarks.updatefromremote(self._repo.ui, self._repo, other,
+                                           srcurl)
 
     def get(self, state, overwrite=False):
         self._get(state)
@@ -509,19 +519,23 @@ class hgsubrepo(abstractsubrepo):
         else:
             mergefunc()
 
-    def push(self, force):
+    def push(self, opts):
+        force = opts.get('force')
+        newbranch = opts.get('new_branch')
+        ssh = opts.get('ssh')
+
         # push subrepos depth-first for coherent ordering
         c = self._repo['']
         subs = c.substate # only repos that are committed
         for s in sorted(subs):
-            if not c.sub(s).push(force):
+            if not c.sub(s).push(opts):
                 return False
 
         dsturl = _abssource(self._repo, True)
         self._repo.ui.status(_('pushing subrepo %s to %s\n') %
             (subrelpath(self), dsturl))
-        other = hg.peer(self._repo.ui, {}, dsturl)
-        return self._repo.push(other, force)
+        other = hg.peer(self._repo.ui, {'ssh': ssh}, dsturl)
+        return self._repo.push(other, force, newbranch=newbranch)
 
     def outgoing(self, ui, dest, opts):
         return hg.outgoing(ui, self._repo, _abssource(self._repo, True), opts)
@@ -543,6 +557,13 @@ class hgsubrepo(abstractsubrepo):
         ctx = self._repo[rev]
         return ctx.flags(name)
 
+    def walk(self, match):
+        ctx = self._repo[None]
+        return ctx.walk(match)
+
+    def forget(self, files):
+        ctx = self._repo[None]
+        ctx.forget(files)
 
 class svnsubrepo(abstractsubrepo):
     def __init__(self, ctx, path, state):
@@ -714,7 +735,7 @@ class svnsubrepo(abstractsubrepo):
             if _updateprompt(self._ui, self, dirty, self._wcrev(), new):
                 self.get(state, False)
 
-    def push(self, force):
+    def push(self, opts):
         # push is a no-op for SVN
         return True
 
@@ -1008,7 +1029,9 @@ class gitsubrepo(abstractsubrepo):
         else:
             mergefunc()
 
-    def push(self, force):
+    def push(self, opts):
+        force = opts.get('force')
+
         if not self._state[1]:
             return True
         if self._gitmissing():
