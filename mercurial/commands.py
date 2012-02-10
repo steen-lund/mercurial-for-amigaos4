@@ -2154,7 +2154,11 @@ def debugrevlog(ui, repo, file_ = None, **opts):
 
 @command('debugrevspec', [], ('REVSPEC'))
 def debugrevspec(ui, repo, expr):
-    '''parse and apply a revision specification'''
+    """parse and apply a revision specification
+
+    Use --verbose to print the parsed tree before and after aliases
+    expansion.
+    """
     if ui.verbose:
         tree = revset.parse(expr)[0]
         ui.note(tree, "\n")
@@ -4210,7 +4214,8 @@ def phase(ui, repo, *revs, **opts):
 
         public < draft < secret
 
-    Return 0 on success, 1 if no phases were changed.
+    Return 0 on success, 1 if no phases were changed or some could not
+    be changed.
     """
     # search for a unique phase argument
     targetphase = None
@@ -4252,8 +4257,18 @@ def phase(ui, repo, *revs, **opts):
             changes = 0
             newdata = repo._phaserev
             changes = sum(o != newdata[i] for i, o in enumerate(olddata))
+            rejected = [n for n in nodes
+                        if newdata[repo[n].rev()] < targetphase]
+            if rejected:
+                ui.warn(_('cannot move %i changesets to a more permissive '
+                          'phase, use --force\n') % len(rejected))
+                ret = 1
             if changes:
-                ui.note(_('phase change for %i changesets\n') % changes)
+                msg = _('phase changed for %i changesets\n') % changes
+                if ret:
+                    ui.status(msg)
+                else:
+                    ui.note(msg)
             else:
                 ui.warn(_('no phases changed\n'))
                 ret = 1
@@ -5710,18 +5725,21 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
     if check and clean:
         raise util.Abort(_("cannot specify both -c/--check and -C/--clean"))
 
-    if check:
-        # we could use dirty() but we can ignore merge and branch trivia
-        c = repo[None]
-        if c.modified() or c.added() or c.removed():
-            raise util.Abort(_("uncommitted local changes"))
-
     if date:
         if rev is not None:
             raise util.Abort(_("you can't specify a revision and a date"))
         rev = cmdutil.finddate(ui, repo, date)
 
-    if clean or check:
+    if check:
+        # we could use dirty() but we can ignore merge and branch trivia
+        c = repo[None]
+        if c.modified() or c.added() or c.removed():
+            raise util.Abort(_("uncommitted local changes"))
+        if not rev:
+            rev = repo[repo[None].branch()].rev()
+        mergemod._checkunknown(repo, repo[None], repo[rev])
+
+    if clean:
         ret = hg.clean(repo, rev)
     else:
         ret = hg.update(repo, rev)

@@ -257,10 +257,11 @@ class patchheader(object):
                 ci += 1
             del self.comments[ci]
 
-def secretcommit(repo, phase, *args, **kwargs):
-    """helper dedicated to ensure a commit are secret
+def newcommit(repo, phase, *args, **kwargs):
+    """helper dedicated to ensure a commit respect mq.secret setting
 
-    It should be used instead of repo.commit inside the mq source
+    It should be used instead of repo.commit inside the mq source for operation
+    creating new changeset.
     """
     if phase is None:
         if repo.ui.configbool('mq', 'secret', False):
@@ -581,7 +582,7 @@ class queue(object):
         ret = hg.merge(repo, rev)
         if ret:
             raise util.Abort(_("update returned %d") % ret)
-        n = secretcommit(repo, None, ctx.description(), ctx.user(), force=True)
+        n = newcommit(repo, None, ctx.description(), ctx.user(), force=True)
         if n is None:
             raise util.Abort(_("repo commit failed"))
         try:
@@ -621,7 +622,7 @@ class queue(object):
             # the first patch in the queue is never a merge patch
             #
             pname = ".hg.patches.merge.marker"
-            n = secretcommit(repo, None, '[mq]: merge marker', force=True)
+            n = newcommit(repo, None, '[mq]: merge marker', force=True)
             self.removeundo(repo)
             self.applied.append(statusentry(n, pname))
             self.applieddirty = True
@@ -752,8 +753,8 @@ class queue(object):
 
             match = scmutil.matchfiles(repo, files or [])
             oldtip = repo['tip']
-            n = secretcommit(repo, None, message, ph.user, ph.date, match=match,
-                             force=True)
+            n = newcommit(repo, None, message, ph.user, ph.date, match=match,
+                          force=True)
             if repo['tip'] == oldtip:
                 raise util.Abort(_("qpush exactly duplicates child changeset"))
             if n is None:
@@ -993,8 +994,8 @@ class queue(object):
                 if util.safehasattr(msg, '__call__'):
                     msg = msg()
                 commitmsg = msg and msg or ("[mq]: %s" % patchfn)
-                n = secretcommit(repo, None, commitmsg, user, date, match=match,
-                                 force=True)
+                n = newcommit(repo, None, commitmsg, user, date, match=match,
+                              force=True)
                 if n is None:
                     raise util.Abort(_("repo commit failed"))
                 try:
@@ -1548,8 +1549,8 @@ class queue(object):
 
                 # Ensure we create a new changeset in the same phase than
                 # the old one.
-                n = secretcommit(repo, oldphase, message, user, ph.date,
-                                 match=match, force=True)
+                n = newcommit(repo, oldphase, message, user, ph.date,
+                              match=match, force=True)
                 # only write patch after a successful commit
                 patchf.close()
                 self.applied.append(statusentry(n, patchfn))
