@@ -83,8 +83,26 @@ o  (0) root
   >   hg commit -Aqd "$rev 0" -m "($rev) $msg"
   > }
 
+  $ cat > printrevset.py <<EOF
+  > from mercurial import extensions, revset, commands
+  > from hgext import graphlog
+  >  
+  > def uisetup(ui):
+  >     def printrevset(orig, ui, repo, *pats, **opts):
+  >         if opts.get('print_revset'):
+  >             expr = graphlog.revset(repo, pats, opts)
+  >             tree = revset.parse(expr)[0]
+  >             ui.write(tree, "\n")
+  >             return 0
+  >         return orig(ui, repo, *pats, **opts)
+  >     entry = extensions.wrapcommand(commands.table, 'log', printrevset)
+  >     entry[1].append(('', 'print-revset', False,
+  >                      'print generated revset and exit (DEPRECATED)'))
+  > EOF
+
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "graphlog=" >> $HGRCPATH
+  $ echo "printrevset=`pwd`/printrevset.py" >> $HGRCPATH
 
   $ hg init repo
   $ cd repo
@@ -1359,9 +1377,13 @@ File + limit + -ra:b, b < tip, (b - a) < limit:
 
 Do not crash or produce strange graphs if history is buggy
 
+  $ hg branch branch
+  marked working directory as branch branch
+  (branches are permanent and global, did you want a bookmark?)
   $ commit 36 "buggy merge: identical parents" 35 35
   $ hg glog -l5
-  @  changeset:   36:95fa8febd08a
+  @  changeset:   36:08a19a744424
+  |  branch:      branch
   |  tag:         tip
   |  parent:      35:9159c3644c5e
   |  parent:      35:9159c3644c5e
@@ -1396,15 +1418,25 @@ Do not crash or produce strange graphs if history is buggy
 
 Test log -G options
 
-  $ hg log -G -u 'something nice'
-  $ hg log -G -b 'something nice'
-  abort: unknown revision 'something nice'!
-  [255]
-  $ hg log -G -k 'something nice'
-  $ hg log -G --only-branch 'something nice'
-  abort: unknown revision 'something nice'!
-  [255]
-  $ hg log -G --include 'some file' --exclude 'another file'
+  $ testlog() {
+  >   hg log -G --print-revset "$@"
+  >   hg log --template 'nodetag {rev}\n' "$@" | grep nodetag \
+  >     | sed 's/.*nodetag/nodetag/' > log.nodes
+  >   hg log -G --template 'nodetag {rev}\n' "$@" | grep nodetag \
+  >     | sed 's/.*nodetag/nodetag/' > glog.nodes
+  >   diff -u log.nodes glog.nodes
+  > }
+
+  $ testlog -u test -u not-a-user
+  ('group', ('group', ('or', ('func', ('symbol', 'user'), ('string', 'test')), ('func', ('symbol', 'user'), ('string', 'not-a-user')))))
+  $ testlog -b not-a-branch
+  ('group', ('group', ('func', ('symbol', 'branch'), ('string', 'not-a-branch'))))
+  abort: unknown revision 'not-a-branch'!
+  abort: unknown revision 'not-a-branch'!
+  $ testlog -b default -b branch --only-branch branch
+  ('group', ('group', ('or', ('or', ('func', ('symbol', 'branch'), ('string', 'default')), ('func', ('symbol', 'branch'), ('string', 'branch'))), ('func', ('symbol', 'branch'), ('string', 'branch')))))
+  $ testlog -k expand -k merge
+  ('group', ('group', ('or', ('func', ('symbol', 'keyword'), ('string', 'expand')), ('func', ('symbol', 'keyword'), ('string', 'merge')))))
   $ hg log -G --follow  --template 'nodetag {rev}\n' | grep nodetag | wc -l
   \s*36 (re)
   $ hg log -G --removed --template 'nodetag {rev}\n' | grep nodetag | wc -l
@@ -1454,18 +1486,49 @@ Test log -G options
   abort: -G/--graph option is incompatible with --follow with file argument
   [255]
 
-Test multiple revision specifications are correctly handled
 
-  $ hg log -G -r 27 -r 25 -r 21 -r 34 -r 32 -r 31 --template '{rev}\n'
-  o  34
+Dedicated repo for --follow and paths filtering
+
+  $ cd ..
+  $ hg init follow
+  $ cd follow
+  $ echo a > a
+  $ hg ci -Am "add a"
+  adding a
+  $ hg cp a b
+  $ hg ci -m "copy a b"
+  $ mkdir dir
+  $ hg mv b dir
+  $ hg ci -m "mv b dir/b"
+  $ hg mv a b
+  $ echo a > d
+  $ hg add d
+  $ hg ci -m "mv a b; add d"
+  $ hg mv dir/b e
+  $ hg ci -m "mv dir/b e"
+  $ hg glog --template '({rev}) {desc|firstline}\n'
+  @  (4) mv dir/b e
   |
-  o    32
-  |\
-  | o    31
-  | |\
-  o | |  27
-  |/ /
-  | o  25
-  |/
-  o    21
-  |\
+  o  (3) mv a b; add d
+  |
+  o  (2) mv b dir/b
+  |
+  o  (1) copy a b
+  |
+  o  (0) add a
+  
+
+  $ testlog a
+  ('group', ('group', ('func', ('symbol', 'filelog'), ('string', 'a'))))
+  $ testlog a b
+  ('group', ('group', ('or', ('func', ('symbol', 'filelog'), ('string', 'a')), ('func', ('symbol', 'filelog'), ('string', 'b')))))
+
+Test falling back to slow path for non-existing files
+
+  $ testlog a c
+  ('group', ('group', ('func', ('symbol', '_matchfiles'), ('list', ('string', 'p:a'), ('string', 'p:c')))))
+
+Test multiple --include/--exclude/paths
+
+  $ testlog --include a --include e --exclude b --exclude e a e
+  ('group', ('group', ('func', ('symbol', '_matchfiles'), ('list', ('list', ('list', ('list', ('list', ('string', 'p:a'), ('string', 'p:e')), ('string', 'i:a')), ('string', 'i:e')), ('string', 'x:b')), ('string', 'x:e')))))

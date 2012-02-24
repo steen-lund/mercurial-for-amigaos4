@@ -245,52 +245,75 @@ def check_unsupported_flags(pats, opts):
         raise util.Abort(_("-G/--graph option is incompatible with --follow "
                            "with file argument"))
 
-def revset(pats, opts):
+def revset(repo, pats, opts):
     """Return revset str built of revisions, log options and file patterns.
     """
     opt2revset = {
-        'follow': (0, 'follow()'),
-        'no_merges': (0, 'not merge()'),
-        'only_merges': (0, 'merge()'),
-        'removed': (0, 'removes("*")'),
-        'date': (1, 'date($)'),
-        'branch': (2, 'branch($)'),
-        'exclude': (2, 'not file($)'),
-        'include': (2, 'file($)'),
-        'keyword': (2, 'keyword($)'),
-        'only_branch': (2, 'branch($)'),
-        'prune': (2, 'not ($ or ancestors($))'),
-        'user': (2, 'user($)'),
+        'follow':      ('follow()', None),
+        'no_merges':   ('not merge()', None),
+        'only_merges': ('merge()', None),
+        'removed':     ('removes("*")', None),
+        'date':        ('date(%(val)r)', None),
+        'branch':      ('branch(%(val)r)', ' or '),
+        '_patslog':    ('filelog(%(val)r)', ' or '),
+        'keyword':     ('keyword(%(val)r)', ' or '),
+        'prune':       ('not (%(val)r or ancestors(%(val)r))', ' and '),
+        'user':        ('user(%(val)r)', ' or '),
+        'rev':         ('%(val)s', ' or '),
         }
-    optrevset = []
+
+    opts = dict(opts)
+    # branch and only_branch are really aliases and must be handled at
+    # the same time
+    if 'branch' in opts and 'only_branch' in opts:
+        opts['branch'] = opts['branch'] + opts.pop('only_branch')
+
+    match = scmutil.match(repo[None], pats, opts)
+    slowpath = match.anypats() or (match.files() and opts.get('removed'))
+    if not slowpath:
+        for f in match.files():
+            filelog = repo.file(f)
+            if not len(filelog):
+                # A zero count may be a directory or deleted file, so
+                # try to find matching entries on the slow path.
+                slowpath = True
+    if slowpath:
+        # See cmdutil.walkchangerevs() slow path.
+        #
+        # pats/include/exclude cannot be represented as separate
+        # revset expressions as their filtering logic applies at file
+        # level. For instance "-I a -X a" matches a revision touching
+        # "a" and "b" while "file(a) and not file(b)" does not.
+        matchargs = []
+        for p in pats:
+            matchargs.append('p:' + p)
+        for p in opts.get('include', []):
+            matchargs.append('i:' + p)
+        for p in opts.get('exclude', []):
+            matchargs.append('x:' + p)
+        matchargs = ','.join(('%r' % p) for p in matchargs)
+        opts['rev'] = opts.get('rev', []) + ['_matchfiles(%s)' % matchargs]
+    else:
+        opts['_patslog'] = list(pats)
+
     revset = []
     for op, val in opts.iteritems():
         if not val:
             continue
-        if op == 'rev':
-            # Already a revset
-            revset.extend(val)
         if op not in opt2revset:
             continue
-        arity, revop = opt2revset[op]
-        revop = revop.replace('$', '%(val)r')
-        if arity == 0:
-            optrevset.append(revop)
-        elif arity == 1:
-            optrevset.append(revop % {'val': val})
+        revop, andor = opt2revset[op]
+        if '%(val)' not in revop:
+            revset.append(revop)
         else:
-            for f in val:
-                optrevset.append(revop % {'val': f})
+            if not isinstance(val, list):
+                expr = revop % {'val': val}
+            else:
+                expr = '(' + andor.join((revop % {'val': v}) for v in val) + ')'
+            revset.append(expr)
 
-    for path in pats:
-        optrevset.append('file(%r)' % path)
-
-    if revset or optrevset:
-        if revset:
-            revset = ['(' + ' or '.join(revset) + ')']
-        if optrevset:
-            revset.append('(' + ' and '.join(optrevset) + ')')
-        revset = ' and '.join(revset)
+    if revset:
+        revset = '(' + ' and '.join(revset) + ')'
     else:
         revset = 'all()'
     return revset
@@ -326,7 +349,7 @@ def graphlog(ui, repo, *pats, **opts):
 
     check_unsupported_flags(pats, opts)
 
-    revs = sorted(scmutil.revrange(repo, [revset(pats, opts)]), reverse=1)
+    revs = sorted(scmutil.revrange(repo, [revset(repo, pats, opts)]), reverse=1)
     limit = cmdutil.loglimit(opts)
     if limit is not None:
         revs = revs[:limit]
