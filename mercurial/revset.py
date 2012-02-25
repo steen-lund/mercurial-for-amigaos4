@@ -112,7 +112,7 @@ def getlist(x):
 
 def getargs(x, min, max, err):
     l = getlist(x)
-    if len(l) < min or len(l) > max:
+    if len(l) < min or (max >= 0 and len(l) > max):
         raise error.ParseError(err)
     return l
 
@@ -465,6 +465,40 @@ def follow(repo, subset, x):
 
     return [r for r in subset if r in s]
 
+def _followfirst(repo, subset, x):
+    # ``followfirst([file])``
+    # Like ``follow([file])`` but follows only the first parent of
+    # every revision or file revision.
+    # i18n: "_followfirst" is a keyword
+    l = getargs(x, 0, 1, _("_followfirst takes no arguments or a filename"))
+    c = repo['.']
+    if l:
+        x = getstring(l[0], _("_followfirst expected a filename"))
+        if x not in c:
+            return []
+        cx = c[x]
+        visit = {}
+        s = set([cx.linkrev()])
+        while True:
+            for p in cx.parents()[:1]:
+                visit[(p.rev(), p.node())] = p
+            if not visit:
+                break
+            cx = visit.pop(max(visit))
+            s.add(cx.rev())
+    else:
+        cl = repo.changelog
+        s = set()
+        visit = [c.rev()]
+        while visit:
+            for prev in cl.parentrevs(visit.pop(0))[:1]:
+                if prev not in s and prev != nodemod.nullrev:
+                    visit.append(prev)
+                    s.add(prev)
+        s.add(c.rev())
+
+    return [r for r in subset if r in s]
+
 def getall(repo, subset, x):
     """``all()``
     All changesets, the same as ``0:tip``.
@@ -493,23 +527,52 @@ def grep(repo, subset, x):
                 break
     return l
 
+def _matchfiles(repo, subset, x):
+    # _matchfiles takes a revset list of prefixed arguments:
+    #
+    #   [p:foo, i:bar, x:baz]
+    #
+    # builds a match object from them and filters subset. Allowed
+    # prefixes are 'p:' for regular patterns, 'i:' for include
+    # patterns and 'x:' for exclude patterns.
+
+    # i18n: "_matchfiles" is a keyword
+    l = getargs(x, 1, -1, _("_matchfiles requires at least one argument"))
+    pats, inc, exc = [], [], []
+    hasset = False
+    for arg in l:
+        s = getstring(arg, _("_matchfiles requires string arguments"))
+        prefix, value = s[:2], s[2:]
+        if prefix == 'p:':
+            pats.append(value)
+        elif prefix == 'i:':
+            inc.append(value)
+        elif prefix == 'x:':
+            exc.append(value)
+        else:
+            raise error.ParseError(_('invalid _matchfiles prefix: %s') % prefix)
+        if not hasset and matchmod.patkind(value) == 'set':
+            hasset = True
+    m = None
+    s = []
+    for r in subset:
+        c = repo[r]
+        if not m or hasset:
+            m = matchmod.match(repo.root, repo.getcwd(), pats, include=inc,
+                               exclude=exc, ctx=c)
+        for f in c.files():
+            if m(f):
+                s.append(r)
+                break
+    return s
+
 def hasfile(repo, subset, x):
     """``file(pattern)``
     Changesets affecting files matched by pattern.
     """
     # i18n: "file" is a keyword
     pat = getstring(x, _("file requires a pattern"))
-    m = None
-    s = []
-    for r in subset:
-        c = repo[r]
-        if not m or matchmod.patkind(pat) == 'set':
-            m = matchmod.match(repo.root, repo.getcwd(), [pat], ctx=c)
-        for f in c.files():
-            if m(f):
-                s.append(r)
-                break
-    return s
+    return _matchfiles(repo, subset, ('string', 'p:' + pat))
 
 def head(repo, subset, x):
     """``head()``
@@ -936,6 +999,7 @@ symbols = {
     "filelog": filelog,
     "first": first,
     "follow": follow,
+    "_followfirst": _followfirst,
     "grep": grep,
     "head": head,
     "heads": heads,
@@ -943,6 +1007,7 @@ symbols = {
     "keyword": keyword,
     "last": last,
     "limit": limit,
+    "_matchfiles": _matchfiles,
     "max": maxrev,
     "merge": merge,
     "min": minrev,
@@ -1071,46 +1136,85 @@ class revsetalias(object):
         h = heads(default)
         b($1) = ancestors($1) - ancestors(default)
         '''
-        if isinstance(name, tuple): # parameter substitution
-            self.tree = name
-            self.replacement = value
-        else: # alias definition
-            m = self.funcre.search(name)
-            if m:
-                self.tree = ('func', ('symbol', m.group(1)))
-                self.args = [x.strip() for x in m.group(2).split(',')]
-                for arg in self.args:
-                    value = value.replace(arg, repr(arg))
-            else:
-                self.tree = ('symbol', name)
+        m = self.funcre.search(name)
+        if m:
+            self.name = m.group(1)
+            self.tree = ('func', ('symbol', m.group(1)))
+            self.args = [x.strip() for x in m.group(2).split(',')]
+            for arg in self.args:
+                value = value.replace(arg, repr(arg))
+        else:
+            self.name = name
+            self.tree = ('symbol', name)
 
-            self.replacement, pos = parse(value)
-            if pos != len(value):
-                raise error.ParseError(_('invalid token'), pos)
+        self.replacement, pos = parse(value)
+        if pos != len(value):
+            raise error.ParseError(_('invalid token'), pos)
 
-    def process(self, tree):
-        if isinstance(tree, tuple):
-            if self.args is None:
-                if tree == self.tree:
-                    return self.replacement
-            elif tree[:2] == self.tree:
-                l = getlist(tree[2])
-                if len(l) != len(self.args):
-                    raise error.ParseError(
-                        _('invalid number of arguments: %s') % len(l))
-                result = self.replacement
-                for a, v in zip(self.args, l):
-                    valalias = revsetalias(('string', a), v)
-                    result = valalias.process(result)
-                return result
-            return tuple(map(self.process, tree))
+def _getalias(aliases, tree):
+    """If tree looks like an unexpanded alias, return it. Return None
+    otherwise.
+    """
+    if isinstance(tree, tuple) and tree:
+        if tree[0] == 'symbol' and len(tree) == 2:
+            name = tree[1]
+            alias = aliases.get(name)
+            if alias and alias.args is None and alias.tree == tree:
+                return alias
+        if tree[0] == 'func' and len(tree) > 1:
+            if tree[1][0] == 'symbol' and len(tree[1]) == 2:
+                name = tree[1][1]
+                alias = aliases.get(name)
+                if alias and alias.args is not None and alias.tree == tree[:2]:
+                    return alias
+    return None
+
+def _expandargs(tree, args):
+    """Replace all occurences of ('string', name) with the
+    substitution value of the same name in args, recursively.
+    """
+    if not isinstance(tree, tuple):
         return tree
+    if len(tree) == 2 and tree[0] == 'string':
+        return args.get(tree[1], tree)
+    return tuple(_expandargs(t, args) for t in tree)
+
+def _expandaliases(aliases, tree, expanding):
+    """Expand aliases in tree, recursively.
+
+    'aliases' is a dictionary mapping user defined aliases to
+    revsetalias objects.
+    """
+    if not isinstance(tree, tuple):
+        # Do not expand raw strings
+        return tree
+    alias = _getalias(aliases, tree)
+    if alias is not None:
+        if alias in expanding:
+            raise error.ParseError(_('infinite expansion of revset alias "%s" '
+                                     'detected') % alias.name)
+        expanding.append(alias)
+        result = alias.replacement
+        if alias.args is not None:
+            l = getlist(tree[2])
+            if len(l) != len(alias.args):
+                raise error.ParseError(
+                    _('invalid number of arguments: %s') % len(l))
+            result = _expandargs(result, dict(zip(alias.args, l)))
+        # Recurse in place, the base expression may have been rewritten
+        result = _expandaliases(aliases, result, expanding)
+        expanding.pop()
+    else:
+        result = tuple(_expandaliases(aliases, t, expanding)
+                       for t in tree)
+    return result
 
 def findaliases(ui, tree):
+    aliases = {}
     for k, v in ui.configitems('revsetalias'):
         alias = revsetalias(k, v)
-        tree = alias.process(tree)
-    return tree
+        aliases[alias.name] = alias
+    return _expandaliases(aliases, tree, [])
 
 parse = parser.parser(tokenize, elements).parse
 

@@ -579,7 +579,7 @@ def expandpats(pats):
         ret.append(p)
     return ret
 
-def match(ctx, pats=[], opts={}, globbed=False, default='relpath'):
+def matchandpats(ctx, pats=[], opts={}, globbed=False, default='relpath'):
     if pats == ("",):
         pats = []
     if not globbed and default == 'relpath':
@@ -590,7 +590,10 @@ def match(ctx, pats=[], opts={}, globbed=False, default='relpath'):
     def badfn(f, msg):
         ctx._repo.ui.warn("%s: %s\n" % (m.rel(f), msg))
     m.bad = badfn
-    return m
+    return m, pats
+
+def match(ctx, pats=[], opts={}, globbed=False, default='relpath'):
+    return matchandpats(ctx, pats, opts, globbed, default)[0]
 
 def matchall(repo):
     return matchmod.always(repo.root, repo.getcwd())
@@ -607,6 +610,9 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
     added, unknown, deleted, removed = [], [], [], []
     audit_path = pathauditor(repo.root)
     m = match(repo[None], pats, opts)
+    rejected = []
+    m.bad = lambda x, y: rejected.append(x)
+
     for abs in repo.walk(m):
         target = repo.wjoin(abs)
         good = True
@@ -650,6 +656,11 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
                 wctx.copy(old, new)
         finally:
             wlock.release()
+
+    for f in rejected:
+        if f in m.files():
+            return 1
+    return 0
 
 def updatedir(ui, repo, patches, similarity=0):
     '''Update dirstate after patch application according to metadata'''
