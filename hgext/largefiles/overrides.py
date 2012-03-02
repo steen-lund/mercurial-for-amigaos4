@@ -265,13 +265,10 @@ def override_update(orig, ui, repo, *pats, **opts):
 # The overridden function filters the unknown files by removing any
 # largefiles. This makes the merge proceed and we can then handle this
 # case further in the overridden manifestmerge function below.
-def override_checkunknown(origfn, wctx, mctx, folding):
-    origunknown = wctx.unknown()
-    wctx._unknown = filter(lambda f: lfutil.standin(f) not in wctx, origunknown)
-    try:
-        return origfn(wctx, mctx, folding)
-    finally:
-        wctx._unknown = origunknown
+def override_checkunknownfile(origfn, repo, wctx, mctx, f):
+    if lfutil.standin(f) in wctx:
+        return False
+    return origfn(repo, wctx, mctx, f)
 
 # The manifest merge handles conflicts on the manifest level. We want
 # to handle changes in largefile-ness of files at this level too.
@@ -322,7 +319,7 @@ def override_manifestmerge(origfn, repo, p1, p2, pa, overwrite, partial):
                 processed.append((standin, "g", p2.flags(standin)))
             else:
                 processed.append((standin, "r"))
-        elif m == "m" and lfutil.standin(f) in p1 and f in p2:
+        elif m == "g" and lfutil.standin(f) in p1 and f in p2:
             # Case 2: largefile in the working copy, normal file in
             # the second parent
             standin = lfutil.standin(f)
@@ -454,7 +451,7 @@ def override_copy(orig, ui, repo, pats, opts, rename=False):
                 m._fmap = set(m._files)
                 orig_matchfn = m.matchfn
                 m.matchfn = lambda f: (lfutil.isstandin(f) and
-                                    lfile(lfutil.splitstandin(f)) and
+                                    (f in manifest) and
                                     orig_matchfn(lfutil.splitstandin(f)) or
                                     None)
                 return m
@@ -546,7 +543,7 @@ def override_revert(orig, ui, repo, *pats, **opts):
                 match = oldmatch(ctx, pats, opts, globbed, default)
                 m = copy.copy(match)
                 def tostandin(f):
-                    if lfutil.standin(f) in ctx or lfutil.standin(f) in ctx:
+                    if lfutil.standin(f) in ctx:
                         return lfutil.standin(f)
                     elif lfutil.standin(f) in repo[None]:
                         return None
@@ -605,8 +602,20 @@ def override_revert(orig, ui, repo, *pats, **opts):
         wlock.release()
 
 def hg_update(orig, repo, node):
+    # In order to not waste a lot of extra time during the update largefiles
+    # step, we keep track of the state of the standins before and after we
+    # call the original update function, and only update the standins that
+    # have changed in the hg.update() call
+    oldstandins = lfutil.getstandinsstate(repo)
     result = orig(repo, node)
-    lfcommands.updatelfiles(repo.ui, repo)
+    newstandins = lfutil.getstandinsstate(repo)
+    tobeupdated = set(oldstandins).symmetric_difference(set(newstandins))
+    filelist = []
+    for f in tobeupdated:
+        if f[0] not in filelist:
+            filelist.append(f[0])
+
+    lfcommands.updatelfiles(repo.ui, repo, filelist=filelist, printmessage=True)
     return result
 
 def hg_clean(orig, repo, node, show_stats=True):
