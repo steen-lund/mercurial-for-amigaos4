@@ -611,11 +611,12 @@ class filectx(object):
 
         return None
 
-    def ancestors(self):
+    def ancestors(self, followfirst=False):
         visit = {}
         c = self
+        cut = followfirst and 1 or None
         while True:
-            for parent in c.parents():
+            for parent in c.parents()[:cut]:
                 visit[(parent.rev(), parent.node())] = parent
             if not visit:
                 break
@@ -715,9 +716,6 @@ class workingctx(changectx):
     def _manifest(self):
         """generate a manifest corresponding to the working directory"""
 
-        if self._unknown is None:
-            self.status(unknown=True)
-
         man = self._parents[0].manifest().copy()
         if len(self._parents) > 1:
             man2 = self.p2().manifest()
@@ -731,8 +729,7 @@ class workingctx(changectx):
         copied = self._repo.dirstate.copies()
         ff = self._flagfunc
         modified, added, removed, deleted = self._status
-        unknown = self._unknown
-        for i, l in (("a", added), ("m", modified), ("u", unknown)):
+        for i, l in (("a", added), ("m", modified)):
             for f in l:
                 orig = copied.get(f, f)
                 man[f] = getman(orig).get(orig, nullid) + i
@@ -934,9 +931,10 @@ class workingctx(changectx):
         finally:
             wlock.release()
 
-    def ancestors(self):
+    def ancestors(self, followfirst=False):
+        cut = followfirst and 1 or None
         for a in self._repo.changelog.ancestors(
-            *[p.rev() for p in self._parents]):
+            *[p.rev() for p in self._parents[:cut]]):
             yield changectx(self._repo, a)
 
     def undelete(self, list):
