@@ -202,12 +202,6 @@
   hgext/keyword.py:0:
    >     ui.note("hg ci -m '%s'\n" % msg)
    warning: unwrapped ui message
-  hgext/largefiles/overrides.py:0:
-   >             # When we call orig below it creates the standins but we don't add them
-   warning: line over 80 characters
-  hgext/largefiles/reposetup.py:0:
-   >                             if os.path.exists(self.wjoin(lfutil.standin(lfile))):
-   warning: line over 80 characters
   hgext/mq.py:0:
    >                     raise util.Abort(_("cannot push --exact with applied patches"))
    warning: line over 80 characters
@@ -473,9 +467,6 @@
   mercurial/keepalive.py:0:
    >     except:
    warning: naked except clause
-  mercurial/localrepo.py:0:
-   >                                      hint=_("use --subrepos for recursive commit"))
-   warning: line over 80 characters
   mercurial/localrepo.py:0:
    >                         # we return an integer indicating remote head count change
    warning: line over 80 characters
