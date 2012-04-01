@@ -262,10 +262,10 @@ def changeset(web, req, tmpl):
 
     files = []
     parity = paritygen(web.stripecount)
-    for f in ctx.files():
+    for blockno, f in enumerate(ctx.files()):
         template = f in ctx and 'filenodelink' or 'filenolink'
         files.append(tmpl(template,
-                          node=ctx.hex(), file=f,
+                          node=ctx.hex(), file=f, blockno=blockno + 1,
                           parity=parity.next()))
 
     style = web.config('web', 'style', 'paper')
@@ -770,7 +770,7 @@ def graph(web, req, tmpl):
         startrev = uprev
 
     dag = graphmod.dagwalker(web.repo, range(startrev, downrev - 1, -1))
-    tree = list(graphmod.colored(dag))
+    tree = list(graphmod.colored(dag, web.repo))
     canvasheight = (len(tree) + 1) * bg_height - 27
     data = []
     for (id, type, ctx, vtx, edges) in tree:
