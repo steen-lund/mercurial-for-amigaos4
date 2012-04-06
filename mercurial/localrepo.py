@@ -398,7 +398,15 @@ class localrepository(repo.repository):
 
     def tags(self):
         '''return a mapping of tag to node'''
-        return self._tagscache.tags
+        t = {}
+        for k, v in self._tagscache.tags.iteritems():
+            try:
+                # ignore tags to unknown nodes
+                self.changelog.rev(v)
+                t[k] = v
+            except error.LookupError:
+                pass
+        return t
 
     def _findtags(self):
         '''Do the hard work of finding tags.  Return a pair of dicts
@@ -427,12 +435,7 @@ class localrepository(repo.repository):
         tags = {}
         for (name, (node, hist)) in alltags.iteritems():
             if node != nullid:
-                try:
-                    # ignore tags to unknown nodes
-                    self.changelog.lookup(node)
-                    tags[encoding.tolocal(name)] = node
-                except error.LookupError:
-                    pass
+                tags[encoding.tolocal(name)] = node
         tags['tip'] = self.changelog.tip()
         tagtypes = dict([(encoding.tolocal(name), value)
                          for (name, value) in tagtypes.iteritems()])
@@ -464,7 +467,7 @@ class localrepository(repo.repository):
         '''return the tags associated with a node'''
         if not self._tagscache.nodetagscache:
             nodetagscache = {}
-            for t, n in self.tags().iteritems():
+            for t, n in self._tagscache.tags.iteritems():
                 nodetagscache.setdefault(n, []).append(t)
             for tags in nodetagscache.itervalues():
                 tags.sort()
@@ -750,8 +753,8 @@ class localrepository(repo.repository):
             raise error.RepoError(
                 _("abandoned transaction found - run hg recover"))
 
-        journalfiles = self._writejournal(desc)
-        renames = [(x, undoname(x)) for x in journalfiles]
+        self._writejournal(desc)
+        renames = [(x, undoname(x)) for x in self._journalfiles()]
 
         tr = transaction.transaction(self.ui.warn, self.sopener,
                                      self.sjoin("journal"),
@@ -759,6 +762,15 @@ class localrepository(repo.repository):
                                      self.store.createmode)
         self._transref = weakref.ref(tr)
         return tr
+
+    def _journalfiles(self):
+        return (self.sjoin('journal'), self.join('journal.dirstate'),
+                self.join('journal.branch'), self.join('journal.desc'),
+                self.join('journal.bookmarks'),
+                self.sjoin('journal.phaseroots'))
+
+    def undofiles(self):
+        return [undoname(x) for x in self._journalfiles()]
 
     def _writejournal(self, desc):
         # save dirstate for rollback
@@ -783,11 +795,6 @@ class localrepository(repo.repository):
             util.copyfile(phasesname, self.sjoin('journal.phaseroots'))
         else:
             self.sopener.write('journal.phaseroots', '')
-
-        return (self.sjoin('journal'), self.join('journal.dirstate'),
-                self.join('journal.branch'), self.join('journal.desc'),
-                self.join('journal.bookmarks'),
-                self.sjoin('journal.phaseroots'))
 
     def recover(self):
         lock = self.lock()
@@ -1106,36 +1113,57 @@ class localrepository(repo.repository):
 
             # check subrepos
             subs = []
-            removedsubs = set()
+            commitsubs = set()
+            newstate = wctx.substate.copy()
+            # only manage subrepos and .hgsubstate if .hgsub is present
             if '.hgsub' in wctx:
-                # only manage subrepos and .hgsubstate if .hgsub is present
-                for p in wctx.parents():
-                    removedsubs.update(s for s in p.substate if match(s))
-                for s in wctx.substate:
-                    removedsubs.discard(s)
-                    if match(s) and wctx.sub(s).dirty():
+                # we'll decide whether to track this ourselves, thanks
+                if '.hgsubstate' in changes[0]:
+                    changes[0].remove('.hgsubstate')
+                if '.hgsubstate' in changes[2]:
+                    changes[2].remove('.hgsubstate')
+
+                # compare current state to last committed state
+                # build new substate based on last committed state
+                oldstate = wctx.p1().substate
+                for s in sorted(newstate.keys()):
+                    if not match(s):
+                        # ignore working copy, use old state if present
+                        if s in oldstate:
+                            newstate[s] = oldstate[s]
+                            continue
+                        if not force:
+                            raise util.Abort(
+                                _("commit with new subrepo %s excluded") % s)
+                    if wctx.sub(s).dirty(True):
+                        if not self.ui.configbool('ui', 'commitsubrepos'):
+                            raise util.Abort(
+                                _("uncommitted changes in subrepo %s") % s,
+                                hint=_("use --subrepos for recursive commit"))
                         subs.append(s)
-                if (subs or removedsubs):
+                        commitsubs.add(s)
+                    else:
+                        bs = wctx.sub(s).basestate()
+                        newstate[s] = (newstate[s][0], bs, newstate[s][2])
+                        if oldstate.get(s, (None, None, None))[1] != bs:
+                            subs.append(s)
+
+                # check for removed subrepos
+                for p in wctx.parents():
+                    r = [s for s in p.substate if s not in newstate]
+                    subs += [s for s in r if match(s)]
+                if subs:
                     if (not match('.hgsub') and
                         '.hgsub' in (wctx.modified() + wctx.added())):
                         raise util.Abort(
                             _("can't commit subrepos without .hgsub"))
-                    if '.hgsubstate' not in changes[0]:
-                        changes[0].insert(0, '.hgsubstate')
-                        if '.hgsubstate' in changes[2]:
-                            changes[2].remove('.hgsubstate')
+                    changes[0].insert(0, '.hgsubstate')
+
             elif '.hgsub' in changes[2]:
                 # clean up .hgsubstate when .hgsub is removed
                 if ('.hgsubstate' in wctx and
                     '.hgsubstate' not in changes[0] + changes[1] + changes[2]):
                     changes[2].insert(0, '.hgsubstate')
-
-            if subs and not self.ui.configbool('ui', 'commitsubrepos', False):
-                changedsubs = [s for s in subs if wctx.sub(s).dirty(True)]
-                if changedsubs:
-                    raise util.Abort(_("uncommitted changes in subrepo %s")
-                                     % changedsubs[0],
-                                     hint=_("use --subrepos for recursive commit"))
 
             # make sure all explicit patterns are matched
             if not force and match.files():
@@ -1172,16 +1200,15 @@ class localrepository(repo.repository):
                 cctx._text = editor(self, cctx, subs)
             edited = (text != cctx._text)
 
-            # commit subs
-            if subs or removedsubs:
-                state = wctx.substate.copy()
-                for s in sorted(subs):
+            # commit subs and write new state
+            if subs:
+                for s in sorted(commitsubs):
                     sub = wctx.sub(s)
                     self.ui.status(_('committing subrepository %s\n') %
                         subrepo.subrelpath(sub))
                     sr = sub.commit(cctx._text, user, date)
-                    state[s] = (state[s][0], sr)
-                subrepo.writestate(self, state)
+                    newstate[s] = (newstate[s][0], sr)
+                subrepo.writestate(self, newstate)
 
             # Save commit message in case this transaction gets rolled back
             # (e.g. by a pretxncommit hook).  Leave the content alone on
@@ -2265,6 +2292,10 @@ class localrepository(repo.repository):
         # if revlog format changes, client will have to check version
         # and format flags on "stream" capability, and use
         # uncompressed only if compatible.
+
+        if not stream:
+            # if the server explicitely prefer to stream (for fast LANs)
+            stream = remote.capable('stream-preferred')
 
         if stream and not heads:
             # 'stream' means remote revlog format is revlogv1 only
