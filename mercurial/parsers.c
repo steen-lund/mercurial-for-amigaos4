@@ -13,8 +13,10 @@
 
 #include "util.h"
 
-static int hexdigit(char c)
+static inline int hexdigit(const char *p, Py_ssize_t off)
 {
+	char c = p[off];
+
 	if (c >= '0' && c <= '9')
 		return c - '0';
 	if (c >= 'a' && c <= 'f')
@@ -32,8 +34,8 @@ static int hexdigit(char c)
 static PyObject *unhexlify(const char *str, int len)
 {
 	PyObject *ret;
-	const char *c;
 	char *d;
+	int i;
 
 	ret = PyBytes_FromStringAndSize(NULL, len / 2);
 
@@ -42,9 +44,9 @@ static PyObject *unhexlify(const char *str, int len)
 
 	d = PyBytes_AsString(ret);
 
-	for (c = str; c < str + len;) {
-		int hi = hexdigit(*c++);
-		int lo = hexdigit(*c++);
+	for (i = 0; i < len;) {
+		int hi = hexdigit(str, i++);
+		int lo = hexdigit(str, i++);
 		*d++ = (hi << 4) | lo;
 	}
 
@@ -506,13 +508,13 @@ static PyObject *index_stats(indexObject *self)
 		return NULL;
 
 #define istat(__n, __d) \
-	if (PyDict_SetItemString(obj, __d, PyInt_FromLong(self->__n)) == -1) \
+	if (PyDict_SetItemString(obj, __d, PyInt_FromSsize_t(self->__n)) == -1) \
 		goto bail;
 
 	if (self->added) {
 		Py_ssize_t len = PyList_GET_SIZE(self->added);
 		if (PyDict_SetItemString(obj, "index entries added",
-					 PyInt_FromLong(len)) == -1)
+					 PyInt_FromSsize_t(len)) == -1)
 			goto bail;
 	}
 
@@ -536,7 +538,7 @@ bail:
 	return NULL;
 }
 
-static inline int nt_level(const char *node, int level)
+static inline int nt_level(const char *node, Py_ssize_t level)
 {
 	int v = node[level>>1];
 	if (!(level & 1))
@@ -544,6 +546,13 @@ static inline int nt_level(const char *node, int level)
 	return v & 0xf;
 }
 
+/*
+ * Return values:
+ *
+ *   -4: match is ambiguous (multiple candidates)
+ *   -2: not found
+ * rest: valid rev
+ */
 static int nt_find(indexObject *self, const char *node, Py_ssize_t nodelen)
 {
 	int level, maxlevel, off;
@@ -574,7 +583,8 @@ static int nt_find(indexObject *self, const char *node, Py_ssize_t nodelen)
 			return -2;
 		off = v;
 	}
-	return -2;
+	/* multiple matches against an ambiguous prefix */
+	return -4;
 }
 
 static int nt_new(indexObject *self)
@@ -638,6 +648,24 @@ static int nt_insert(indexObject *self, const char *node, int rev)
 	return -1;
 }
 
+static int nt_init(indexObject *self)
+{
+	if (self->nt == NULL) {
+		self->ntcapacity = self->raw_length < 4
+			? 4 : self->raw_length / 2;
+		self->nt = calloc(self->ntcapacity, sizeof(nodetree));
+		if (self->nt == NULL) {
+			PyErr_NoMemory();
+			return -1;
+		}
+		self->ntlength = 1;
+		self->ntrev = (int)index_length(self) - 1;
+		self->ntlookups = 1;
+		self->ntmisses = 0;
+	}
+	return 0;
+}
+
 /*
  * Return values:
  *
@@ -655,19 +683,8 @@ static int index_find_node(indexObject *self,
 	if (rev >= -1)
 		return rev;
 
-	if (self->nt == NULL) {
-		self->ntcapacity = self->raw_length < 4
-			? 4 : self->raw_length / 2;
-		self->nt = calloc(self->ntcapacity, sizeof(nodetree));
-		if (self->nt == NULL) {
-			PyErr_SetString(PyExc_MemoryError, "out of memory");
-			return -3;
-		}
-		self->ntlength = 1;
-		self->ntrev = (int)index_length(self) - 1;
-		self->ntlookups = 1;
-		self->ntmisses = 0;
-	}
+	if (nt_init(self) == -1)
+		return -3;
 
 	/*
 	 * For the first handful of lookups, we scan the entire index,
@@ -692,10 +709,14 @@ static int index_find_node(indexObject *self,
 	} else {
 		for (rev = self->ntrev - 1; rev >= 0; rev--) {
 			const char *n = index_node(self, rev);
-			if (n == NULL)
+			if (n == NULL) {
+				self->ntrev = rev + 1;
 				return -2;
-			if (nt_insert(self, n, rev) == -1)
+			}
+			if (nt_insert(self, n, rev) == -1) {
+				self->ntrev = rev + 1;
 				return -3;
+			}
 			if (memcmp(node, n, nodelen > 20 ? 20 : nodelen) == 0) {
 				break;
 			}

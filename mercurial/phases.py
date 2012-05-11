@@ -106,53 +106,65 @@ allphases = public, draft, secret = range(3)
 trackedphases = allphases[1:]
 phasenames = ['public', 'draft', 'secret']
 
-def readroots(repo):
-    """Read phase roots from disk"""
+def _filterunknown(ui, changelog, phaseroots):
+    """remove unknown nodes from the phase boundary
+
+    Nothing is lost as unknown nodes only hold data for their descendants
+    """
+    updated = False
+    nodemap = changelog.nodemap # to filter unknown nodes
+    for phase, nodes in enumerate(phaseroots):
+        missing = [node for node in nodes if node not in nodemap]
+        if missing:
+            for mnode in missing:
+                ui.debug(
+                    'removing unknown node %s from %i-phase boundary\n'
+                    % (short(mnode), phase))
+            nodes.symmetric_difference_update(missing)
+            updated = True
+    return updated
+
+def readroots(repo, phasedefaults=None):
+    """Read phase roots from disk
+
+    phasedefaults is a list of fn(repo, roots) callable, which are
+    executed if the phase roots file does not exist. When phases are
+    being initialized on an existing repository, this could be used to
+    set selected changesets phase to something else than public.
+
+    Return (roots, dirty) where dirty is true if roots differ from
+    what is being stored.
+    """
+    dirty = False
     roots = [set() for i in allphases]
     try:
         f = repo.sopener('phaseroots')
         try:
             for line in f:
-                phase, nh = line.strip().split()
+                phase, nh = line.split()
                 roots[int(phase)].add(bin(nh))
         finally:
             f.close()
     except IOError, inst:
         if inst.errno != errno.ENOENT:
             raise
-        for f in repo._phasedefaults:
-            roots = f(repo, roots)
-        repo._dirtyphases = True
-    return roots
+        if phasedefaults:
+            for f in phasedefaults:
+                roots = f(repo, roots)
+        dirty = True
+    if _filterunknown(repo.ui, repo.changelog, roots):
+        dirty = True
+    return roots, dirty
 
-def writeroots(repo):
+def writeroots(repo, phaseroots):
     """Write phase roots from disk"""
     f = repo.sopener('phaseroots', 'w', atomictemp=True)
     try:
-        for phase, roots in enumerate(repo._phaseroots):
+        for phase, roots in enumerate(phaseroots):
             for h in roots:
                 f.write('%i %s\n' % (phase, hex(h)))
-        repo._dirtyphases = False
     finally:
         f.close()
-
-def filterunknown(repo, phaseroots=None):
-    """remove unknown nodes from the phase boundary
-
-    no data is lost as unknown node only old data for their descentants
-    """
-    if phaseroots is None:
-        phaseroots = repo._phaseroots
-    nodemap = repo.changelog.nodemap # to filter unknown nodes
-    for phase, nodes in enumerate(phaseroots):
-        missing = [node for node in nodes if node not in nodemap]
-        if missing:
-            for mnode in missing:
-                repo.ui.debug(
-                    'removing unknown node %s from %i-phase boundary\n'
-                    % (short(mnode), phase))
-            nodes.symmetric_difference_update(missing)
-            repo._dirtyphases = True
 
 def advanceboundary(repo, targetphase, nodes):
     """Add nodes to a phase changing other nodes phases if necessary.
