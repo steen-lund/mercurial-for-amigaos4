@@ -860,7 +860,7 @@ def runone(options, test):
         tf = open(testpath)
         firstline = tf.readline().rstrip()
         tf.close()
-    except:
+    except IOError:
         firstline = ''
     lctest = test.lower()
 
@@ -1187,6 +1187,7 @@ def main():
     os.environ['http_proxy'] = ''
     os.environ['no_proxy'] = ''
     os.environ['NO_PROXY'] = ''
+    os.environ['TERM'] = 'xterm'
 
     # unset env related to hooks
     for k in os.environ.keys():

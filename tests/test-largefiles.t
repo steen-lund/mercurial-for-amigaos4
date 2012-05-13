@@ -432,11 +432,48 @@ tests update).
   large11
   $ cat sub/large2
   large22
+  $ cd ..
+
+Test cloning with --all-largefiles flag
+
+  $ rm -Rf ${USERCACHE}/*
+  $ hg clone --all-largefiles a a-backup
+  updating to branch default
+  5 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  getting changed largefiles
+  3 largefiles updated, 0 removed
+  8 additional largefiles cached
+
+Test pulling with --all-largefiles flag
+
+  $ rm -Rf a-backup
+  $ hg clone -r 1 a a-backup
+  adding changesets
+  adding manifests
+  adding file changes
+  added 2 changesets with 8 changes to 4 files
+  updating to branch default
+  4 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  getting changed largefiles
+  2 largefiles updated, 0 removed
+  $ rm -Rf ${USERCACHE}/*
+  $ cd a-backup
+  $ hg pull --all-largefiles
+  pulling from $TESTTMP/a
+  searching for changes
+  adding changesets
+  adding manifests
+  adding file changes
+  added 6 changesets with 16 changes to 8 files
+  (run 'hg update' to get a working copy)
+  caching new largefiles
+  3 largefiles cached
+  3 additional largefiles cached
+  $ cd ..
 
 Rebasing between two repositories does not revert largefiles to old
 revisions (this was a very bad bug that took a lot of work to fix).
 
-  $ cd ..
   $ hg clone a d
   updating to branch default
   5 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -1136,4 +1173,37 @@ verify that large files in subrepos handled properly
   abort: uncommitted changes in subrepo subrepo
   (use --subrepos for recursive commit)
   [255]
+
+Add a normal file to the subrepo, then test archiving
+
+  $ echo 'normal file' > subrepo/normal.txt
+  $ hg -R subrepo add subrepo/normal.txt
+
+Lock in subrepo, otherwise the change isn't archived
+
+  $ hg ci -S -m "add normal file to top level"
+  committing subrepository subrepo
+  Invoking status precommit hook
+  M large.txt
+  A normal.txt
+  Invoking status precommit hook
+  M .hgsubstate
+  $ hg archive -S lf_subrepo_archive
+  $ find lf_subrepo_archive | sort
+  lf_subrepo_archive
+  lf_subrepo_archive/.hg_archival.txt
+  lf_subrepo_archive/.hgsub
+  lf_subrepo_archive/.hgsubstate
+  lf_subrepo_archive/a
+  lf_subrepo_archive/a/b
+  lf_subrepo_archive/a/b/c
+  lf_subrepo_archive/a/b/c/d
+  lf_subrepo_archive/a/b/c/d/e.large.txt
+  lf_subrepo_archive/a/b/c/d/e.normal.txt
+  lf_subrepo_archive/a/b/c/x
+  lf_subrepo_archive/a/b/c/x/y.normal.txt
+  lf_subrepo_archive/subrepo
+  lf_subrepo_archive/subrepo/large.txt
+  lf_subrepo_archive/subrepo/normal.txt
+
   $ cd ..

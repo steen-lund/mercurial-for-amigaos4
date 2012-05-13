@@ -190,7 +190,7 @@ class converter(object):
                 children.setdefault(n, [])
                 hasparent = False
                 for p in parents[n]:
-                    if not p in self.map:
+                    if p not in self.map:
                         visit.append(p)
                         hasparent = True
                     children.setdefault(p, []).append(n)
@@ -462,7 +462,7 @@ def convert(ui, src, dest=None, revmapfile=None, **opts):
     if not revmapfile:
         try:
             revmapfile = destc.revmapfile()
-        except:
+        except Exception:
             revmapfile = os.path.join(destc, "map")
 
     c = converter(ui, srcc, destc, revmapfile, opts)

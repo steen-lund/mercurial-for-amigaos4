@@ -41,7 +41,6 @@ class localrepository(repo.repository):
         self.wopener = scmutil.opener(self.root)
         self.baseui = baseui
         self.ui = baseui.copy()
-        self._dirtyphases = False
         # A list of callback to shape the phase if no data were found.
         # Callback are in the form: func(repo, roots) --> processed root.
         # This list it to be filled by extension during repo setup
@@ -182,23 +181,8 @@ class localrepository(repo.repository):
       bookmarks.write(self)
 
     @storecache('phaseroots')
-    def _phaseroots(self):
-        self._dirtyphases = False
-        phaseroots = phases.readroots(self)
-        phases.filterunknown(self, phaseroots)
-        return phaseroots
-
-    @propertycache
-    def _phaserev(self):
-        cache = [phases.public] * len(self)
-        for phase in phases.trackedphases:
-            roots = map(self.changelog.rev, self._phaseroots[phase])
-            if roots:
-                for rev in roots:
-                    cache[rev] = phase
-                for rev in self.changelog.descendants(*roots):
-                    cache[rev] = phase
-        return cache
+    def _phasecache(self):
+        return phases.phasecache(self, self._phasedefaults)
 
     @storecache('00changelog.i')
     def changelog(self):
@@ -296,7 +280,8 @@ class localrepository(repo.repository):
                 fp.write('\n')
             for name in names:
                 m = munge and munge(name) or name
-                if self._tagscache.tagtypes and name in self._tagscache.tagtypes:
+                if (self._tagscache.tagtypes and
+                    name in self._tagscache.tagtypes):
                     old = self.tags().get(name, nullid)
                     fp.write('%s %s\n' % (hex(old), m))
                 fp.write('%s %s\n' % (hex(node), m))
@@ -376,7 +361,8 @@ class localrepository(repo.repository):
 
     @propertycache
     def _tagscache(self):
-        '''Returns a tagscache object that contains various tags related caches.'''
+        '''Returns a tagscache object that contains various tags related
+        caches.'''
 
         # This simplifies its cache management by having one decorated
         # function (this one) and the rest simply fetch things from it.
@@ -505,7 +491,7 @@ class localrepository(repo.repository):
             partial = self._branchcache
 
         self._branchtags(partial, lrev)
-        # this private cache holds all heads (not just tips)
+        # this private cache holds all heads (not just the branch tips)
         self._branchcache = partial
 
     def branchmap(self):
@@ -585,8 +571,8 @@ class localrepository(repo.repository):
                 latest = newnodes.pop()
                 if latest not in bheads:
                     continue
-                minbhrev = self[bheads[0]].node()
-                reachable = self.changelog.reachable(latest, minbhrev)
+                minbhnode = self[bheads[0]].node()
+                reachable = self.changelog.reachable(latest, minbhnode)
                 reachable.remove(latest)
                 if reachable:
                     bheads = [b for b in bheads if b not in reachable]
@@ -605,10 +591,11 @@ class localrepository(repo.repository):
 
     def known(self, nodes):
         nm = self.changelog.nodemap
+        pc = self._phasecache
         result = []
         for n in nodes:
             r = nm.get(n)
-            resp = not (r is None or self._phaserev[r] >= phases.secret)
+            resp = not (r is None or pc.phase(self, r) >= phases.secret)
             result.append(resp)
         return result
 
@@ -864,7 +851,6 @@ class localrepository(repo.repository):
                 pass
 
         delcache('_tagscache')
-        delcache('_phaserev')
 
         self._branchcache = None # in UTF-8
         self._branchcachetip = None
@@ -934,9 +920,8 @@ class localrepository(repo.repository):
 
         def unlock():
             self.store.write()
-            if self._dirtyphases:
-                phases.writeroots(self)
-                self._dirtyphases = False
+            if '_phasecache' in vars(self):
+                self._phasecache.write()
             for k, ce in self._filecache.items():
                 if k == 'dirstate':
                     continue
@@ -1192,7 +1177,8 @@ class localrepository(repo.repository):
             p1, p2 = self.dirstate.parents()
             hookp1, hookp2 = hex(p1), (p2 != nullid and hex(p2) or '')
             try:
-                self.hook("precommit", throw=True, parent1=hookp1, parent2=hookp2)
+                self.hook("precommit", throw=True, parent1=hookp1,
+                          parent2=hookp2)
                 ret = self.commitctx(cctx, True)
             except:
                 if edited:
@@ -1330,7 +1316,8 @@ class localrepository(repo.repository):
     def status(self, node1='.', node2=None, match=None,
                ignored=False, clean=False, unknown=False,
                listsubrepos=False):
-        """return status of files between two nodes or node and working directory
+        """return status of files between two nodes or node and working
+        directory.
 
         If node1 is None, use the first dirstate parent instead.
         If node2 is None, compare node1 with working directory.
@@ -1338,6 +1325,8 @@ class localrepository(repo.repository):
 
         def mfmatches(ctx):
             mf = ctx.manifest().copy()
+            if match.always():
+                return mf
             for fn in mf.keys():
                 if not match(fn):
                     del mf[fn]
@@ -1423,10 +1412,11 @@ class localrepository(repo.repository):
                 mf2 = mfmatches(ctx2)
 
             modified, added, clean = [], [], []
+            withflags = mf1.withflags() | mf2.withflags()
             for fn in mf2:
                 if fn in mf1:
                     if (fn not in deleted and
-                        (mf1.flags(fn) != mf2.flags(fn) or
+                        ((fn in withflags and mf1.flags(fn) != mf2.flags(fn)) or
                          (mf1[fn] != mf2[fn] and
                           (mf2[fn] or ctx1[fn].cmp(ctx2[fn]))))):
                         modified.append(fn)
@@ -1672,7 +1662,8 @@ class localrepository(repo.repository):
                         # http: return remote's addchangegroup() or 0 for error
                         ret = remote.unbundle(cg, remoteheads, 'push')
                     else:
-                        # we return an integer indicating remote head count change
+                        # we return an integer indicating remote head count
+                        # change
                         ret = remote.addchangegroup(cg, 'push', self.url())
 
                 if ret:
@@ -1698,7 +1689,7 @@ class localrepository(repo.repository):
                     # * missingheads part of comon (::commonheads)
                     common = set(outgoing.common)
                     cheads = [node for node in revs if node in common]
-                    # and 
+                    # and
                     # * commonheads parents on missing
                     revset = self.set('%ln and parents(roots(%ln))',
                                      outgoing.commonheads,
@@ -1904,7 +1895,8 @@ class localrepository(repo.repository):
             for fname in sorted(changedfiles):
                 filerevlog = self.file(fname)
                 if not len(filerevlog):
-                    raise util.Abort(_("empty or missing revlog for %s") % fname)
+                    raise util.Abort(_("empty or missing revlog for %s")
+                                     % fname)
                 fstate[0] = fname
                 fstate[1] = fnodes.pop(fname, {})
 
@@ -2004,7 +1996,8 @@ class localrepository(repo.repository):
             for fname in sorted(changedfiles):
                 filerevlog = self.file(fname)
                 if not len(filerevlog):
-                    raise util.Abort(_("empty or missing revlog for %s") % fname)
+                    raise util.Abort(_("empty or missing revlog for %s")
+                                     % fname)
                 fstate[0] = fname
                 nodelist = gennodelst(filerevlog)
                 if nodelist:
@@ -2261,7 +2254,8 @@ class localrepository(repo.repository):
                            (util.bytecount(total_bytes), elapsed,
                             util.bytecount(total_bytes / elapsed)))
 
-            # new requirements = old non-format requirements + new format-related
+            # new requirements = old non-format requirements +
+            #                    new format-related
             # requirements from the streamed-in repository
             requirements.update(set(self.requirements) - self.supportedformats)
             self._applyrequirements(requirements)

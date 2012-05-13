@@ -13,8 +13,10 @@
 
 #include "util.h"
 
-static int hexdigit(char c)
+static inline int hexdigit(const char *p, Py_ssize_t off)
 {
+	char c = p[off];
+
 	if (c >= '0' && c <= '9')
 		return c - '0';
 	if (c >= 'a' && c <= 'f')
@@ -32,8 +34,8 @@ static int hexdigit(char c)
 static PyObject *unhexlify(const char *str, int len)
 {
 	PyObject *ret;
-	const char *c;
 	char *d;
+	int i;
 
 	ret = PyBytes_FromStringAndSize(NULL, len / 2);
 
@@ -42,9 +44,9 @@ static PyObject *unhexlify(const char *str, int len)
 
 	d = PyBytes_AsString(ret);
 
-	for (c = str; c < str + len;) {
-		int hi = hexdigit(*c++);
-		int lo = hexdigit(*c++);
+	for (i = 0; i < len;) {
+		int hi = hexdigit(str, i++);
+		int lo = hexdigit(str, i++);
 		*d++ = (hi << 4) | lo;
 	}
 
@@ -385,7 +387,7 @@ static const char *index_node(indexObject *self, Py_ssize_t pos)
 	Py_ssize_t length = index_length(self);
 	const char *data;
 
-	if (pos == length - 1)
+	if (pos == length - 1 || pos == INT_MAX)
 		return nullid;
 
 	if (pos >= length)
@@ -506,13 +508,13 @@ static PyObject *index_stats(indexObject *self)
 		return NULL;
 
 #define istat(__n, __d) \
-	if (PyDict_SetItemString(obj, __d, PyInt_FromLong(self->__n)) == -1) \
+	if (PyDict_SetItemString(obj, __d, PyInt_FromSsize_t(self->__n)) == -1) \
 		goto bail;
 
 	if (self->added) {
 		Py_ssize_t len = PyList_GET_SIZE(self->added);
 		if (PyDict_SetItemString(obj, "index entries added",
-					 PyInt_FromLong(len)) == -1)
+					 PyInt_FromSsize_t(len)) == -1)
 			goto bail;
 	}
 
@@ -536,7 +538,7 @@ bail:
 	return NULL;
 }
 
-static inline int nt_level(const char *node, int level)
+static inline int nt_level(const char *node, Py_ssize_t level)
 {
 	int v = node[level>>1];
 	if (!(level & 1))
@@ -544,8 +546,17 @@ static inline int nt_level(const char *node, int level)
 	return v & 0xf;
 }
 
-static int nt_find(indexObject *self, const char *node, Py_ssize_t nodelen)
+/*
+ * Return values:
+ *
+ *   -4: match is ambiguous (multiple candidates)
+ *   -2: not found
+ * rest: valid rev
+ */
+static int nt_find(indexObject *self, const char *node, Py_ssize_t nodelen,
+		   int hex)
 {
+	int (*getnybble)(const char *, Py_ssize_t) = hex ? hexdigit : nt_level;
 	int level, maxlevel, off;
 
 	if (nodelen == 20 && node[0] == '\0' && memcmp(node, nullid, 20) == 0)
@@ -554,27 +565,35 @@ static int nt_find(indexObject *self, const char *node, Py_ssize_t nodelen)
 	if (self->nt == NULL)
 		return -2;
 
-	maxlevel = nodelen > 20 ? 40 : ((int)nodelen * 2);
+	if (hex)
+		maxlevel = nodelen > 40 ? 40 : (int)nodelen;
+	else
+		maxlevel = nodelen > 20 ? 40 : ((int)nodelen * 2);
 
 	for (level = off = 0; level < maxlevel; level++) {
-		int k = nt_level(node, level);
+		int k = getnybble(node, level);
 		nodetree *n = &self->nt[off];
 		int v = n->children[k];
 
 		if (v < 0) {
 			const char *n;
+			Py_ssize_t i;
+
 			v = -v - 1;
 			n = index_node(self, v);
 			if (n == NULL)
 				return -2;
-			return memcmp(node, n, nodelen > 20 ? 20 : nodelen)
-				? -2 : v;
+			for (i = level; i < maxlevel; i++)
+				if (getnybble(node, i) != nt_level(n, i))
+					return -2;
+			return v;
 		}
 		if (v == 0)
 			return -2;
 		off = v;
 	}
-	return -2;
+	/* multiple matches against an ambiguous prefix */
+	return -4;
 }
 
 static int nt_new(indexObject *self)
@@ -638,6 +657,26 @@ static int nt_insert(indexObject *self, const char *node, int rev)
 	return -1;
 }
 
+static int nt_init(indexObject *self)
+{
+	if (self->nt == NULL) {
+		self->ntcapacity = self->raw_length < 4
+			? 4 : self->raw_length / 2;
+		self->nt = calloc(self->ntcapacity, sizeof(nodetree));
+		if (self->nt == NULL) {
+			PyErr_NoMemory();
+			return -1;
+		}
+		self->ntlength = 1;
+		self->ntrev = (int)index_length(self) - 1;
+		self->ntlookups = 1;
+		self->ntmisses = 0;
+		if (nt_insert(self, nullid, INT_MAX) == -1)
+			return -1;
+	}
+	return 0;
+}
+
 /*
  * Return values:
  *
@@ -651,23 +690,12 @@ static int index_find_node(indexObject *self,
 	int rev;
 
 	self->ntlookups++;
-	rev = nt_find(self, node, nodelen);
+	rev = nt_find(self, node, nodelen, 0);
 	if (rev >= -1)
 		return rev;
 
-	if (self->nt == NULL) {
-		self->ntcapacity = self->raw_length < 4
-			? 4 : self->raw_length / 2;
-		self->nt = calloc(self->ntcapacity, sizeof(nodetree));
-		if (self->nt == NULL) {
-			PyErr_SetString(PyExc_MemoryError, "out of memory");
-			return -3;
-		}
-		self->ntlength = 1;
-		self->ntrev = (int)index_length(self) - 1;
-		self->ntlookups = 1;
-		self->ntmisses = 0;
-	}
+	if (nt_init(self) == -1)
+		return -3;
 
 	/*
 	 * For the first handful of lookups, we scan the entire index,
@@ -692,10 +720,14 @@ static int index_find_node(indexObject *self,
 	} else {
 		for (rev = self->ntrev - 1; rev >= 0; rev--) {
 			const char *n = index_node(self, rev);
-			if (n == NULL)
+			if (n == NULL) {
+				self->ntrev = rev + 1;
 				return -2;
-			if (nt_insert(self, n, rev) == -1)
+			}
+			if (nt_insert(self, n, rev) == -1) {
+				self->ntrev = rev + 1;
 				return -3;
+			}
 			if (memcmp(node, n, nodelen > 20 ? 20 : nodelen) == 0) {
 				break;
 			}
@@ -761,6 +793,77 @@ static PyObject *index_getitem(indexObject *self, PyObject *value)
 	if (rev == -2)
 		raise_revlog_error();
 	return NULL;
+}
+
+static int nt_partialmatch(indexObject *self, const char *node,
+			   Py_ssize_t nodelen)
+{
+	int rev;
+
+	if (nt_init(self) == -1)
+		return -3;
+
+	if (self->ntrev > 0) {
+		/* ensure that the radix tree is fully populated */
+		for (rev = self->ntrev - 1; rev >= 0; rev--) {
+			const char *n = index_node(self, rev);
+			if (n == NULL)
+				return -2;
+			if (nt_insert(self, n, rev) == -1)
+				return -3;
+		}
+		self->ntrev = rev;
+	}
+
+	return nt_find(self, node, nodelen, 1);
+}
+
+static PyObject *index_partialmatch(indexObject *self, PyObject *args)
+{
+	const char *fullnode;
+	int nodelen;
+	char *node;
+	int rev, i;
+
+	if (!PyArg_ParseTuple(args, "s#", &node, &nodelen))
+		return NULL;
+
+	if (nodelen < 4) {
+		PyErr_SetString(PyExc_ValueError, "key too short");
+		return NULL;
+	}
+
+	if (nodelen > 40)
+		nodelen = 40;
+
+	for (i = 0; i < nodelen; i++)
+		hexdigit(node, i);
+	if (PyErr_Occurred()) {
+		/* input contains non-hex characters */
+		PyErr_Clear();
+		Py_RETURN_NONE;
+	}
+
+	rev = nt_partialmatch(self, node, nodelen);
+
+	switch (rev) {
+	case -4:
+		raise_revlog_error();
+	case -3:
+		return NULL;
+	case -2:
+		Py_RETURN_NONE;
+	case -1:
+		return PyString_FromStringAndSize(nullid, 20);
+	}
+
+	fullnode = index_node(self, rev);
+	if (fullnode == NULL) {
+		PyErr_Format(PyExc_IndexError,
+			     "could not access rev %d", rev);
+		return NULL;
+	}
+	return PyString_FromStringAndSize(fullnode, 20);
 }
 
 static PyObject *index_m_get(indexObject *self, PyObject *args)
@@ -1045,6 +1148,8 @@ static PyMethodDef index_methods[] = {
 	 "get an index entry"},
 	{"insert", (PyCFunction)index_insert, METH_VARARGS,
 	 "insert an index entry"},
+	{"partialmatch", (PyCFunction)index_partialmatch, METH_VARARGS,
+	 "match a potentially ambiguous node ID"},
 	{"stats", (PyCFunction)index_stats, METH_NOARGS,
 	 "stats for the index"},
 	{NULL} /* Sentinel */

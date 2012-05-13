@@ -520,10 +520,12 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
     revision as good or bad without checking it out first.
 
     If you supply a command, it will be used for automatic bisection.
-    Its exit status will be used to mark revisions as good or bad:
-    status 0 means good, 125 means to skip the revision, 127
-    (command not found) will abort the bisection, and any other
-    non-zero exit status means the revision is bad.
+    The environment variable HG_NODE will contain the ID of the
+    changeset being tested. The exit status of the command will be
+    used to mark revisions as good or bad: status 0 means good, 125
+    means to skip the revision, 127 (command not found) will abort the
+    bisection, and any other non-zero exit status means the revision
+    is bad.
 
     .. container:: verbose
 
@@ -562,6 +564,11 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
         bisection::
 
           hg log -r "bisect(pruned)"
+
+      - see the changeset currently being bisected (especially useful
+        if running with -U/--noupdate)::
+
+          hg log -r "bisect(current)"
 
       - see all changesets that took part in the current bisection::
 
@@ -647,10 +654,22 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
     if command:
         changesets = 1
         try:
+            node = state['current'][0]
+        except LookupError:
+            if noupdate:
+                raise util.Abort(_('current bisect revision is unknown - '
+                                   'start a new bisect to fix'))
+            node, p2 = repo.dirstate.parents()
+            if p2 != nullid:
+                raise util.Abort(_('current bisect revision is a merge'))
+        try:
             while changesets:
                 # update state
+                state['current'] = [node]
                 hbisect.save_state(repo, state)
-                status = util.system(command, out=ui.fout)
+                status = util.system(command,
+                                     environ={'HG_NODE': hex(node)},
+                                     out=ui.fout)
                 if status == 125:
                     transition = "skip"
                 elif status == 0:
@@ -662,7 +681,7 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
                     raise util.Abort(_("%s killed") % command)
                 else:
                     transition = "bad"
-                ctx = scmutil.revsingle(repo, rev)
+                ctx = scmutil.revsingle(repo, rev, node)
                 rev = None # clear for future iterations
                 state[transition].append(ctx.node())
                 ui.status(_('Changeset %d:%s: %s\n') % (ctx, ctx, transition))
@@ -670,9 +689,12 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
                 # bisect
                 nodes, changesets, good = hbisect.bisect(repo.changelog, state)
                 # update to next check
-                cmdutil.bailifchanged(repo)
-                hg.clean(repo, nodes[0], show_stats=False)
+                node = nodes[0]
+                if not noupdate:
+                    cmdutil.bailifchanged(repo)
+                    hg.clean(repo, node, show_stats=False)
         finally:
+            state['current'] = [node]
             hbisect.save_state(repo, state)
         print_result(nodes, good)
         return
@@ -704,6 +726,8 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
             if extendnode is not None:
                 ui.write(_("Extending search to changeset %d:%s\n"
                          % (extendnode.rev(), extendnode)))
+                state['current'] = [extendnode.node()]
+                hbisect.save_state(repo, state)
                 if noupdate:
                     return
                 cmdutil.bailifchanged(repo)
@@ -723,6 +747,8 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
         ui.write(_("Testing changeset %d:%s "
                    "(%d changesets remaining, ~%d tests)\n")
                  % (rev, short(node), changesets, tests))
+        state['current'] = [node]
+        hbisect.save_state(repo, state)
         if not noupdate:
             cmdutil.bailifchanged(repo)
             return hg.clean(repo, node)
@@ -921,26 +947,26 @@ def branches(ui, repo, active=False, closed=False):
 
     for isactive, node, tag in branches:
         if (not active) or isactive:
+            hn = repo.lookup(node)
+            if isactive:
+                label = 'branches.active'
+                notice = ''
+            elif hn not in repo.branchheads(tag, closed=False):
+                if not closed:
+                    continue
+                label = 'branches.closed'
+                notice = _(' (closed)')
+            else:
+                label = 'branches.inactive'
+                notice = _(' (inactive)')
+            if tag == repo.dirstate.branch():
+                label = 'branches.current'
+            rev = str(node).rjust(31 - encoding.colwidth(tag))
+            rev = ui.label('%s:%s' % (rev, hexfunc(hn)), 'log.changeset')
+            tag = ui.label(tag, label)
             if ui.quiet:
                 ui.write("%s\n" % tag)
             else:
-                hn = repo.lookup(node)
-                if isactive:
-                    label = 'branches.active'
-                    notice = ''
-                elif hn not in repo.branchheads(tag, closed=False):
-                    if not closed:
-                        continue
-                    label = 'branches.closed'
-                    notice = _(' (closed)')
-                else:
-                    label = 'branches.inactive'
-                    notice = _(' (inactive)')
-                if tag == repo.dirstate.branch():
-                    label = 'branches.current'
-                rev = str(node).rjust(31 - encoding.colwidth(tag))
-                rev = ui.label('%s:%s' % (rev, hexfunc(hn)), 'log.changeset')
-                tag = ui.label(tag, label)
                 ui.write("%s %s%s\n" % (tag, rev, notice))
 
 @command('bundle',
@@ -1661,7 +1687,8 @@ def debugdag(ui, repo, file_=None, *revs, **opts):
         revs = set((int(r) for r in revs))
         def events():
             for r in rlog:
-                yield 'n', (r, list(set(p for p in rlog.parentrevs(r) if p != -1)))
+                yield 'n', (r, list(set(p for p in rlog.parentrevs(r)
+                                        if p != -1)))
                 if r in revs:
                     yield 'l', (r, "r%i" % r)
     elif repo:
@@ -1680,7 +1707,8 @@ def debugdag(ui, repo, file_=None, *revs, **opts):
                     if newb != b:
                         yield 'a', newb
                         b = newb
-                yield 'n', (r, list(set(p for p in cl.parentrevs(r) if p != -1)))
+                yield 'n', (r, list(set(p for p in cl.parentrevs(r)
+                                        if p != -1)))
                 if tags:
                     ls = labels.get(r)
                     if ls:
@@ -1738,7 +1766,8 @@ def debugdate(ui, date, range=None, **opts):
     _('[-l REV] [-r REV] [-b BRANCH]... [OTHER]'))
 def debugdiscovery(ui, repo, remoteurl="default", **opts):
     """runs the changeset discovery protocol in isolation"""
-    remoteurl, branches = hg.parseurl(ui.expandpath(remoteurl), opts.get('branch'))
+    remoteurl, branches = hg.parseurl(ui.expandpath(remoteurl),
+                                      opts.get('branch'))
     remote = hg.peer(repo, opts, remoteurl)
     ui.status(_('comparing with %s\n') % util.hidepassword(remoteurl))
 
@@ -1748,7 +1777,8 @@ def debugdiscovery(ui, repo, remoteurl="default", **opts):
     def doit(localheads, remoteheads):
         if opts.get('old'):
             if localheads:
-                raise util.Abort('cannot use localheads with old style discovery')
+                raise util.Abort('cannot use localheads with old style '
+                                 'discovery')
             common, _in, hds = treediscovery.findcommonincoming(repo, remote,
                                                                 force=True)
             common = set(common)
@@ -1875,7 +1905,8 @@ def debugindex(ui, repo, file_ = None, **opts):
                  " nodeid       p1           p2\n")
     elif format == 1:
         ui.write("   rev flag   offset   length"
-                 "     size " + basehdr + "   link     p1     p2       nodeid\n")
+                 "     size " + basehdr + "   link     p1     p2"
+                 "       nodeid\n")
 
     for i in r:
         node = r.node(i)
@@ -1886,7 +1917,7 @@ def debugindex(ui, repo, file_ = None, **opts):
         if format == 0:
             try:
                 pp = r.parents(node)
-            except:
+            except Exception:
                 pp = [nullid, nullid]
             ui.write("% 6d % 9d % 7d % 6d % 7d %s %s %s\n" % (
                     i, r.start(i), r.length(i), base, r.linkrev(i),
@@ -2000,8 +2031,8 @@ def debuginstall(ui):
 def debugknown(ui, repopath, *ids, **opts):
     """test whether node ids are known to a repo
 
-    Every ID must be a full-length hex node id string. Returns a list of 0s and 1s
-    indicating unknown/known.
+    Every ID must be a full-length hex node id string. Returns a list of 0s
+    and 1s indicating unknown/known.
     """
     repo = hg.peer(ui, opts, repopath)
     if not repo.capable('known'):
@@ -2233,13 +2264,17 @@ def debugrevlog(ui, repo, file_ = None, **opts):
         fmt2 = pcfmtstr(numdeltas, 4)
         ui.write('deltas against prev  : ' + fmt % pcfmt(numprev, numdeltas))
         if numprev > 0:
-            ui.write('    where prev = p1  : ' + fmt2 % pcfmt(nump1prev, numprev))
-            ui.write('    where prev = p2  : ' + fmt2 % pcfmt(nump2prev, numprev))
-            ui.write('    other            : ' + fmt2 % pcfmt(numoprev, numprev))
+            ui.write('    where prev = p1  : ' + fmt2 % pcfmt(nump1prev,
+                                                              numprev))
+            ui.write('    where prev = p2  : ' + fmt2 % pcfmt(nump2prev,
+                                                              numprev))
+            ui.write('    other            : ' + fmt2 % pcfmt(numoprev,
+                                                              numprev))
         if gdelta:
             ui.write('deltas against p1    : ' + fmt % pcfmt(nump1, numdeltas))
             ui.write('deltas against p2    : ' + fmt % pcfmt(nump2, numdeltas))
-            ui.write('deltas against other : ' + fmt % pcfmt(numother, numdeltas))
+            ui.write('deltas against other : ' + fmt % pcfmt(numother,
+                                                             numdeltas))
 
 @command('debugrevspec', [], ('REVSPEC'))
 def debugrevspec(ui, repo, expr):
@@ -2555,6 +2590,7 @@ def forget(ui, repo, *pats, **opts):
     'graft',
     [('c', 'continue', False, _('resume interrupted graft')),
      ('e', 'edit', False, _('invoke editor on commit messages')),
+     ('', 'log', None, _('append graft info to log message')),
      ('D', 'currentdate', False,
       _('record the current date as commit date')),
      ('U', 'currentuser', False,
@@ -2572,6 +2608,11 @@ def graft(ui, repo, *revs, **opts):
 
     Changesets that are ancestors of the current revision, that have
     already been grafted, or that are merges will be skipped.
+
+    If --log is specified, log messages will have a comment appended
+    of the form::
+
+      (grafted from CHANGESETHASH)
 
     If a graft merge results in conflicts, the graft process is
     interrupted so that the current merge can be manually resolved.
@@ -2722,8 +2763,13 @@ def graft(ui, repo, *revs, **opts):
             date = ctx.date()
             if opts.get('date'):
                 date = opts['date']
-            repo.commit(text=ctx.description(), user=user,
+            message = ctx.description()
+            if opts.get('log'):
+                message += '\n(grafted from %s)' % ctx.hex()
+            node = repo.commit(text=message, user=user,
                         date=date, extra=extra, editor=editor)
+            if node is None:
+                ui.status(_('graft for revision %s is empty\n') % ctx.rev())
     finally:
         wlock.release()
 
@@ -4347,10 +4393,10 @@ def phase(ui, repo, *revs, **opts):
         lock = repo.lock()
         try:
             # set phase
-            nodes = [ctx.node() for ctx in repo.set('%ld', revs)]
-            if not nodes:
-                raise util.Abort(_('empty revision set'))
-            olddata = repo._phaserev[:]
+            if not revs:
+                 raise util.Abort(_('empty revision set'))
+            nodes = [repo[r].node() for r in revs]
+            olddata = repo._phasecache.getphaserevs(repo)[:]
             phases.advanceboundary(repo, targetphase, nodes)
             if opts['force']:
                 phases.retractboundary(repo, targetphase, nodes)
@@ -4358,7 +4404,7 @@ def phase(ui, repo, *revs, **opts):
             lock.release()
         if olddata is not None:
             changes = 0
-            newdata = repo._phaserev
+            newdata = repo._phasecache.getphaserevs(repo)
             changes = sum(o != newdata[i] for i, o in enumerate(olddata))
             rejected = [n for n in nodes
                         if newdata[repo[n].rev()] < targetphase]
@@ -4396,7 +4442,8 @@ def postincoming(ui, repo, modheads, optupdate, checkout):
         if currentbranchheads == modheads:
             ui.status(_("(run 'hg heads' to see heads, 'hg merge' to merge)\n"))
         elif currentbranchheads > 1:
-            ui.status(_("(run 'hg heads .' to see heads, 'hg merge' to merge)\n"))
+            ui.status(_("(run 'hg heads .' to see heads, 'hg merge' to "
+                        "merge)\n"))
         else:
             ui.status(_("(run 'hg heads' to see heads)\n"))
     else:
@@ -5368,7 +5415,8 @@ def summary(ui, repo, **opts):
         t = []
         source, branches = hg.parseurl(ui.expandpath('default'))
         other = hg.peer(repo, {}, source)
-        revs, checkout = hg.addbranchrevs(repo, other, branches, opts.get('rev'))
+        revs, checkout = hg.addbranchrevs(repo, other, branches,
+                                          opts.get('rev'))
         ui.debug('comparing with %s\n' % util.hidepassword(source))
         repo.ui.pushbuffer()
         commoninc = discovery.findcommonincoming(repo, other)
@@ -5586,9 +5634,9 @@ def unbundle(ui, repo, fname1, *fnames, **opts):
             f = url.open(ui, fname)
             gen = changegroup.readbundle(f, fname)
             modheads = repo.addchangegroup(gen, 'unbundle', 'bundle:' + fname)
-        bookmarks.updatecurrentbookmark(repo, wc.node(), wc.branch())
     finally:
         lock.release()
+    bookmarks.updatecurrentbookmark(repo, wc.node(), wc.branch())
     return postincoming(ui, repo, modheads, opts.get('update'), None)
 
 @command('^update|up|checkout|co',
