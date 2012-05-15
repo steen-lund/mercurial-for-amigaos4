@@ -12,7 +12,8 @@ import cmdutil, encoding
 import ui as uimod
 
 class request(object):
-    def __init__(self, args, ui=None, repo=None, fin=None, fout=None, ferr=None):
+    def __init__(self, args, ui=None, repo=None, fin=None, fout=None,
+                 ferr=None):
         self.args = args
         self.ui = ui
         self.repo = repo
@@ -87,7 +88,7 @@ def _runcatch(req):
                 return _dispatch(req)
             finally:
                 ui.flush()
-        except:
+        except: # re-raises
             # enter the debugger when we hit an exception
             if '--debugger' in req.args:
                 traceback.print_exc()
@@ -203,7 +204,7 @@ def _runcatch(req):
         return inst.code
     except socket.error, inst:
         ui.warn(_("abort: %s\n") % inst.args[-1])
-    except:
+    except: # re-raises
         ui.warn(_("** unknown exception encountered,"
                   " please report by visiting\n"))
         ui.warn(_("**  http://mercurial.selenic.com/wiki/BugTracker\n"))
@@ -532,7 +533,8 @@ def _checkshellalias(lui, ui, args):
 
     if cmd and util.safehasattr(fn, 'shell'):
         d = lambda: fn(ui, *args[1:])
-        return lambda: runcommand(lui, None, cmd, args[:1], ui, options, d, [], {})
+        return lambda: runcommand(lui, None, cmd, args[:1], ui, options, d,
+                                  [], {})
 
     restorecommands()
 
@@ -680,7 +682,8 @@ def _dispatch(req):
                             return _dispatch(req)
                     if not path:
                         raise error.RepoError(_("no repository found in '%s'"
-                                                " (.hg not found)") % os.getcwd())
+                                                " (.hg not found)")
+                                              % os.getcwd())
                     raise
         if repo:
             ui = repo.ui
@@ -703,7 +706,7 @@ def lsprofile(ui, func, fp):
     field = ui.config('profiling', 'sort', default='inlinetime')
     climit = ui.configint('profiling', 'nested', default=5)
 
-    if not format in ['text', 'kcachegrind']:
+    if format not in ['text', 'kcachegrind']:
         ui.warn(_("unrecognized profiling format '%s'"
                     " - Ignored\n") % format)
         format = 'text'

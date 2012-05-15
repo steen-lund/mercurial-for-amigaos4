@@ -11,7 +11,8 @@
 import os
 import shutil
 
-from mercurial import util, match as match_, hg, node, context, error, cmdutil
+from mercurial import util, match as match_, hg, node, context, error, \
+    cmdutil, scmutil
 from mercurial.i18n import _
 from mercurial.lock import release
 
@@ -133,7 +134,7 @@ def _addchangeset(ui, rsrc, rdst, ctx, revmap):
             try:
                 fctx = ctx.filectx(lfutil.standin(f))
             except error.LookupError:
-                raise IOError()
+                raise IOError
             renamed = fctx.renamed()
             if renamed:
                 renamed = lfutil.splitstandin(renamed[0])
@@ -233,7 +234,7 @@ def _lfconvert_addchangeset(rsrc, rdst, ctx, revmap, lfiles, normalfiles,
             try:
                 fctx = ctx.filectx(srcfname)
             except error.LookupError:
-                raise IOError()
+                raise IOError
             renamed = fctx.renamed()
             if renamed:
                 # standin is always a largefile because largefile-ness
@@ -282,7 +283,7 @@ def _getnormalcontext(ui, ctx, f, revmap):
     try:
         fctx = ctx.filectx(f)
     except error.LookupError:
-        raise IOError()
+        raise IOError
     renamed = fctx.renamed()
     if renamed:
         renamed = renamed[0]
@@ -368,7 +369,7 @@ def verifylfiles(ui, repo, all=False, contents=False):
     store = basestore._openstore(repo)
     return store.verify(revs, contents=contents)
 
-def cachelfiles(ui, repo, node):
+def cachelfiles(ui, repo, node, filelist=None):
     '''cachelfiles ensures that all largefiles needed by the specified revision
     are present in the repository's largefile cache.
 
@@ -376,6 +377,8 @@ def cachelfiles(ui, repo, node):
     by this operation; missing is the list of files that were needed but could
     not be found.'''
     lfiles = lfutil.listlfiles(repo, node)
+    if filelist:
+        lfiles = set(lfiles) & set(filelist)
     toget = []
 
     for lfile in lfiles:
@@ -404,6 +407,23 @@ def cachelfiles(ui, repo, node):
 
     return ([], [])
 
+def downloadlfiles(ui, repo, rev=None):
+    matchfn = scmutil.match(repo[None],
+                            [repo.wjoin(lfutil.shortname)], {})
+    def prepare(ctx, fns):
+        pass
+    totalsuccess = 0
+    totalmissing = 0
+    for ctx in cmdutil.walkchangerevs(repo, matchfn, {'rev' : rev},
+                                      prepare):
+        success, missing = cachelfiles(ui, repo, ctx.node())
+        totalsuccess += len(success)
+        totalmissing += len(missing)
+    ui.status(_("%d additional largefiles cached\n") % totalsuccess)
+    if totalmissing > 0:
+        ui.status(_("%d largefiles failed to download\n") % totalmissing)
+    return totalsuccess, totalmissing
+
 def updatelfiles(ui, repo, filelist=None, printmessage=True):
     wlock = repo.wlock()
     try:
@@ -417,7 +437,7 @@ def updatelfiles(ui, repo, filelist=None, printmessage=True):
         if printmessage and lfiles:
             ui.status(_('getting changed largefiles\n'))
             printed = True
-            cachelfiles(ui, repo, '.')
+            cachelfiles(ui, repo, '.', lfiles)
 
         updated, removed = 0, 0
         for i in map(lambda f: _updatelfile(repo, lfdirstate, f), lfiles):

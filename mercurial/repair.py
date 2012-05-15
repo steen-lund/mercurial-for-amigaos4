@@ -6,7 +6,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-from mercurial import changegroup, bookmarks, phases
+from mercurial import changegroup, bookmarks
 from mercurial.node import short
 from mercurial.i18n import _
 import os
@@ -38,14 +38,14 @@ def _collectbrokencsets(repo, files, striprev):
     """return the changesets which will be broken by the truncation"""
     s = set()
     def collectone(revlog):
-        links = (revlog.linkrev(i) for i in revlog)
+        linkgen = (revlog.linkrev(i) for i in revlog)
         # find the truncation point of the revlog
-        for lrev in links:
+        for lrev in linkgen:
             if lrev >= striprev:
                 break
         # see if any revision after this point has a linkrev
         # less than striprev (those will be broken by strip)
-        for lrev in links:
+        for lrev in linkgen:
             if lrev < striprev:
                 s.add(lrev)
 
@@ -56,12 +56,25 @@ def _collectbrokencsets(repo, files, striprev):
     return s
 
 def strip(ui, repo, nodelist, backup="all", topic='backup'):
+    # It simplifies the logic around updating the branchheads cache if we only
+    # have to consider the effect of the stripped revisions and not revisions
+    # missing because the cache is out-of-date.
+    repo.updatebranchcache()
+
     cl = repo.changelog
     # TODO handle undo of merge sets
     if isinstance(nodelist, str):
         nodelist = [nodelist]
     striplist = [cl.rev(node) for node in nodelist]
     striprev = min(striplist)
+
+    # Set of potential new heads resulting from the strip.  The parents of any
+    # node removed could be a new head because the node to be removed could have
+    # been the only child of the parent.
+    # Do a list->set->list conversion to remove duplicates.
+    stringstriplist = [str(rev) for rev in striplist]
+    newheadrevs = set(repo.revs("parents(%lr::) - %lr::", stringstriplist,
+                                stringstriplist))
 
     keeppartialbundle = backup == 'strip'
 
@@ -131,7 +144,7 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
                 file, troffset, ignore = tr.entries[i]
                 repo.sopener(file, 'a').truncate(troffset)
             tr.close()
-        except:
+        except: # re-raises
             tr.abort()
             raise
 
@@ -160,7 +173,7 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
         for m in updatebm:
             bm[m] = repo['.'].node()
         bookmarks.write(repo)
-    except:
+    except: # re-raises
         if backupfile:
             ui.warn(_("strip failed, full bundle stored in '%s'\n")
                     % backupfile)
@@ -169,8 +182,4 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
                     % chgrpfile)
         raise
 
-    repo.destroyed()
-
-    # remove potential unknown phase
-    # XXX using to_strip data would be faster
-    phases.filterunknown(repo)
+    repo.destroyed(newheadrevs)
