@@ -488,9 +488,9 @@ class ui(object):
 
     def flush(self):
         try: self.fout.flush()
-        except: pass
+        except (IOError, ValueError): pass
         try: self.ferr.flush()
-        except: pass
+        except (IOError, ValueError): pass
 
     def interactive(self):
         '''is interactive input allowed?
@@ -680,7 +680,8 @@ class ui(object):
         printed.'''
         if self.tracebackflag:
             if exc:
-                traceback.print_exception(exc[0], exc[1], exc[2], file=self.ferr)
+                traceback.print_exception(exc[0], exc[1], exc[2],
+                                          file=self.ferr)
             else:
                 traceback.print_exc(file=self.ferr)
         return self.tracebackflag
