@@ -488,9 +488,14 @@ class ui(object):
 
     def flush(self):
         try: self.fout.flush()
-        except: pass
+        except (IOError, ValueError): pass
         try: self.ferr.flush()
-        except: pass
+        except (IOError, ValueError): pass
+
+    def _isatty(self, fh):
+        if self.configbool('ui', 'nontty', False):
+            return False
+        return util.isatty(fh)
 
     def interactive(self):
         '''is interactive input allowed?
@@ -510,7 +515,7 @@ class ui(object):
         if i is None:
             # some environments replace stdin without implementing isatty
             # usually those are non-interactive
-            return util.isatty(self.fin)
+            return self._isatty(self.fin)
 
         return i
 
@@ -548,12 +553,12 @@ class ui(object):
         if i is None:
             # some environments replace stdout without implementing isatty
             # usually those are non-interactive
-            return util.isatty(self.fout)
+            return self._isatty(self.fout)
 
         return i
 
     def _readline(self, prompt=''):
-        if util.isatty(self.fin):
+        if self._isatty(self.fin):
             try:
                 # magically add command line editing support, where
                 # available
@@ -680,7 +685,8 @@ class ui(object):
         printed.'''
         if self.tracebackflag:
             if exc:
-                traceback.print_exception(exc[0], exc[1], exc[2], file=self.ferr)
+                traceback.print_exception(exc[0], exc[1], exc[2],
+                                          file=self.ferr)
             else:
                 traceback.print_exc(file=self.ferr)
         return self.tracebackflag

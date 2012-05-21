@@ -108,7 +108,8 @@ def tokenize(program):
                 pos += 1
             else:
                 raise error.ParseError(_("unterminated string"), s)
-        elif c.isalnum() or c in '._' or ord(c) > 127: # gather up a symbol/keyword
+        # gather up a symbol/keyword
+        elif c.isalnum() or c in '._' or ord(c) > 127:
             s = pos
             pos += 1
             while pos < l: # find end of symbol
@@ -257,7 +258,8 @@ def _firstancestors(repo, subset, x):
 
 def ancestorspec(repo, subset, x, n):
     """``set~n``
-    Changesets that are the Nth ancestor (first parents only) of a changeset in set.
+    Changesets that are the Nth ancestor (first parents only) of a changeset
+    in set.
     """
     try:
         n = int(n[1])
@@ -289,6 +291,7 @@ def bisect(repo, subset, x):
     - ``pruned``             : csets that are goods, bads or skipped
     - ``untested``           : csets whose fate is yet unknown
     - ``ignored``            : csets ignored due to DAG topology
+    - ``current``            : the cset currently being bisected
     """
     status = getstring(x, _("bisect requires a string")).lower()
     state = set(hbisect.get(repo, status))
@@ -392,7 +395,7 @@ def closed(repo, subset, x):
     """
     # i18n: "closed" is a keyword
     getargs(x, 0, 0, _("closed takes no arguments"))
-    return [r for r in subset if repo[r].extra().get('close')]
+    return [r for r in subset if repo[r].closesbranch()]
 
 def contains(repo, subset, x):
     """``contains(pattern)``
@@ -462,7 +465,26 @@ def draft(repo, subset, x):
     """``draft()``
     Changeset in draft phase."""
     getargs(x, 0, 0, _("draft takes no arguments"))
-    return [r for r in subset if repo._phaserev[r] == phases.draft]
+    pc = repo._phasecache
+    return [r for r in subset if pc.phase(repo, r) == phases.draft]
+
+def extra(repo, subset, x):
+    """``extra(label, [value])``
+    Changesets with the given label in the extra metadata, with the given
+    optional value."""
+
+    l = getargs(x, 1, 2, _('extra takes at least 1 and at most 2 arguments'))
+    label = getstring(l[0], _('first argument to extra must be a string'))
+    value = None
+
+    if len(l) > 1:
+        value = getstring(l[1], _('second argument to extra must be a string'))
+
+    def _matchvalue(r):
+        extra = repo[r].extra()
+        return label in extra and (value is None or value == extra[label])
+
+    return [r for r in subset if _matchvalue(r)]
 
 def filelog(repo, subset, x):
     """``filelog(pattern)``
@@ -859,7 +881,8 @@ def public(repo, subset, x):
     """``public()``
     Changeset in public phase."""
     getargs(x, 0, 0, _("public takes no arguments"))
-    return [r for r in subset if repo._phaserev[r] == phases.public]
+    pc = repo._phasecache
+    return [r for r in subset if pc.phase(repo, r) == phases.public]
 
 def remote(repo, subset, x):
     """``remote([id [,path]])``
@@ -1038,7 +1061,8 @@ def secret(repo, subset, x):
     """``secret()``
     Changeset in secret phase."""
     getargs(x, 0, 0, _("secret takes no arguments"))
-    return [r for r in subset if repo._phaserev[r] == phases.secret]
+    pc = repo._phasecache
+    return [r for r in subset if pc.phase(repo, r) == phases.secret]
 
 def sort(repo, subset, x):
     """``sort(set[, [-]key...])``
@@ -1151,6 +1175,7 @@ symbols = {
     "descendants": descendants,
     "_firstdescendants": _firstdescendants,
     "draft": draft,
+    "extra": extra,
     "file": hasfile,
     "filelog": filelog,
     "first": first,
