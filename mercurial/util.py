@@ -760,9 +760,9 @@ def mktempcopy(name, emptyok=False, createmode=None):
             ofp.write(chunk)
         ifp.close()
         ofp.close()
-    except:
+    except: # re-raises
         try: os.unlink(temp)
-        except: pass
+        except OSError: pass
         raise
     return temp
 
@@ -1079,7 +1079,7 @@ def matchdate(date):
             try:
                 d["d"] = days
                 return parsedate(date, extendeddateformats, d)[0]
-            except:
+            except Abort:
                 pass
         d["d"] = "28"
         return parsedate(date, extendeddateformats, d)[0]

@@ -722,7 +722,7 @@ class revlog(object):
         return self.node(c)
 
     def _match(self, id):
-        if isinstance(id, (long, int)):
+        if isinstance(id, int):
             # rev
             return self.node(id)
         if len(id) == 20:
@@ -756,6 +756,15 @@ class revlog(object):
                 pass
 
     def _partialmatch(self, id):
+        try:
+            return self.index.partialmatch(id)
+        except RevlogError:
+            # parsers.c radix tree lookup gave multiple matches
+            raise LookupError(id, self.indexfile, _("ambiguous identifier"))
+        except (AttributeError, ValueError):
+            # we are pure python, or key was too short to search radix tree
+            pass
+
         if id in self._pcache:
             return self._pcache[id]
 
@@ -1199,7 +1208,7 @@ class revlog(object):
                     continue
 
                 for p in (p1, p2):
-                    if not p in self.nodemap:
+                    if p not in self.nodemap:
                         raise LookupError(p, self.indexfile,
                                           _('unknown parent'))
 

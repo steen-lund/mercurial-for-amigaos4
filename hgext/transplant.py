@@ -25,6 +25,7 @@ class TransplantError(error.Abort):
 
 cmdtable = {}
 command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 class transplantentry(object):
     def __init__(self, lnode, rnode):
@@ -124,7 +125,7 @@ class transplanter(object):
                     continue
 
                 parents = source.changelog.parents(node)
-                if not opts.get('filter'):
+                if not (opts.get('filter') or opts.get('log')):
                     # If the changeset parent is the same as the
                     # wdir's parent, just pull it.
                     if parents[0] == p1:

@@ -8,6 +8,7 @@
 from node import nullid, nullrev, short, hex, bin
 from i18n import _
 import ancestor, mdiff, error, util, scmutil, subrepo, patch, encoding, phases
+import copies
 import match as matchmod
 import os, errno, stat
 
@@ -79,10 +80,12 @@ class changectx(object):
             self._node = repo._tagscache.tags[changeid]
             self._rev = repo.changelog.rev(self._node)
             return
-        if changeid in repo.branchtags():
-            self._node = repo.branchtags()[changeid]
+        try:
+            self._node = repo.branchtip(changeid)
             self._rev = repo.changelog.rev(self._node)
             return
+        except error.RepoLookupError:
+            pass
 
         self._node = repo.changelog._partialmatch(changeid)
         if self._node is not None:
@@ -185,6 +188,8 @@ class changectx(object):
         return self._changeset[4]
     def branch(self):
         return encoding.tolocal(self._changeset[5].get("branch"))
+    def closesbranch(self):
+        return 'close' in self._changeset[5]
     def extra(self):
         return self._changeset[5]
     def tags(self):
@@ -192,12 +197,7 @@ class changectx(object):
     def bookmarks(self):
         return self._repo.nodebookmarks(self._node)
     def phase(self):
-        if self._rev == -1:
-            return phases.public
-        if self._rev >= len(self._repo._phaserev):
-            # outdated cache
-            del self._repo._phaserev
-        return self._repo._phaserev[self._rev]
+        return self._repo._phasecache.phase(self._repo, self._rev)
     def phasestr(self):
         return phases.phasenames[self.phase()]
     def mutable(self):
@@ -239,7 +239,8 @@ class changectx(object):
                                         _('not found in manifest'))
         if '_manifestdelta' in self.__dict__ or path in self.files():
             if path in self._manifestdelta:
-                return self._manifestdelta[path], self._manifestdelta.flags(path)
+                return (self._manifestdelta[path],
+                        self._manifestdelta.flags(path))
         node, flag = self._repo.manifest.find(self._changeset[0], path)
         if not node:
             raise error.LookupError(self._node, path,
@@ -636,27 +637,27 @@ class filectx(object):
 
         return zip(hist[base][0], hist[base][1].splitlines(True))
 
-    def ancestor(self, fc2, actx=None):
+    def ancestor(self, fc2, actx):
         """
         find the common ancestor file context, if any, of self, and fc2
 
-        If actx is given, it must be the changectx of the common ancestor
+        actx must be the changectx of the common ancestor
         of self's and fc2's respective changesets.
         """
-
-        if actx is None:
-            actx = self.changectx().ancestor(fc2.changectx())
-
-        # the trivial case: changesets are unrelated, files must be too
-        if not actx:
-            return None
 
         # the easy case: no (relevant) renames
         if fc2.path() == self.path() and self.path() in actx:
             return actx[self.path()]
-        acache = {}
+
+        # the next easiest cases: unambiguous predecessor (name trumps
+        # history)
+        if self.path() in actx and fc2.path() not in actx:
+            return actx[self.path()]
+        if fc2.path() in actx and self.path() not in actx:
+            return actx[fc2.path()]
 
         # prime the ancestor cache for the working directory
+        acache = {}
         for c in (self, fc2):
             if c._filerev is None:
                 pl = [(n.path(), n.filenode()) for n in c.parents()]
@@ -696,6 +697,14 @@ class filectx(object):
                 break
             c = visit.pop(max(visit))
             yield c
+
+    def copies(self, c2):
+        if not util.safehasattr(self, "_copycache"):
+            self._copycache = {}
+        sc2 = str(c2)
+        if sc2 not in self._copycache:
+            self._copycache[sc2] = copies.pathcopies(c2)
+        return self._copycache[sc2]
 
 class workingctx(changectx):
     """A workingctx object makes access to data related to
@@ -890,6 +899,8 @@ class workingctx(changectx):
         return self._clean
     def branch(self):
         return encoding.tolocal(self._extra['branch'])
+    def closesbranch(self):
+        return 'close' in self._extra
     def extra(self):
         return self._extra
 

@@ -92,6 +92,7 @@ commands.optionalrepo += ' kwdemo'
 
 cmdtable = {}
 command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 # hg commands that do not act on keywords
 nokwcommands = ('add addremove annotate bundle export grep incoming init log'
@@ -238,7 +239,7 @@ class kwtemplater(object):
     def iskwfile(self, cand, ctx):
         '''Returns subset of candidates which are configured for keyword
         expansion but are not symbolic links.'''
-        return [f for f in cand if self.match(f) and not 'l' in ctx.flags(f)]
+        return [f for f in cand if self.match(f) and 'l' not in ctx.flags(f)]
 
     def overwrite(self, ctx, candidates, lookup, expand, rekw=False):
         '''Overwrites selected files expanding/shrinking keywords.'''
@@ -441,7 +442,7 @@ def demo(ui, repo, *args, **opts):
         if name.split('.', 1)[0].find('commit') > -1:
             repo.ui.setconfig('hooks', name, '')
     msg = _('hg keyword configuration and expansion example')
-    ui.note("hg ci -m '%s'\n" % msg)
+    ui.note("hg ci -m '%s'\n" % msg) # check-code-ignore
     repo.commit(text=msg)
     ui.status(_('\n\tkeywords expanded\n'))
     ui.write(repo.wread(fn))
@@ -651,7 +652,7 @@ def reposetup(ui, repo):
             return kwt.match(source)
 
         candidates = [f for f in repo.dirstate.copies() if
-                      not 'l' in wctx.flags(f) and haskwsource(f)]
+                      'l' not in wctx.flags(f) and haskwsource(f)]
         kwt.overwrite(wctx, candidates, False, False)
 
     def kw_dorecord(orig, ui, repo, commitfunc, *pats, **opts):
@@ -680,7 +681,7 @@ def reposetup(ui, repo):
         # not make sense
         if (fctx._filerev is None and
             (self._repo._encodefilterpats or
-             kwt.match(fctx.path()) and not 'l' in fctx.flags() or
+             kwt.match(fctx.path()) and 'l' not in fctx.flags() or
              self.size() - 4 == fctx.size()) or
             self.size() == fctx.size()):
             return self._filelog.cmp(self._filenode, fctx.data())
