@@ -5,7 +5,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-import ctypes, errno, os, struct, subprocess, random
+import ctypes, errno, os, subprocess, random
 
 _kernel32 = ctypes.windll.kernel32
 _advapi32 = ctypes.windll.advapi32
@@ -68,13 +68,6 @@ _PROCESS_QUERY_INFORMATION = 0x0400
 
 # GetExitCodeProcess
 _STILL_ACTIVE = 259
-
-# registry
-_HKEY_CURRENT_USER = 0x80000001L
-_HKEY_LOCAL_MACHINE = 0x80000002L
-_KEY_READ = 0x20019
-_REG_SZ = 1
-_REG_DWORD = 4
 
 class _STARTUPINFO(ctypes.Structure):
     _fields_ = [('cb', _DWORD),
@@ -179,17 +172,6 @@ _kernel32.GetStdHandle.restype = _HANDLE
 _kernel32.GetConsoleScreenBufferInfo.argtypes = [_HANDLE, ctypes.c_void_p]
 _kernel32.GetConsoleScreenBufferInfo.restype = _BOOL
 
-_advapi32.RegOpenKeyExA.argtypes = [_HANDLE, _LPCSTR, _DWORD, _DWORD,
-    ctypes.c_void_p]
-_advapi32.RegOpenKeyExA.restype = _LONG
-
-_advapi32.RegQueryValueExA.argtypes = [_HANDLE, _LPCSTR, ctypes.c_void_p,
-    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-_advapi32.RegQueryValueExA.restype = _LONG
-
-_advapi32.RegCloseKey.argtypes = [_HANDLE]
-_advapi32.RegCloseKey.restype = _LONG
-
 _advapi32.GetUserNameA.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
 _advapi32.GetUserNameA.restype = _BOOL
 
@@ -261,50 +243,13 @@ def testpid(pid):
             _kernel32.CloseHandle(h)
     return _kernel32.GetLastError() != _ERROR_INVALID_PARAMETER
 
-def lookupreg(key, valname=None, scope=None):
-    ''' Look up a key/value name in the Windows registry.
-
-    valname: value name. If unspecified, the default value for the key
-    is used.
-    scope: optionally specify scope for registry lookup, this can be
-    a sequence of scopes to look up in order. Default (CURRENT_USER,
-    LOCAL_MACHINE).
-    '''
-    byref = ctypes.byref
-    if scope is None:
-        scope = (_HKEY_CURRENT_USER, _HKEY_LOCAL_MACHINE)
-    elif not isinstance(scope, (list, tuple)):
-        scope = (scope,)
-    for s in scope:
-        kh = _HANDLE()
-        res = _advapi32.RegOpenKeyExA(s, key, 0, _KEY_READ, ctypes.byref(kh))
-        if res != _ERROR_SUCCESS:
-            continue
-        try:
-            size = _DWORD(600)
-            type = _DWORD()
-            buf = ctypes.create_string_buffer(size.value + 1)
-            res = _advapi32.RegQueryValueExA(kh.value, valname, None,
-                                       byref(type), buf, byref(size))
-            if res != _ERROR_SUCCESS:
-                continue
-            if type.value == _REG_SZ:
-                # string is in ANSI code page, aka local encoding
-                return buf.value
-            elif type.value == _REG_DWORD:
-                fmt = '<L'
-                s = ctypes.string_at(byref(buf), struct.calcsize(fmt))
-                return struct.unpack(fmt, s)[0]
-        finally:
-            _advapi32.RegCloseKey(kh.value)
-
 def executablepath():
     '''return full path of hg.exe'''
     size = 600
     buf = ctypes.create_string_buffer(size + 1)
     len = _kernel32.GetModuleFileNameA(None, ctypes.byref(buf), size)
     if len == 0:
-        raise ctypes.WinError()
+        raise ctypes.WinError
     elif len == size:
         raise ctypes.WinError(_ERROR_INSUFFICIENT_BUFFER)
     return buf.value
@@ -314,7 +259,7 @@ def getuser():
     size = _DWORD(300)
     buf = ctypes.create_string_buffer(size.value + 1)
     if not _advapi32.GetUserNameA(ctypes.byref(buf), ctypes.byref(size)):
-        raise ctypes.WinError()
+        raise ctypes.WinError
     return buf.value
 
 _signalhandler = []
@@ -332,7 +277,7 @@ def setsignalhandler():
     h = _SIGNAL_HANDLER(handler)
     _signalhandler.append(h) # needed to prevent garbage collection
     if not _kernel32.SetConsoleCtrlHandler(h, True):
-        raise ctypes.WinError()
+        raise ctypes.WinError
 
 def hidewindow():
 
@@ -395,7 +340,7 @@ def spawndetached(args):
         None, args, None, None, False, _DETACHED_PROCESS,
         env, os.getcwd(), ctypes.byref(si), ctypes.byref(pi))
     if not res:
-        raise ctypes.WinError()
+        raise ctypes.WinError
 
     return pi.dwProcessId
 

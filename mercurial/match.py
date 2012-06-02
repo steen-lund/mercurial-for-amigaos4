@@ -121,6 +121,8 @@ class match(object):
         return self._files
     def anypats(self):
         return self._anypats
+    def always(self):
+        return False
 
 class exact(match):
     def __init__(self, root, cwd, files):
@@ -129,6 +131,8 @@ class exact(match):
 class always(match):
     def __init__(self, root, cwd):
         match.__init__(self, root, cwd, [])
+    def always(self):
+        return True
 
 class narrowmatcher(match):
     """Adapt a matcher to work on a subdirectory only.
@@ -275,7 +279,7 @@ def _buildregexmatch(pats, tail):
     try:
         pat = '(?:%s)' % '|'.join([_regex(k, p, tail) for (k, p) in pats])
         if len(pat) > 20000:
-            raise OverflowError()
+            raise OverflowError
         return pat, re.compile(pat).match
     except OverflowError:
         # We're using a Python with a tiny regex engine and we

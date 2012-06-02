@@ -31,14 +31,14 @@ def has_baz():
 def has_bzr():
     try:
         import bzrlib
-        return bzrlib.__doc__ != None
+        return bzrlib.__doc__ is not None
     except ImportError:
         return False
 
 def has_bzr114():
     try:
         import bzrlib
-        return (bzrlib.__doc__ != None
+        return (bzrlib.__doc__ is not None
                 and bzrlib.version_info[:2] >= (1, 14))
     except ImportError:
         return False
@@ -60,7 +60,7 @@ def has_eol_in_paths():
         os.close(fd)
         os.remove(path)
         return True
-    except:
+    except (IOError, OSError):
         return False
 
 def has_executablebit():
@@ -93,7 +93,7 @@ def has_icasefs():
         try:
             s2 = os.stat(p2)
             return s2 == s1
-        except:
+        except OSError:
             return False
     finally:
         os.remove(path)
@@ -106,7 +106,7 @@ def has_inotify():
         return False
 
 def has_fifo():
-    return hasattr(os, "mkfifo")
+    return getattr(os, "mkfifo", None) is not None
 
 def has_cacheable_fs():
     from mercurial import util
@@ -165,10 +165,11 @@ def has_svn_bindings():
         return False
 
 def has_p4():
-    return matchoutput('p4 -V', r'Rev\. P4/') and matchoutput('p4d -V', r'Rev\. P4D/')
+    return (matchoutput('p4 -V', r'Rev\. P4/') and
+            matchoutput('p4d -V', r'Rev\. P4D/'))
 
 def has_symlink():
-    if not hasattr(os, "symlink"):
+    if getattr(os, "symlink", None) is None:
         return False
     name = tempfile.mktemp(dir=".", prefix='hg-checklink-')
     try:

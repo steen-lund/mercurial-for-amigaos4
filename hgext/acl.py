@@ -152,6 +152,8 @@ from mercurial.i18n import _
 from mercurial import util, match
 import getpass, urllib
 
+testedwith = 'internal'
+
 def _getusers(ui, group):
 
     # First, try to use group definition from section [acl.groups]
@@ -172,7 +174,7 @@ def _usermatch(ui, user, usersorgroups):
         return True
 
     for ug in usersorgroups.replace(',', ' ').split():
-        if user == ug or ug.find('@') == 0 and user in _getusers(ui, ug[1:]):
+        if user == ug or ug.startswith('@') and user in _getusers(ui, ug[1:]):
             return True
 
     return False
@@ -188,15 +190,20 @@ def buildmatch(ui, repo, user, key):
     ui.debug('acl: %s enabled, %d entries for user %s\n' %
              (key, len(pats), user))
 
+    # Branch-based ACL
     if not repo:
         if pats:
-            return lambda b: '*' in pats or b in pats
-        return lambda b: False
+            # If there's an asterisk (meaning "any branch"), always return True;
+            # Otherwise, test if b is in pats
+            if '*' in pats:
+                return util.always
+            return lambda b: b in pats
+        return util.never
 
+    # Path-based ACL
     if pats:
         return match.match(repo.root, '', pats)
-    return match.exact(repo.root, '', [])
-
+    return util.never
 
 def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
     if hooktype not in ['pretxnchangegroup', 'pretxncommit']:

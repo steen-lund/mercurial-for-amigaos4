@@ -15,7 +15,7 @@ and O(changes) merge between branches.
 from node import bin, hex, nullid, nullrev
 from i18n import _
 import ancestor, mdiff, parsers, error, util, dagutil
-import struct, zlib, errno
+import struct, zlib, errno, collections
 
 _pack = struct.pack
 _unpack = struct.unpack
@@ -362,13 +362,13 @@ class revlog(object):
         """return the set of all nodes ancestral to a given node, including
          the node itself, stopping when stop is matched"""
         reachable = set((node,))
-        visit = [node]
+        visit = collections.deque([node])
         if stop:
             stopn = self.rev(stop)
         else:
             stopn = 0
         while visit:
-            n = visit.pop(0)
+            n = visit.popleft()
             if n == stop:
                 continue
             if n == nullid:
@@ -389,10 +389,10 @@ class revlog(object):
         an ancestor of itself.  Results are in breadth-first order:
         parents of each rev in revs, then parents of those, etc.  Result
         does not include the null revision."""
-        visit = list(revs)
+        visit = collections.deque(revs)
         seen = set([nullrev])
         while visit:
-            for parent in self.parentrevs(visit.pop(0)):
+            for parent in self.parentrevs(visit.popleft()):
                 if parent not in seen:
                     visit.append(parent)
                     seen.add(parent)
@@ -447,9 +447,9 @@ class revlog(object):
 
         # take all ancestors from heads that aren't in has
         missing = set()
-        visit = [r for r in heads if r not in has]
+        visit = collections.deque(r for r in heads if r not in has)
         while visit:
-            r = visit.pop(0)
+            r = visit.popleft()
             if r in missing:
                 continue
             else:
@@ -635,6 +635,10 @@ class revlog(object):
         return (orderedout, roots, heads)
 
     def headrevs(self):
+        try:
+            return self.index.headrevs()
+        except AttributeError:
+            pass
         count = len(self)
         if not count:
             return [nullrev]
@@ -722,7 +726,7 @@ class revlog(object):
         return self.node(c)
 
     def _match(self, id):
-        if isinstance(id, (long, int)):
+        if isinstance(id, int):
             # rev
             return self.node(id)
         if len(id) == 20:
@@ -756,6 +760,15 @@ class revlog(object):
                 pass
 
     def _partialmatch(self, id):
+        try:
+            return self.index.partialmatch(id)
+        except RevlogError:
+            # parsers.c radix tree lookup gave multiple matches
+            raise LookupError(id, self.indexfile, _("ambiguous identifier"))
+        except (AttributeError, ValueError):
+            # we are pure python, or key was too short to search radix tree
+            pass
+
         if id in self._pcache:
             return self._pcache[id]
 
@@ -1199,7 +1212,7 @@ class revlog(object):
                     continue
 
                 for p in (p1, p2):
-                    if not p in self.nodemap:
+                    if p not in self.nodemap:
                         raise LookupError(p, self.indexfile,
                                           _('unknown parent'))
 

@@ -86,14 +86,14 @@ class outgoing(object):
             self._computecommonmissing()
         return self._missing
 
-def findcommonoutgoing(repo, other, onlyheads=None, force=False, commoninc=None,
-                       portable=False):
+def findcommonoutgoing(repo, other, onlyheads=None, force=False,
+                       commoninc=None, portable=False):
     '''Return an outgoing instance to identify the nodes present in repo but
     not in other.
 
-    If onlyheads is given, only nodes ancestral to nodes in onlyheads (inclusive)
-    are included. If you already know the local repo's heads, passing them in
-    onlyheads is faster than letting them be recomputed here.
+    If onlyheads is given, only nodes ancestral to nodes in onlyheads
+    (inclusive) are included. If you already know the local repo's heads,
+    passing them in onlyheads is faster than letting them be recomputed here.
 
     If commoninc is given, it must the the result of a prior call to
     findcommonincoming(repo, other, force) to avoid recomputing it here.
@@ -109,7 +109,7 @@ def findcommonoutgoing(repo, other, onlyheads=None, force=False, commoninc=None,
     og.commonheads, _any, _hds = commoninc
 
     # compute outgoing
-    if not repo._phaseroots[phases.secret]:
+    if not repo._phasecache.phaseroots[phases.secret]:
         og.missingheads = onlyheads or repo.heads()
     elif onlyheads is None:
         # use visible heads as it should be cached
