@@ -1,5 +1,3 @@
-  $ "$TESTDIR/hghave" execbit || exit 80
-
   $ checkundo()
   > {
   >     if [ -f .hg/store/undo ]; then
@@ -58,6 +56,16 @@ help
   
   You will by default be managing a patch queue named "patches". You can create
   other, independent patch queues with the "hg qqueue" command.
+  
+  If the working directory contains uncommitted files, qpush, qpop and qgoto
+  abort immediately. If -f/--force is used, the changes are discarded. Setting:
+  
+    [mq]
+    keepchanges = True
+  
+  make them behave as if --keep-changes were passed, and non-conflicting local
+  changes will be tolerated and preserved. If incompatible options such as
+  -f/--force or --exact are passed, this setting is ignored.
   
   list of commands:
   
@@ -199,7 +207,7 @@ status --mq with color (issue2096)
 try the --mq option on a command provided by an extension
 
   $ hg purge --mq --verbose --config extensions.purge=
-  Removing file flaf
+  removing file flaf
 
   $ cd ..
 
@@ -787,6 +795,7 @@ strip with local changes, should complain
   $ hg strip -f tip
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
   saved backup bundle to $TESTTMP/b/.hg/strip-backup/*-backup.hg (glob)
+  $ cd ..
 
 
 cd b; hg qrefresh
@@ -897,20 +906,27 @@ bad node in status
   no patches applied
   [1]
 
+  $ cd ..
+
+
+git patches
+
   $ cat >>$HGRCPATH <<EOF
   > [diff]
   > git = True
   > EOF
-  $ cd ..
   $ hg init git
   $ cd git
   $ hg qinit
 
   $ hg qnew -m'new file' new
   $ echo foo > new
+#if execbit
   $ chmod +x new
+#endif
   $ hg add new
   $ hg qrefresh
+#if execbit
   $ cat .hg/patches/new
   new file
   
@@ -920,6 +936,17 @@ bad node in status
   +++ b/new
   @@ -0,0 +1,1 @@
   +foo
+#else
+  $ cat .hg/patches/new
+  new file
+  
+  diff --git a/new b/new
+  new file mode 100644
+  --- /dev/null
+  +++ b/new
+  @@ -0,0 +1,1 @@
+  +foo
+#endif
 
   $ hg qnew -m'copy file' copy
   $ hg cp new copy
@@ -1171,7 +1198,7 @@ strip again
   
   $ hg strip 1
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  saved backup bundle to $TESTTMP/b/strip/.hg/strip-backup/*-backup.hg (glob)
+  saved backup bundle to $TESTTMP/strip/.hg/strip-backup/*-backup.hg (glob)
   $ checkundo strip
   $ hg log
   changeset:   1:20cbbe65cff7
@@ -1517,3 +1544,5 @@ Test that qfinish preserve phase when mq.secret=false
   0: draft
   1: secret
   2: secret
+
+  $ cd ..

@@ -6,7 +6,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-from mercurial import changegroup, bookmarks, phases
+from mercurial import changegroup, bookmarks
 from mercurial.node import short
 from mercurial.i18n import _
 import os
@@ -38,14 +38,14 @@ def _collectbrokencsets(repo, files, striprev):
     """return the changesets which will be broken by the truncation"""
     s = set()
     def collectone(revlog):
-        links = (revlog.linkrev(i) for i in revlog)
+        linkgen = (revlog.linkrev(i) for i in revlog)
         # find the truncation point of the revlog
-        for lrev in links:
+        for lrev in linkgen:
             if lrev >= striprev:
                 break
         # see if any revision after this point has a linkrev
         # less than striprev (those will be broken by strip)
-        for lrev in links:
+        for lrev in linkgen:
             if lrev < striprev:
                 s.add(lrev)
 
@@ -74,7 +74,7 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
     #  base = revision in the set that has no ancestor in the set)
     tostrip = set(striplist)
     for rev in striplist:
-        for desc in cl.descendants(rev):
+        for desc in cl.descendants([rev]):
             tostrip.add(desc)
 
     files = _collectfiles(repo, striprev)
@@ -91,7 +91,7 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
 
     # compute base nodes
     if saverevs:
-        descendants = set(cl.descendants(*saverevs))
+        descendants = set(cl.descendants(saverevs))
         saverevs.difference_update(descendants)
     savebases = [cl.node(r) for r in saverevs]
     stripbases = [cl.node(r) for r in tostrip]
@@ -131,7 +131,7 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
                 file, troffset, ignore = tr.entries[i]
                 repo.sopener(file, 'a').truncate(troffset)
             tr.close()
-        except:
+        except: # re-raises
             tr.abort()
             raise
 
@@ -160,7 +160,7 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
         for m in updatebm:
             bm[m] = repo['.'].node()
         bookmarks.write(repo)
-    except:
+    except: # re-raises
         if backupfile:
             ui.warn(_("strip failed, full bundle stored in '%s'\n")
                     % backupfile)
@@ -170,7 +170,3 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
         raise
 
     repo.destroyed()
-
-    # remove potential unknown phase
-    # XXX using to_strip data would be faster
-    phases.filterunknown(repo)

@@ -21,14 +21,14 @@ creating 'remote' repo
 repo not found error
 
   $ hg clone -e "python \"$TESTDIR/dummyssh\"" ssh://user@dummy/nonexistent local
-  remote: abort: There is no Mercurial repository here (.hg not found)!
+  remote: abort: there is no Mercurial repository here (.hg not found)!
   abort: no suitable response from remote hg!
   [255]
 
 non-existent absolute path
 
   $ hg clone -e "python \"$TESTDIR/dummyssh\"" ssh://user@dummy//`pwd`/nonexistent local
-  remote: abort: There is no Mercurial repository here (.hg not found)!
+  remote: abort: there is no Mercurial repository here (.hg not found)!
   abort: no suitable response from remote hg!
   [255]
 
@@ -307,6 +307,41 @@ parameters:
   $ SSH_ORIGINAL_COMMAND="'hg' -R 'a'repo' serve --stdio" python "$TESTDIR/../contrib/hg-ssh"
   Illegal command "'hg' -R 'a'repo' serve --stdio": No closing quotation
   [255]
+
+Test hg-ssh in read-only mode:
+
+  $ cat > ssh.sh << EOF
+  > userhost="\$1"
+  > SSH_ORIGINAL_COMMAND="\$2"
+  > export SSH_ORIGINAL_COMMAND
+  > PYTHONPATH="$PYTHONPATH"
+  > export PYTHONPATH
+  > python "$TESTDIR/../contrib/hg-ssh" --read-only "$TESTTMP/remote"
+  > EOF
+
+  $ hg clone --ssh "sh ssh.sh" "ssh://user@dummy/$TESTTMP/remote" read-only-local
+  requesting all changes
+  adding changesets
+  adding manifests
+  adding file changes
+  added 4 changesets with 5 changes to 4 files (+1 heads)
+  updating to branch default
+  3 files updated, 0 files merged, 0 files removed, 0 files unresolved
+
+  $ cd read-only-local
+  $ echo "baz" > bar
+  $ hg ci -A -m "unpushable commit" bar
+  $ hg push --ssh "sh ../ssh.sh"
+  pushing to ssh://user@dummy/*/remote (glob)
+  searching for changes
+  remote: Permission denied
+  remote: abort: prechangegroup.hg-ssh hook failed
+  remote: Permission denied
+  remote: abort: prepushkey.hg-ssh hook failed
+  abort: unexpected response: empty string
+  [255]
+
+  $ cd ..
 
   $ cat dummylog
   Got arguments 1:user@dummy 2:hg -R nonexistent serve --stdio

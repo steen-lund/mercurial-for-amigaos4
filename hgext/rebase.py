@@ -26,6 +26,7 @@ nullmerge = -2
 
 cmdtable = {}
 command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 @command('rebase',
     [('s', 'source', '',
@@ -182,7 +183,7 @@ def rebase(ui, repo, **opts):
                 branch = repo[None].branch()
                 dest = repo[branch]
             else:
-                dest = repo[destf]
+                dest = scmutil.revsingle(repo, destf)
 
             if revf:
                 rebaseset = repo.revs('%lr', revf)
@@ -201,7 +202,7 @@ def rebase(ui, repo, **opts):
                 root = None
 
             if not rebaseset:
-                repo.ui.debug('base is ancestor of destination')
+                repo.ui.debug('base is ancestor of destination\n')
                 result = None
             elif not keepf and list(repo.revs('first(children(%ld) - %ld)',
                                               rebaseset, rebaseset)):
@@ -214,7 +215,7 @@ def rebase(ui, repo, **opts):
                                  % repo[root],
                                  hint=_('see hg help phases for details'))
             else:
-                result = buildstate(repo, dest, rebaseset, detachf)
+                result = buildstate(repo, dest, rebaseset, detachf, collapsef)
 
             if not result:
                 # Empty state built, nothing to rebase
@@ -223,7 +224,7 @@ def rebase(ui, repo, **opts):
             else:
                 originalwd, target, state = result
                 if collapsef:
-                    targetancestors = set(repo.changelog.ancestors(target))
+                    targetancestors = set(repo.changelog.ancestors([target]))
                     targetancestors.add(target)
                     external = checkexternal(repo, state, targetancestors)
 
@@ -242,7 +243,7 @@ def rebase(ui, repo, **opts):
 
         # Rebase
         if not targetancestors:
-            targetancestors = set(repo.changelog.ancestors(target))
+            targetancestors = set(repo.changelog.ancestors([target]))
             targetancestors.add(target)
 
         # Keep track of the current bookmarks in order to reset them later
@@ -265,7 +266,7 @@ def rebase(ui, repo, **opts):
                 else:
                     try:
                         ui.setconfig('ui', 'forcemerge', opts.get('tool', ''))
-                        stats = rebasenode(repo, rev, p1, state)
+                        stats = rebasenode(repo, rev, p1, state, collapsef)
                         if stats and stats[3] > 0:
                             raise util.Abort(_('unresolved conflicts (see hg '
                                         'resolve, then hg rebase --continue)'))
@@ -320,7 +321,7 @@ def rebase(ui, repo, **opts):
             # Remove no more useful revisions
             rebased = [rev for rev in state if state[rev] != nullmerge]
             if rebased:
-                if set(repo.changelog.descendants(min(rebased))) - set(state):
+                if set(repo.changelog.descendants([min(rebased)])) - set(state):
                     ui.warn(_("warning: new changesets detected "
                               "on source branch, not stripping\n"))
                 else:
@@ -383,7 +384,7 @@ def concludenode(repo, rev, p1, p2, commitmsg=None, editor=None, extrafn=None):
         repo.dirstate.invalidate()
         raise
 
-def rebasenode(repo, rev, p1, state):
+def rebasenode(repo, rev, p1, state, collapse):
     'Rebase a single revision'
     # Merge phase
     # Update to target and merge it with local
@@ -397,7 +398,9 @@ def rebasenode(repo, rev, p1, state):
     base = None
     if repo[rev].rev() != repo[min(state)].rev():
         base = repo[rev].p1().node()
-    return merge.update(repo, rev, True, True, False, base)
+    # When collapsing in-place, the parent is the common ancestor, we
+    # have to allow merging with it.
+    return merge.update(repo, rev, True, True, False, base, collapse)
 
 def defineparents(repo, rev, target, state, targetancestors):
     'Return the new parent relationship of the revision that will be rebased'
@@ -572,7 +575,7 @@ def abort(repo, originalwd, target, state):
 
     descendants = set()
     if dstates:
-        descendants = set(repo.changelog.descendants(*dstates))
+        descendants = set(repo.changelog.descendants(dstates))
     if descendants - set(dstates):
         repo.ui.warn(_("warning: new changesets detected on target branch, "
                        "can't abort\n"))
@@ -589,7 +592,7 @@ def abort(repo, originalwd, target, state):
         repo.ui.warn(_('rebase aborted\n'))
         return 0
 
-def buildstate(repo, dest, rebaseset, detach):
+def buildstate(repo, dest, rebaseset, detach, collapse):
     '''Define which revisions are going to be rebased and where
 
     repo: repo
@@ -617,9 +620,9 @@ def buildstate(repo, dest, rebaseset, detach):
         raise util.Abort(_('source is ancestor of destination'))
     if commonbase == dest:
         samebranch = root.branch() == dest.branch()
-        if samebranch and root in dest.children():
-           repo.ui.debug('source is a child of destination')
-           return None
+        if not collapse and samebranch and root in dest.children():
+            repo.ui.debug('source is a child of destination\n')
+            return None
         # rebase on ancestor, force detach
         detach = True
     if detach:

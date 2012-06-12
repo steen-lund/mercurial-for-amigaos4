@@ -268,3 +268,5 @@ old file -- date clamped to 1980
   *0*80*00:00*old/old (glob)
   *-----* (glob)
   \s*147\s+2 files (re)
+
+  $ cd ..
