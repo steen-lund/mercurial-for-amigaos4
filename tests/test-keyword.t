@@ -1,4 +1,4 @@
-  $ "$TESTDIR/hghave" symlink unix-permissions serve || exit 80
+  $ "$TESTDIR/hghave" unix-permissions serve || exit 80
 
   $ cat <<EOF >> $HGRCPATH
   > [extensions]
@@ -10,6 +10,9 @@
   > [ui]
   > interactive = true
   > EOF
+
+hide outer repo
+  $ hg init
 
 Run kwdemo before [keyword] files are set up
 as it would succeed without uisetup otherwise
@@ -495,6 +498,22 @@ record added keyword ignored file
   $ hg forget i
   $ rm i
 
+amend
+
+  $ echo amend >> a
+  $ echo amend >> b
+  $ hg -q commit -d '1 14' -m 'prepare amend'
+
+  $ hg --debug commit --amend -d '1 15' -m 'amend without changes' | grep keywords
+  invalidating branch cache (tip differs)
+  overwriting a expanding keywords
+  $ hg -q id
+  a71343332ea9
+  $ head -1 a
+  expand $Id: a,v a71343332ea9 1970/01/01 00:00:01 test $
+
+  $ hg -q strip -n tip
+
 Test patch queue repo
 
   $ hg init --mq
@@ -558,6 +577,7 @@ Commit and show expansion in original and copy
   $ hg --debug commit -ma2c -d '1 0' -u 'User Name <user@example.com>'
   c
    c: copy a:0045e12f6c5791aac80ca6cbfd97709a88307292
+  removing unknown node 40a904bbbe4c from 1-phase boundary
   overwriting c expanding keywords
   committed changeset 2:25736cf2f5cbe41f6be4e6784ef6ecf9f3bbcc7d
   $ cat a c
@@ -641,6 +661,8 @@ Status after rollback:
   $ hg update --clean
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
 
+#if symlink
+
 cp symlink file; hg cp -A symlink file (part2)
 - copied symlink points to kw ignored file: do not overwrite
 
@@ -661,6 +683,8 @@ cp symlink file; hg cp -A symlink file (part2)
   $ hg update --clean
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ rm i symignored
+
+#endif
 
 Custom keywordmaps as argument to kwdemo
 
@@ -722,6 +746,7 @@ Commit with multiline message and custom expansion
 
   $ hg --debug commit -l log -d '2 0' -u 'User Name <user@example.com>'
   a
+  removing unknown node 40a904bbbe4c from 1-phase boundary
   overwriting a expanding keywords
   committed changeset 2:bb948857c743469b22bbf51f7ec8112279ca5d83
   $ rm log
@@ -907,14 +932,14 @@ hg serve
 
   $ hg serve -p $HGPORT -d --pid-file=hg.pid -A access.log -E errors.log
   $ cat hg.pid >> $DAEMON_PIDS
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/a/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/a/?style=raw'
   200 Script output follows
   
   expand $Id: a bb948857c743 Thu, 01 Jan 1970 00:00:02 +0000 user $
   do not process $Id:
   xxx $
   $Xinfo: User Name <user@example.com>: firstline $
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/annotate/tip/a/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'annotate/tip/a/?style=raw'
   200 Script output follows
   
   
@@ -926,7 +951,7 @@ hg serve
   
   
   
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/rev/tip/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'rev/tip/?style=raw'
   200 Script output follows
   
   
@@ -946,7 +971,7 @@ hg serve
   +xxx $
   +$Xinfo$
   
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/diff/bb948857c743/a?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'diff/bb948857c743/a?style=raw'
   200 Script output follows
   
   
@@ -1105,3 +1130,5 @@ Now disable keyword expansion
   $Xinfo$
   ignore $Id$
   a
+
+  $ cd ..

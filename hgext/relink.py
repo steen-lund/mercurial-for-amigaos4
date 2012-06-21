@@ -11,6 +11,8 @@ from mercurial import hg, util
 from mercurial.i18n import _
 import os, stat
 
+testedwith = 'internal'
+
 def relink(ui, repo, origin=None, **opts):
     """recreate hardlinks between two repositories
 
@@ -79,7 +81,7 @@ def collect(src, ui):
         dirnames.sort()
         relpath = dirpath[len(src) + seplen:]
         for filename in sorted(filenames):
-            if not filename[-2:] in ('.d', '.i'):
+            if filename[-2:] not in ('.d', '.i'):
                 continue
             st = os.stat(os.path.join(dirpath, filename))
             if not stat.S_ISREG(st.st_mode):

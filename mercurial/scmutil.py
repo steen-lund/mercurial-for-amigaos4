@@ -141,8 +141,9 @@ class pathauditor(object):
                 elif (stat.S_ISDIR(st.st_mode) and
                       os.path.isdir(os.path.join(curpath, '.hg'))):
                     if not self.callback or not self.callback(curpath):
-                        raise util.Abort(_("path '%s' is inside nested repo %r") %
-                                         (path, prefix))
+                        raise util.Abort(_("path '%s' is inside nested "
+                                           "repo %r")
+                                         % (path, prefix))
             prefixes.append(normprefix)
             parts.pop()
             normparts.pop()
@@ -464,7 +465,7 @@ if os.name != 'nt':
 
 else:
 
-    _HKEY_LOCAL_MACHINE = 0x80000002L
+    import _winreg
 
     def systemrcpath():
         '''return default os-specific hgrc search path'''
@@ -484,7 +485,7 @@ else:
             return rcpath
         # else look for a system rcpath in the registry
         value = util.lookupreg('SOFTWARE\\Mercurial', None,
-                               _HKEY_LOCAL_MACHINE)
+                               _winreg.HKEY_LOCAL_MACHINE)
         if not isinstance(value, str) or not value:
             return rcpath
         value = util.localpath(value)
@@ -656,8 +657,9 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
             unknown.append(abs)
             if repo.ui.verbose or not exact:
                 repo.ui.status(_('adding %s\n') % ((pats and rel) or abs))
-        elif repo.dirstate[abs] != 'r' and (not good or not os.path.lexists(target)
-            or (os.path.isdir(target) and not os.path.islink(target))):
+        elif (repo.dirstate[abs] != 'r' and
+              (not good or not os.path.lexists(target) or
+               (os.path.isdir(target) and not os.path.islink(target)))):
             deleted.append(abs)
             if repo.ui.verbose or not exact:
                 repo.ui.status(_('removing %s\n') % ((pats and rel) or abs))
@@ -766,8 +768,9 @@ def readrequires(opener, supported):
             missings.append(r)
     missings.sort()
     if missings:
-        raise error.RequirementError(_("unknown repository format: "
-            "requires features '%s' (upgrade Mercurial)") % "', '".join(missings))
+        raise error.RequirementError(
+            _("unknown repository format: requires features '%s' (upgrade "
+              "Mercurial)") % "', '".join(missings))
     return requirements
 
 class filecacheentry(object):

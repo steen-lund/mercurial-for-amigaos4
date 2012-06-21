@@ -112,7 +112,10 @@ def decompress(bin):
     if t == '\0':
         return bin
     if t == 'x':
-        return _decompress(bin)
+        try:
+            return _decompress(bin)
+        except zlib.error, e:
+            raise RevlogError(_("revlog decompress error: %s") % str(e))
     if t == 'u':
         return bin[1:]
     raise RevlogError(_("unknown compression type %r") % t)
@@ -362,13 +365,13 @@ class revlog(object):
         """return the set of all nodes ancestral to a given node, including
          the node itself, stopping when stop is matched"""
         reachable = set((node,))
-        visit = [node]
+        visit = util.deque([node])
         if stop:
             stopn = self.rev(stop)
         else:
             stopn = 0
         while visit:
-            n = visit.pop(0)
+            n = visit.popleft()
             if n == stop:
                 continue
             if n == nullid:
@@ -381,24 +384,27 @@ class revlog(object):
                     visit.append(p)
         return reachable
 
-    def ancestors(self, *revs):
+    def ancestors(self, revs, stoprev=0):
         """Generate the ancestors of 'revs' in reverse topological order.
+        Does not generate revs lower than stoprev.
 
         Yield a sequence of revision numbers starting with the parents
         of each revision in revs, i.e., each revision is *not* considered
         an ancestor of itself.  Results are in breadth-first order:
         parents of each rev in revs, then parents of those, etc.  Result
         does not include the null revision."""
-        visit = list(revs)
+        visit = util.deque(revs)
         seen = set([nullrev])
         while visit:
-            for parent in self.parentrevs(visit.pop(0)):
+            for parent in self.parentrevs(visit.popleft()):
+                if parent < stoprev:
+                    continue
                 if parent not in seen:
                     visit.append(parent)
                     seen.add(parent)
                     yield parent
 
-    def descendants(self, *revs):
+    def descendants(self, revs):
         """Generate the descendants of 'revs' in revision order.
 
         Yield a sequence of revision numbers starting with a child of
@@ -441,15 +447,15 @@ class revlog(object):
         heads = [self.rev(n) for n in heads]
 
         # we want the ancestors, but inclusive
-        has = set(self.ancestors(*common))
+        has = set(self.ancestors(common))
         has.add(nullrev)
         has.update(common)
 
         # take all ancestors from heads that aren't in has
         missing = set()
-        visit = [r for r in heads if r not in has]
+        visit = util.deque(r for r in heads if r not in has)
         while visit:
-            r = visit.pop(0)
+            r = visit.popleft()
             if r in missing:
                 continue
             else:
@@ -635,6 +641,10 @@ class revlog(object):
         return (orderedout, roots, heads)
 
     def headrevs(self):
+        try:
+            return self.index.headrevs()
+        except AttributeError:
+            pass
         count = len(self)
         if not count:
             return [nullrev]
@@ -696,7 +706,7 @@ class revlog(object):
     def descendant(self, start, end):
         if start == nullrev:
             return True
-        for i in self.descendants(start):
+        for i in self.descendants([start]):
             if i == end:
                 return True
             elif i > end:
@@ -722,7 +732,7 @@ class revlog(object):
         return self.node(c)
 
     def _match(self, id):
-        if isinstance(id, (long, int)):
+        if isinstance(id, int):
             # rev
             return self.node(id)
         if len(id) == 20:
@@ -756,6 +766,15 @@ class revlog(object):
                 pass
 
     def _partialmatch(self, id):
+        try:
+            return self.index.partialmatch(id)
+        except RevlogError:
+            # parsers.c radix tree lookup gave multiple matches
+            raise LookupError(id, self.indexfile, _("ambiguous identifier"))
+        except (AttributeError, ValueError):
+            # we are pure python, or key was too short to search radix tree
+            pass
+
         if id in self._pcache:
             return self._pcache[id]
 
@@ -1199,7 +1218,7 @@ class revlog(object):
                     continue
 
                 for p in (p1, p2):
-                    if not p in self.nodemap:
+                    if p not in self.nodemap:
                         raise LookupError(p, self.indexfile,
                                           _('unknown parent'))
 
