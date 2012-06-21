@@ -1,4 +1,4 @@
-  $ "$TESTDIR/hghave" symlink unix-permissions serve || exit 80
+  $ "$TESTDIR/hghave" serve || exit 80
   $ USERCACHE=`pwd`/cache; export USERCACHE
   $ mkdir -p ${USERCACHE}
   $ cat >> $HGRCPATH <<EOF
@@ -146,7 +146,7 @@ Test display of largefiles in hgweb
 
   $ hg serve -d -p $HGPORT --pid-file ../hg.pid
   $ cat ../hg.pid >> $DAEMON_PIDS
-  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '/file/tip/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'file/tip/?style=raw'
   200 Script output follows
   
   
@@ -155,7 +155,7 @@ Test display of largefiles in hgweb
   -rw-r--r-- 9 normal3
   
   
-  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '/file/tip/sub/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'file/tip/sub/?style=raw'
   200 Script output follows
   
   
@@ -432,11 +432,52 @@ tests update).
   large11
   $ cat sub/large2
   large22
+  $ cd ..
+
+Test cloning with --all-largefiles flag
+
+  $ rm -Rf ${USERCACHE}/*
+  $ hg clone --all-largefiles a a-backup
+  updating to branch default
+  5 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  getting changed largefiles
+  3 largefiles updated, 0 removed
+  8 additional largefiles cached
+
+  $ hg clone --all-largefiles a ssh://localhost/a
+  abort: --all-largefiles is incompatible with non-local destination ssh://localhost/a
+  [255]
+
+Test pulling with --all-largefiles flag
+
+  $ rm -Rf a-backup
+  $ hg clone -r 1 a a-backup
+  adding changesets
+  adding manifests
+  adding file changes
+  added 2 changesets with 8 changes to 4 files
+  updating to branch default
+  4 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  getting changed largefiles
+  2 largefiles updated, 0 removed
+  $ rm -Rf ${USERCACHE}/*
+  $ cd a-backup
+  $ hg pull --all-largefiles
+  pulling from $TESTTMP/a
+  searching for changes
+  adding changesets
+  adding manifests
+  adding file changes
+  added 6 changesets with 16 changes to 8 files
+  (run 'hg update' to get a working copy)
+  caching new largefiles
+  3 largefiles cached
+  3 additional largefiles cached
+  $ cd ..
 
 Rebasing between two repositories does not revert largefiles to old
 revisions (this was a very bad bug that took a lot of work to fix).
 
-  $ cd ..
   $ hg clone a d
   updating to branch default
   5 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -473,7 +514,7 @@ revisions (this was a very bad bug that took a lot of work to fix).
   Invoking status precommit hook
   M sub/normal4
   M sub2/large6
-  saved backup bundle to $TESTTMP/d/.hg/strip-backup/f574fb32bb45-backup.hg
+  saved backup bundle to $TESTTMP/d/.hg/strip-backup/f574fb32bb45-backup.hg (glob)
   nothing to rebase
   $ hg log --template '{rev}:{node|short}  {desc|firstline}\n'
   9:598410d3eb9a  modify normal file largefile in repo d
@@ -511,7 +552,7 @@ revisions (this was a very bad bug that took a lot of work to fix).
   Invoking status precommit hook
   M sub/normal4
   M sub2/large6
-  saved backup bundle to $TESTTMP/e/.hg/strip-backup/f574fb32bb45-backup.hg
+  saved backup bundle to $TESTTMP/e/.hg/strip-backup/f574fb32bb45-backup.hg (glob)
   $ hg log --template '{rev}:{node|short}  {desc|firstline}\n'
   9:598410d3eb9a  modify normal file largefile in repo d
   8:a381d2c8c80e  modify normal file and largefile in repo b
@@ -977,6 +1018,8 @@ Push a largefiles repository to a served empty repository
 used all HGPORTs, kill all daemons
   $ "$TESTDIR/killdaemons.py"
 
+#if unix-permissions
+
 Clone a local repository owned by another user
 We have to simulate that here by setting $HOME and removing write permissions
   $ ORIGHOME="$HOME"
@@ -1010,6 +1053,10 @@ We have to simulate that here by setting $HOME and removing write permissions
   $ chmod -R u+w alice/pubrepo
   $ HOME="$ORIGHOME"
 
+#endif
+
+#if symlink
+
 Symlink to a large largefile should behave the same as a symlink to a normal file
   $ hg init largesymlink
   $ cd largesymlink
@@ -1034,6 +1081,8 @@ Symlink to a large largefile should behave the same as a symlink to a normal fil
   $ test -f largelink
   $ test -L largelink
   $ cd ..
+
+#endif
 
 test for pattern matching on 'hg status':
 to boost performance, largefiles checks whether specified patterns are
@@ -1136,4 +1185,37 @@ verify that large files in subrepos handled properly
   abort: uncommitted changes in subrepo subrepo
   (use --subrepos for recursive commit)
   [255]
+
+Add a normal file to the subrepo, then test archiving
+
+  $ echo 'normal file' > subrepo/normal.txt
+  $ hg -R subrepo add subrepo/normal.txt
+
+Lock in subrepo, otherwise the change isn't archived
+
+  $ hg ci -S -m "add normal file to top level"
+  committing subrepository subrepo
+  Invoking status precommit hook
+  M large.txt
+  A normal.txt
+  Invoking status precommit hook
+  M .hgsubstate
+  $ hg archive -S lf_subrepo_archive
+  $ find lf_subrepo_archive | sort
+  lf_subrepo_archive
+  lf_subrepo_archive/.hg_archival.txt
+  lf_subrepo_archive/.hgsub
+  lf_subrepo_archive/.hgsubstate
+  lf_subrepo_archive/a
+  lf_subrepo_archive/a/b
+  lf_subrepo_archive/a/b/c
+  lf_subrepo_archive/a/b/c/d
+  lf_subrepo_archive/a/b/c/d/e.large.txt
+  lf_subrepo_archive/a/b/c/d/e.normal.txt
+  lf_subrepo_archive/a/b/c/x
+  lf_subrepo_archive/a/b/c/x/y.normal.txt
+  lf_subrepo_archive/subrepo
+  lf_subrepo_archive/subrepo/large.txt
+  lf_subrepo_archive/subrepo/normal.txt
+
   $ cd ..
