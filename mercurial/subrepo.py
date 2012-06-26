@@ -200,7 +200,8 @@ def _updateprompt(ui, sub, dirty, local, remote):
                  'use (l)ocal source (%s) or (r)emote source (%s)?\n')
                % (subrelpath(sub), local, remote))
     else:
-        msg = (_(' subrepository sources for %s differ (in checked out version)\n'
+        msg = (_(' subrepository sources for %s differ (in checked out '
+                 'version)\n'
                  'use (l)ocal source (%s) or (r)emote source (%s)?\n')
                % (subrelpath(sub), local, remote))
     return ui.promptchoice(msg, (_('&Local'), _('&Remote')), 0)
@@ -267,7 +268,7 @@ def subrepo(ctx, path):
     hg = h
 
     scmutil.pathauditor(ctx._repo.root)(path)
-    state = ctx.substate.get(path, nullstate)
+    state = ctx.substate[path]
     if state[2] not in types:
         raise util.Abort(_('unknown subrepo type %s') % state[2])
     return types[state[2]](ctx, path, state[:2])
@@ -498,8 +499,9 @@ class hgsubrepo(abstractsubrepo):
                                      % (subrelpath(self), srcurl))
                 parentrepo = self._repo._subparent
                 shutil.rmtree(self._repo.path)
-                other, self._repo = hg.clone(self._repo._subparent.ui, {}, other,
-                                         self._repo.root, update=False)
+                other, self._repo = hg.clone(self._repo._subparent.ui, {},
+                                             other, self._repo.root,
+                                             update=False)
                 self._initrepo(parentrepo, source, create=True)
             else:
                 self._repo.ui.status(_('pulling subrepo %s from %s\n')

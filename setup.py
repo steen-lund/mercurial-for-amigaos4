@@ -23,24 +23,25 @@ else:
 try:
     import hashlib
     sha = hashlib.sha1()
-except:
+except ImportError:
     try:
         import sha
-    except:
+    except ImportError:
         raise SystemExit(
             "Couldn't import standard hashlib (incomplete Python install).")
 
 try:
     import zlib
-except:
+except ImportError:
     raise SystemExit(
         "Couldn't import standard zlib (incomplete Python install).")
 
 # The base IronPython distribution (as of 2.7.1) doesn't support bz2
 isironpython = False
 try:
-    isironpython = platform.python_implementation().lower().find("ironpython") != -1
-except:
+    isironpython = (platform.python_implementation()
+                    .lower().find("ironpython") != -1)
+except AttributeError:
     pass
 
 if isironpython:
@@ -48,7 +49,7 @@ if isironpython:
 else:
     try:
         import bz2
-    except:
+    except ImportError:
         raise SystemExit(
             "Couldn't import standard bz2 (incomplete Python install).")
 
@@ -107,7 +108,7 @@ def hasfunction(cc, funcname):
             os.dup2(devnull.fileno(), sys.stderr.fileno())
             objects = cc.compile([fname], output_dir=tmpdir)
             cc.link_executable(objects, os.path.join(tmpdir, "a.out"))
-        except:
+        except Exception:
             return False
         return True
     finally:
@@ -211,10 +212,12 @@ class hgbuild(build):
     # Insert hgbuildmo first so that files in mercurial/locale/ are found
     # when build_py is run next.
     sub_commands = [('build_mo', None),
-    # We also need build_ext before build_py. Otherwise, when 2to3 is called (in
-    # build_py), it will not find osutil & friends, thinking that those modules are
-    # global and, consequently, making a mess, now that all module imports are
-    # global.
+
+    # We also need build_ext before build_py. Otherwise, when 2to3 is
+    # called (in build_py), it will not find osutil & friends,
+    # thinking that those modules are global and, consequently, making
+    # a mess, now that all module imports are global.
+
                     ('build_ext', build.has_ext_modules),
                    ] + build.sub_commands
 
@@ -292,7 +295,8 @@ class hgbuildpy(build_py):
             self.distribution.ext_modules = []
         else:
             if not os.path.exists(os.path.join(get_python_inc(), 'Python.h')):
-                raise SystemExit("Python headers are required to build Mercurial")
+                raise SystemExit('Python headers are required to build '
+                                 'Mercurial')
 
     def find_modules(self):
         modules = build_py.find_modules(self)
@@ -384,8 +388,7 @@ cmdclass = {'build': hgbuild,
             'build_hgextindex': buildhgextindex,
             'install_scripts': hginstallscripts}
 
-packages = ['mercurial', 'mercurial.hgweb',
-            'mercurial.httpclient', 'mercurial.httpclient.tests',
+packages = ['mercurial', 'mercurial.hgweb', 'mercurial.httpclient',
             'hgext', 'hgext.convert', 'hgext.highlight', 'hgext.zeroconf',
             'hgext.largefiles']
 
