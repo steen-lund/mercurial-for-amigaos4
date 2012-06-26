@@ -86,14 +86,14 @@ class outgoing(object):
             self._computecommonmissing()
         return self._missing
 
-def findcommonoutgoing(repo, other, onlyheads=None, force=False, commoninc=None,
-                       portable=False):
+def findcommonoutgoing(repo, other, onlyheads=None, force=False,
+                       commoninc=None, portable=False):
     '''Return an outgoing instance to identify the nodes present in repo but
     not in other.
 
-    If onlyheads is given, only nodes ancestral to nodes in onlyheads (inclusive)
-    are included. If you already know the local repo's heads, passing them in
-    onlyheads is faster than letting them be recomputed here.
+    If onlyheads is given, only nodes ancestral to nodes in onlyheads
+    (inclusive) are included. If you already know the local repo's heads,
+    passing them in onlyheads is faster than letting them be recomputed here.
 
     If commoninc is given, it must the the result of a prior call to
     findcommonincoming(repo, other, force) to avoid recomputing it here.
@@ -109,7 +109,7 @@ def findcommonoutgoing(repo, other, onlyheads=None, force=False, commoninc=None,
     og.commonheads, _any, _hds = commoninc
 
     # compute outgoing
-    if not repo._phaseroots[phases.secret]:
+    if not repo._phasecache.phaseroots[phases.secret]:
         og.missingheads = onlyheads or repo.heads()
     elif onlyheads is None:
         # use visible heads as it should be cached
@@ -140,7 +140,7 @@ def findcommonoutgoing(repo, other, onlyheads=None, force=False, commoninc=None,
         og._computecommonmissing()
         cl = repo.changelog
         missingrevs = set(cl.rev(n) for n in og._missing)
-        og._common = set(cl.ancestors(*missingrevs)) - missingrevs
+        og._common = set(cl.ancestors(missingrevs)) - missingrevs
         commonheads = set(og.commonheads)
         og.missingheads = [h for h in og.missingheads if h not in commonheads]
 
@@ -207,30 +207,38 @@ def checkheads(repo, remote, outgoing, remoteheads, newbranch=False, inc=False):
         # 1-4b. old servers: Check for new topological heads.
         # Construct {old,new}map with branch = None (topological branch).
         # (code based on _updatebranchcache)
-        oldheads = set(h for h in remoteheads if h in cl.nodemap)
-        newheads = oldheads.union(outgoing.missing)
-        if len(newheads) > 1:
-            for latest in reversed(outgoing.missing):
-                if latest not in newheads:
+        oldheadrevs = set(cl.rev(h) for h in remoteheads if h in cl.nodemap)
+        missingrevs = [cl.rev(node) for node in outgoing.missing]
+        newheadrevs = oldheadrevs.union(missingrevs)
+        if len(newheadrevs) > 1:
+            for latest in sorted(missingrevs, reverse=True):
+                if latest not in newheadrevs:
                     continue
-                minhrev = min(cl.rev(h) for h in newheads)
-                reachable = cl.reachable(latest, cl.node(minhrev))
-                reachable.remove(latest)
-                newheads.difference_update(reachable)
+                reachable = cl.ancestors([latest], min(newheadrevs))
+                newheadrevs.difference_update(reachable)
         branches = set([None])
-        newmap = {None: newheads}
-        oldmap = {None: oldheads}
+        newmap = {None: [cl.node(rev) for rev in newheadrevs]}
+        oldmap = {None: [cl.node(rev) for rev in oldheadrevs]}
         unsynced = inc and branches or set()
 
     # 5. Check for new heads.
     # If there are more heads after the push than before, a suitable
     # error message, depending on unsynced status, is displayed.
     error = None
+    remotebookmarks = remote.listkeys('bookmarks')
+    localbookmarks = repo._bookmarks
+
     for branch in branches:
         newhs = set(newmap[branch])
         oldhs = set(oldmap[branch])
+        dhs = None
         if len(newhs) > len(oldhs):
-            dhs = list(newhs - oldhs)
+            # strip updates to existing remote heads from the new heads list
+            bookmarkedheads = set([repo[bm].node() for bm in localbookmarks
+                                   if bm in remotebookmarks and
+                                   remote[bm] == repo[bm].ancestor(remote[bm])])
+            dhs = list(newhs - bookmarkedheads - oldhs)
+        if dhs:
             if error is None:
                 if branch not in ('default', None):
                     error = _("push creates new remote head %s "

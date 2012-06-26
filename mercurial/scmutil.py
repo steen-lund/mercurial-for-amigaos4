@@ -141,8 +141,9 @@ class pathauditor(object):
                 elif (stat.S_ISDIR(st.st_mode) and
                       os.path.isdir(os.path.join(curpath, '.hg'))):
                     if not self.callback or not self.callback(curpath):
-                        raise util.Abort(_("path '%s' is inside nested repo %r") %
-                                         (path, prefix))
+                        raise util.Abort(_("path '%s' is inside nested "
+                                           "repo %r")
+                                         % (path, prefix))
             prefixes.append(normprefix)
             parts.pop()
             normparts.pop()
@@ -323,18 +324,16 @@ def canonpath(root, cwd, myname, auditor=None):
     else:
         # Determine whether `name' is in the hierarchy at or beneath `root',
         # by iterating name=dirname(name) until that causes no change (can't
-        # check name == '/', because that doesn't work on windows).  For each
-        # `name', compare dev/inode numbers.  If they match, the list `rel'
-        # holds the reversed list of components making up the relative file
-        # name we want.
-        root_st = os.stat(root)
+        # check name == '/', because that doesn't work on windows). The list
+        # `rel' holds the reversed list of components making up the relative
+        # file name we want.
         rel = []
         while True:
             try:
-                name_st = os.stat(name)
+                s = util.samefile(name, root)
             except OSError:
-                name_st = None
-            if name_st and util.samestat(name_st, root_st):
+                s = False
+            if s:
                 if not rel:
                     # name was actually the same as root (maybe a symlink)
                     return ''
@@ -464,7 +463,7 @@ if os.name != 'nt':
 
 else:
 
-    _HKEY_LOCAL_MACHINE = 0x80000002L
+    import _winreg
 
     def systemrcpath():
         '''return default os-specific hgrc search path'''
@@ -484,7 +483,7 @@ else:
             return rcpath
         # else look for a system rcpath in the registry
         value = util.lookupreg('SOFTWARE\\Mercurial', None,
-                               _HKEY_LOCAL_MACHINE)
+                               _winreg.HKEY_LOCAL_MACHINE)
         if not isinstance(value, str) or not value:
             return rcpath
         value = util.localpath(value)
@@ -656,8 +655,9 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
             unknown.append(abs)
             if repo.ui.verbose or not exact:
                 repo.ui.status(_('adding %s\n') % ((pats and rel) or abs))
-        elif repo.dirstate[abs] != 'r' and (not good or not os.path.lexists(target)
-            or (os.path.isdir(target) and not os.path.islink(target))):
+        elif (repo.dirstate[abs] != 'r' and
+              (not good or not os.path.lexists(target) or
+               (os.path.isdir(target) and not os.path.islink(target)))):
             deleted.append(abs)
             if repo.ui.verbose or not exact:
                 repo.ui.status(_('removing %s\n') % ((pats and rel) or abs))
@@ -766,8 +766,9 @@ def readrequires(opener, supported):
             missings.append(r)
     missings.sort()
     if missings:
-        raise error.RequirementError(_("unknown repository format: "
-            "requires features '%s' (upgrade Mercurial)") % "', '".join(missings))
+        raise error.RequirementError(
+            _("unknown repository format: requires features '%s' (upgrade "
+              "Mercurial)") % "', '".join(missings))
     return requirements
 
 class filecacheentry(object):

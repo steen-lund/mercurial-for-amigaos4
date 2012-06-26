@@ -17,10 +17,10 @@ def _revancestors(repo, revs, followfirst):
     """Like revlog.ancestors(), but supports followfirst."""
     cut = followfirst and 1 or None
     cl = repo.changelog
-    visit = list(revs)
+    visit = util.deque(revs)
     seen = set([node.nullrev])
     while visit:
-        for parent in cl.parentrevs(visit.pop(0))[:cut]:
+        for parent in cl.parentrevs(visit.popleft())[:cut]:
             if parent not in seen:
                 visit.append(parent)
                 seen.add(parent)
@@ -46,6 +46,36 @@ def _revdescendants(repo, revs, followfirst):
                 seen.add(i)
                 yield i
                 break
+
+def _revsbetween(repo, roots, heads):
+    """Return all paths between roots and heads, inclusive of both endpoint
+    sets."""
+    if not roots:
+        return []
+    parentrevs = repo.changelog.parentrevs
+    visit = heads[:]
+    reachable = set()
+    seen = {}
+    minroot = min(roots)
+    roots = set(roots)
+    # open-code the post-order traversal due to the tiny size of
+    # sys.getrecursionlimit()
+    while visit:
+        rev = visit.pop()
+        if rev in roots:
+            reachable.add(rev)
+        parents = parentrevs(rev)
+        seen[rev] = parents
+        for parent in parents:
+            if parent >= minroot and parent not in seen:
+                visit.append(parent)
+    if not reachable:
+        return []
+    for rev in sorted(seen):
+        for parent in seen[rev]:
+            if parent in reachable:
+                reachable.add(rev)
+    return sorted(reachable)
 
 elements = {
     "(": (20, ("group", 1, ")"), ("func", 1, ")")),
@@ -108,7 +138,8 @@ def tokenize(program):
                 pos += 1
             else:
                 raise error.ParseError(_("unterminated string"), s)
-        elif c.isalnum() or c in '._' or ord(c) > 127: # gather up a symbol/keyword
+        # gather up a symbol/keyword
+        elif c.isalnum() or c in '._' or ord(c) > 127:
             s = pos
             pos += 1
             while pos < l: # find end of symbol
@@ -155,6 +186,16 @@ def getset(repo, subset, x):
         raise error.ParseError(_("missing argument"))
     return methods[x[0]](repo, subset, *x[1:])
 
+def _getrevsource(repo, r):
+    extra = repo[r].extra()
+    for label in ('source', 'transplant_source', 'rebase_source'):
+        if label in extra:
+            try:
+                return repo[extra[label]].rev()
+            except error.RepoLookupError:
+                pass
+    return None
+
 # operator methods
 
 def stringset(repo, subset, x):
@@ -189,6 +230,14 @@ def rangeset(repo, subset, x, y):
         r = range(m, n - 1, -1)
     s = set(subset)
     return [x for x in r if x in s]
+
+def dagrange(repo, subset, x, y):
+    if subset:
+        r = range(len(repo))
+        xs = _revsbetween(repo, getset(repo, r, x), getset(repo, r, y))
+        s = set(subset)
+        return [r for r in xs if r in s]
+    return []
 
 def andset(repo, subset, x, y):
     return getset(repo, getset(repo, subset, x), y)
@@ -257,7 +306,8 @@ def _firstancestors(repo, subset, x):
 
 def ancestorspec(repo, subset, x, n):
     """``set~n``
-    Changesets that are the Nth ancestor (first parents only) of a changeset in set.
+    Changesets that are the Nth ancestor (first parents only) of a changeset
+    in set.
     """
     try:
         n = int(n[1])
@@ -277,7 +327,8 @@ def author(repo, subset, x):
     """
     # i18n: "author" is a keyword
     n = encoding.lower(getstring(x, _("author requires a string")))
-    return [r for r in subset if n in encoding.lower(repo[r].user())]
+    kind, pattern, matcher = _substringmatcher(n)
+    return [r for r in subset if matcher(encoding.lower(repo[r].user()))]
 
 def bisect(repo, subset, x):
     """``bisect(string)``
@@ -289,6 +340,7 @@ def bisect(repo, subset, x):
     - ``pruned``             : csets that are goods, bads or skipped
     - ``untested``           : csets whose fate is yet unknown
     - ``ignored``            : csets ignored due to DAG topology
+    - ``current``            : the cset currently being bisected
     """
     status = getstring(x, _("bisect requires a string")).lower()
     state = set(hbisect.get(repo, status))
@@ -302,6 +354,10 @@ def bisected(repo, subset, x):
 def bookmark(repo, subset, x):
     """``bookmark([name])``
     The named bookmark or all bookmarks.
+
+    If `name` starts with `re:`, the remainder of the name is treated as
+    a regular expression. To match a bookmark that actually starts with `re:`,
+    use the prefix `literal:`.
     """
     # i18n: "bookmark" is a keyword
     args = getargs(x, 0, 1, _('bookmark takes one or no arguments'))
@@ -309,11 +365,26 @@ def bookmark(repo, subset, x):
         bm = getstring(args[0],
                        # i18n: "bookmark" is a keyword
                        _('the argument to bookmark must be a string'))
-        bmrev = bookmarksmod.listbookmarks(repo).get(bm, None)
-        if not bmrev:
-            raise util.Abort(_("bookmark '%s' does not exist") % bm)
-        bmrev = repo[bmrev].rev()
-        return [r for r in subset if r == bmrev]
+        kind, pattern, matcher = _stringmatcher(bm)
+        if kind == 'literal':
+            bmrev = bookmarksmod.listbookmarks(repo).get(bm, None)
+            if not bmrev:
+                raise util.Abort(_("bookmark '%s' does not exist") % bm)
+            bmrev = repo[bmrev].rev()
+            return [r for r in subset if r == bmrev]
+        else:
+            matchrevs = set()
+            for name, bmrev in bookmarksmod.listbookmarks(repo).iteritems():
+                if matcher(name):
+                    matchrevs.add(bmrev)
+            if not matchrevs:
+                raise util.Abort(_("no bookmarks exist that match '%s'")
+                                 % pattern)
+            bmrevs = set()
+            for bmrev in matchrevs:
+                bmrevs.add(repo[bmrev].rev())
+            return [r for r in subset if r in bmrevs]
+
     bms = set([repo[r].rev()
                for r in bookmarksmod.listbookmarks(repo).values()])
     return [r for r in subset if r in bms]
@@ -322,14 +393,25 @@ def branch(repo, subset, x):
     """``branch(string or set)``
     All changesets belonging to the given branch or the branches of the given
     changesets.
+
+    If `string` starts with `re:`, the remainder of the name is treated as
+    a regular expression. To match a branch that actually starts with `re:`,
+    use the prefix `literal:`.
     """
     try:
         b = getstring(x, '')
-        if b in repo.branchmap():
-            return [r for r in subset if repo[r].branch() == b]
     except error.ParseError:
         # not a string, but another revspec, e.g. tip()
         pass
+    else:
+        kind, pattern, matcher = _stringmatcher(b)
+        if kind == 'literal':
+            # note: falls through to the revspec case if no branch with
+            # this name exists
+            if pattern in repo.branchmap():
+                return [r for r in subset if matcher(repo[r].branch())]
+        else:
+            return [r for r in subset if matcher(repo[r].branch())]
 
     s = getset(repo, range(len(repo)), x)
     b = set()
@@ -392,7 +474,7 @@ def closed(repo, subset, x):
     """
     # i18n: "closed" is a keyword
     getargs(x, 0, 0, _("closed takes no arguments"))
-    return [r for r in subset if repo[r].extra().get('close')]
+    return [r for r in subset if repo[r].closesbranch()]
 
 def contains(repo, subset, x):
     """``contains(pattern)``
@@ -417,6 +499,27 @@ def contains(repo, subset, x):
                     s.append(r)
                     break
     return s
+
+def converted(repo, subset, x):
+    """``converted([id])``
+    Changesets converted from the given identifier in the old repository if
+    present, or all converted changesets if no identifier is specified.
+    """
+
+    # There is exactly no chance of resolving the revision, so do a simple
+    # string compare and hope for the best
+
+    # i18n: "converted" is a keyword
+    rev = None
+    l = getargs(x, 0, 1, _('converted takes one or no arguments'))
+    if l:
+        rev = getstring(l[0], _('converted requires a revision'))
+
+    def _matchvalue(r):
+        source = repo[r].extra().get('convert_revision', None)
+        return source is not None and (rev is None or source.startswith(rev))
+
+    return [r for r in subset if _matchvalue(r)]
 
 def date(repo, subset, x):
     """``date(interval)``
@@ -462,7 +565,32 @@ def draft(repo, subset, x):
     """``draft()``
     Changeset in draft phase."""
     getargs(x, 0, 0, _("draft takes no arguments"))
-    return [r for r in subset if repo._phaserev[r] == phases.draft]
+    pc = repo._phasecache
+    return [r for r in subset if pc.phase(repo, r) == phases.draft]
+
+def extra(repo, subset, x):
+    """``extra(label, [value])``
+    Changesets with the given label in the extra metadata, with the given
+    optional value.
+
+    If `value` starts with `re:`, the remainder of the value is treated as
+    a regular expression. To match a value that actually starts with `re:`,
+    use the prefix `literal:`.
+    """
+
+    l = getargs(x, 1, 2, _('extra takes at least 1 and at most 2 arguments'))
+    label = getstring(l[0], _('first argument to extra must be a string'))
+    value = None
+
+    if len(l) > 1:
+        value = getstring(l[1], _('second argument to extra must be a string'))
+        kind, value, matcher = _stringmatcher(value)
+
+    def _matchvalue(r):
+        extra = repo[r].extra()
+        return label in extra and (value is None or matcher(extra[label]))
+
+    return [r for r in subset if _matchvalue(r)]
 
 def filelog(repo, subset, x):
     """``filelog(pattern)``
@@ -859,7 +987,8 @@ def public(repo, subset, x):
     """``public()``
     Changeset in public phase."""
     getargs(x, 0, 0, _("public takes no arguments"))
-    return [r for r in subset if repo._phaserev[r] == phases.public]
+    pc = repo._phasecache
+    return [r for r in subset if pc.phase(repo, r) == phases.public]
 
 def remote(repo, subset, x):
     """``remote([id [,path]])``
@@ -1038,7 +1167,8 @@ def secret(repo, subset, x):
     """``secret()``
     Changeset in secret phase."""
     getargs(x, 0, 0, _("secret takes no arguments"))
-    return [r for r in subset if repo._phaserev[r] == phases.secret]
+    pc = repo._phasecache
+    return [r for r in subset if pc.phase(repo, r) == phases.secret]
 
 def sort(repo, subset, x):
     """``sort(set[, [-]key...])``
@@ -1095,6 +1225,51 @@ def sort(repo, subset, x):
     l.sort()
     return [e[-1] for e in l]
 
+def _stringmatcher(pattern):
+    """
+    accepts a string, possibly starting with 're:' or 'literal:' prefix.
+    returns the matcher name, pattern, and matcher function.
+    missing or unknown prefixes are treated as literal matches.
+
+    helper for tests:
+    >>> def test(pattern, *tests):
+    ...     kind, pattern, matcher = _stringmatcher(pattern)
+    ...     return (kind, pattern, [bool(matcher(t)) for t in tests])
+
+    exact matching (no prefix):
+    >>> test('abcdefg', 'abc', 'def', 'abcdefg')
+    ('literal', 'abcdefg', [False, False, True])
+
+    regex matching ('re:' prefix)
+    >>> test('re:a.+b', 'nomatch', 'fooadef', 'fooadefbar')
+    ('re', 'a.+b', [False, False, True])
+
+    force exact matches ('literal:' prefix)
+    >>> test('literal:re:foobar', 'foobar', 're:foobar')
+    ('literal', 're:foobar', [False, True])
+
+    unknown prefixes are ignored and treated as literals
+    >>> test('foo:bar', 'foo', 'bar', 'foo:bar')
+    ('literal', 'foo:bar', [False, False, True])
+    """
+    if pattern.startswith('re:'):
+        pattern = pattern[3:]
+        try:
+            regex = re.compile(pattern)
+        except re.error, e:
+            raise error.ParseError(_('invalid regular expression: %s')
+                                   % e)
+        return 're', pattern, regex.search
+    elif pattern.startswith('literal:'):
+        pattern = pattern[8:]
+    return 'literal', pattern, pattern.__eq__
+
+def _substringmatcher(pattern):
+    kind, pattern, matcher = _stringmatcher(pattern)
+    if kind == 'literal':
+        matcher = lambda s: pattern in s
+    return kind, pattern, matcher
+
 def tag(repo, subset, x):
     """``tag([name])``
     The specified tag by name, or all tagged revisions if no name is given.
@@ -1103,12 +1278,20 @@ def tag(repo, subset, x):
     args = getargs(x, 0, 1, _("tag takes one or no arguments"))
     cl = repo.changelog
     if args:
-        tn = getstring(args[0],
-                       # i18n: "tag" is a keyword
-                       _('the argument to tag must be a string'))
-        if not repo.tags().get(tn, None):
-            raise util.Abort(_("tag '%s' does not exist") % tn)
-        s = set([cl.rev(n) for t, n in repo.tagslist() if t == tn])
+        pattern = getstring(args[0],
+                            # i18n: "tag" is a keyword
+                            _('the argument to tag must be a string'))
+        kind, pattern, matcher = _stringmatcher(pattern)
+        if kind == 'literal':
+            # avoid resolving all tags
+            tn = repo._tagscache.tags.get(pattern, None)
+            if tn is None:
+                raise util.Abort(_("tag '%s' does not exist") % pattern)
+            s = set([repo[tn].rev()])
+        else:
+            s = set([cl.rev(n) for t, n in repo.tagslist() if matcher(t)])
+            if not s:
+                raise util.Abort(_("no tags exist that match '%s'") % pattern)
     else:
         s = set([cl.rev(n) for t, n in repo.tagslist() if t != 'tip'])
     return [r for r in subset if r in s]
@@ -1119,6 +1302,10 @@ def tagged(repo, subset, x):
 def user(repo, subset, x):
     """``user(string)``
     User name contains string. The match is case-insensitive.
+
+    If `string` starts with `re:`, the remainder of the string is treated as
+    a regular expression. To match a user that actually contains `re:`, use
+    the prefix `literal:`.
     """
     return author(repo, subset, x)
 
@@ -1146,11 +1333,13 @@ symbols = {
     "children": children,
     "closed": closed,
     "contains": contains,
+    "converted": converted,
     "date": date,
     "desc": desc,
     "descendants": descendants,
     "_firstdescendants": _firstdescendants,
     "draft": draft,
+    "extra": extra,
     "file": hasfile,
     "filelog": filelog,
     "first": first,
@@ -1190,6 +1379,7 @@ symbols = {
 
 methods = {
     "range": rangeset,
+    "dagrange": dagrange,
     "string": stringset,
     "symbol": symbolset,
     "and": andset,
@@ -1213,9 +1403,6 @@ def optimize(x, small):
     op = x[0]
     if op == 'minus':
         return optimize(('and', x[1], ('not', x[2])), small)
-    elif op == 'dagrange':
-        return optimize(('and', ('func', ('symbol', 'descendants'), x[1]),
-                         ('func', ('symbol', 'ancestors'), x[2])), small)
     elif op == 'dagrangepre':
         return optimize(('func', ('symbol', 'ancestors'), x[1]), small)
     elif op == 'dagrangepost':
@@ -1229,7 +1416,7 @@ def optimize(x, small):
                          '-' + getstring(x[1], _("can't negate that"))), small)
     elif op in 'string symbol negate':
         return smallbonus, x # single revisions are small
-    elif op == 'and' or op == 'dagrange':
+    elif op == 'and':
         wa, ta = optimize(x[1], True)
         wb, tb = optimize(x[2], True)
         w = min(wa, wb)
@@ -1250,7 +1437,7 @@ def optimize(x, small):
         return o[0], (op, o[1])
     elif op == 'group':
         return optimize(x[1], small)
-    elif op in 'range list parent ancestorspec':
+    elif op in 'dagrange range list parent ancestorspec':
         if op == 'parent':
             # x^:y means (x^) : y, not x ^ (:y)
             post = ('parentpost', x[1])
@@ -1362,7 +1549,7 @@ def _expandargs(tree, args):
         return args[arg]
     return tuple(_expandargs(t, args) for t in tree)
 
-def _expandaliases(aliases, tree, expanding):
+def _expandaliases(aliases, tree, expanding, cache):
     """Expand aliases in tree, recursively.
 
     'aliases' is a dictionary mapping user defined aliases to
@@ -1377,17 +1564,20 @@ def _expandaliases(aliases, tree, expanding):
             raise error.ParseError(_('infinite expansion of revset alias "%s" '
                                      'detected') % alias.name)
         expanding.append(alias)
-        result = _expandaliases(aliases, alias.replacement, expanding)
+        if alias.name not in cache:
+            cache[alias.name] = _expandaliases(aliases, alias.replacement,
+                                               expanding, cache)
+        result = cache[alias.name]
         expanding.pop()
         if alias.args is not None:
             l = getlist(tree[2])
             if len(l) != len(alias.args):
                 raise error.ParseError(
                     _('invalid number of arguments: %s') % len(l))
-            l = [_expandaliases(aliases, a, []) for a in l]
+            l = [_expandaliases(aliases, a, [], cache) for a in l]
             result = _expandargs(result, dict(zip(alias.args, l)))
     else:
-        result = tuple(_expandaliases(aliases, t, expanding)
+        result = tuple(_expandaliases(aliases, t, expanding, cache)
                        for t in tree)
     return result
 
@@ -1397,7 +1587,7 @@ def findaliases(ui, tree):
     for k, v in ui.configitems('revsetalias'):
         alias = revsetalias(k, v)
         aliases[alias.name] = alias
-    return _expandaliases(aliases, tree, [])
+    return _expandaliases(aliases, tree, [], {})
 
 parse = parser.parser(tokenize, elements).parse
 

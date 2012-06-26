@@ -8,7 +8,7 @@
 
 from node import nullid
 from i18n import _
-import random, collections, util, dagutil
+import random, util, dagutil
 import phases
 
 def _updatesample(dag, nodes, sample, always, quicksamplesize=0):
@@ -18,7 +18,7 @@ def _updatesample(dag, nodes, sample, always, quicksamplesize=0):
     else:
         heads = dag.heads()
     dist = {}
-    visit = collections.deque(heads)
+    visit = util.deque(heads)
     seen = set()
     factor = 1
     while visit:
@@ -134,11 +134,16 @@ def findcommonheads(ui, local, remote,
         return (ownheadhashes, True, srvheadhashes,)
 
     # full blown discovery
-    undecided = dag.nodeset() # own nodes where I don't know if remote knows them
-    common = set() # own nodes I know we both know
-    missing = set() # own nodes I know remote lacks
 
-    # treat remote heads (and maybe own heads) as a first implicit sample response
+    # own nodes where I don't know if remote knows them
+    undecided = dag.nodeset()
+    # own nodes I know we both know
+    common = set()
+    # own nodes I know remote lacks
+    missing = set()
+
+    # treat remote heads (and maybe own heads) as a first implicit sample
+    # response
     common.update(dag.ancestorset(srvheads))
     undecided.difference_update(common)
 
