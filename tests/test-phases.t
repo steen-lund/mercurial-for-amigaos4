@@ -9,6 +9,15 @@
 
   $ hg init initialrepo
   $ cd initialrepo
+
+Cannot change null revision phase
+
+  $ hg phase --force --secret null
+  abort: cannot change null revision phase
+  [255]
+  $ hg phase null
+  -1: public
+
   $ mkcommit A
 
 New commit are draft by default
@@ -466,3 +475,5 @@ test complete failure
   cannot move 1 changesets to a more permissive phase, use --force
   no phases changed
   [1]
+
+  $ cd ..

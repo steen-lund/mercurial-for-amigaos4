@@ -25,6 +25,7 @@ class TransplantError(error.Abort):
 
 cmdtable = {}
 command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 class transplantentry(object):
     def __init__(self, lnode, rnode):
@@ -88,16 +89,21 @@ class transplanter(object):
 
     def applied(self, repo, node, parent):
         '''returns True if a node is already an ancestor of parent
-        or has already been transplanted'''
+        or is parent or has already been transplanted'''
+        if hasnode(repo, parent):
+            parentrev = repo.changelog.rev(parent)
         if hasnode(repo, node):
-            if node in repo.changelog.reachable(parent, stop=node):
+            rev = repo.changelog.rev(node)
+            reachable = repo.changelog.incancestors([parentrev], rev)
+            if rev in reachable:
                 return True
         for t in self.transplants.get(node):
             # it might have been stripped
             if not hasnode(repo, t.lnode):
                 self.transplants.remove(t)
                 return False
-            if t.lnode in repo.changelog.reachable(parent, stop=t.lnode):
+            lnoderev = repo.changelog.rev(t.lnode)
+            if lnoderev in repo.changelog.incancestors([parentrev], lnoderev):
                 return True
         return False
 
@@ -124,7 +130,7 @@ class transplanter(object):
                     continue
 
                 parents = source.changelog.parents(node)
-                if not opts.get('filter'):
+                if not (opts.get('filter') or opts.get('log')):
                     # If the changeset parent is the same as the
                     # wdir's parent, just pull it.
                     if parents[0] == p1:
@@ -534,7 +540,7 @@ def transplant(ui, repo, *revs, **opts):
     transplanted, otherwise you will be prompted to select the
     changesets you want.
 
-    :hg:`transplant --branch REVISION --all` will transplant the
+    :hg:`transplant --branch REV --all` will transplant the
     selected branch (up to the named revision) onto your current
     working directory.
 

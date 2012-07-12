@@ -70,6 +70,15 @@ def uisetup(ui):
                                    overrides.overrideupdate)
     entry = extensions.wrapcommand(commands.table, 'pull',
                                    overrides.overridepull)
+    pullopt = [('', 'all-largefiles', None,
+                 _('download all pulled versions of largefiles'))]
+    entry[1].extend(pullopt)
+    entry = extensions.wrapcommand(commands.table, 'clone',
+                                   overrides.overrideclone)
+    cloneopt = [('', 'all-largefiles', None,
+                 _('download all versions of all largefiles'))]
+
+    entry[1].extend(cloneopt)
     entry = extensions.wrapcommand(commands.table, 'cat',
                                    overrides.overridecat)
     entry = extensions.wrapfunction(merge, '_checkunknownfile',
@@ -100,6 +109,7 @@ def uisetup(ui):
     extensions.wrapfunction(hg, 'merge', overrides.hgmerge)
 
     extensions.wrapfunction(archival, 'archive', overrides.overridearchive)
+    extensions.wrapfunction(hgsubrepo, 'archive', overrides.hgsubrepoarchive)
     extensions.wrapfunction(cmdutil, 'bailifchanged',
                             overrides.overridebailifchanged)
 

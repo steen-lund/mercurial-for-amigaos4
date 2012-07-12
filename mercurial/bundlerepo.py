@@ -54,7 +54,7 @@ class bundlerevlog(revlog.revlog):
                 continue
 
             for p in (p1, p2):
-                if not p in self.nodemap:
+                if p not in self.nodemap:
                     raise error.LookupError(p, self.indexfile,
                                             _("unknown parent"))
             # start, size, full unc. size, base (unused), link, p1, p2, node
@@ -323,13 +323,16 @@ def getremotechanges(ui, repo, other, onlyheads=None, bundlename=None,
 
     Returns a tuple (local, csets, cleanupfn):
 
-    "local" is a local repo from which to obtain the actual incoming changesets; it
-      is a bundlerepo for the obtained bundle when the original "other" is remote.
+    "local" is a local repo from which to obtain the actual incoming
+      changesets; it is a bundlerepo for the obtained bundle when the
+      original "other" is remote.
     "csets" lists the incoming changeset node ids.
-    "cleanupfn" must be called without arguments when you're done processing the
-      changes; it closes both the original "other" and the one returned here.
+    "cleanupfn" must be called without arguments when you're done processing
+      the changes; it closes both the original "other" and the one returned
+      here.
     '''
-    tmp = discovery.findcommonincoming(repo, other, heads=onlyheads, force=force)
+    tmp = discovery.findcommonincoming(repo, other, heads=onlyheads,
+                                       force=force)
     common, incoming, rheads = tmp
     if not incoming:
         try:
