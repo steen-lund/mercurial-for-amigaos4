@@ -55,14 +55,12 @@ import struct
 import util, base85
 from i18n import _
 
-# the obsolete feature is not mature enought to be enabled by default.
-# you have to rely on third party extension extension to enable this.
-_enabled = False
-
 _pack = struct.pack
 _unpack = struct.unpack
 
-# the obsolete feature is not mature enought to be enabled by default.
+_SEEK_END = 2 # os.SEEK_END was introduced in Python 2.5
+
+# the obsolete feature is not mature enough to be enabled by default.
 # you have to rely on third party extension extension to enable this.
 _enabled = False
 
@@ -211,7 +209,7 @@ class obsstore(object):
                 # defined. So we must seek to the end before calling tell(),
                 # or we may get a zero offset for non-zero sized files on
                 # some platforms (issue3543).
-                f.seek(0, 2) # os.SEEK_END
+                f.seek(0, _SEEK_END)
                 offset = f.tell()
                 transaction.add('obsstore', offset)
                 # offset == 0: new file - add the version header
@@ -318,7 +316,7 @@ def successormarkers(ctx):
 def anysuccessors(obsstore, node):
     """Yield every successor of <node>
 
-    This this a linear yield unsuitable to detect splitted changeset."""
+    This is a linear yield unsuitable to detect split changesets."""
     remaining = set([node])
     seen = set(remaining)
     while remaining:

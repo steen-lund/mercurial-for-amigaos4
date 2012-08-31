@@ -60,8 +60,8 @@
   
       The authormap is a simple text file that maps each source commit author to
       a destination commit author. It is handy for source SCMs that use unix
-      logins to identify authors (eg: CVS). One line per author mapping and the
-      line format is:
+      logins to identify authors (e.g.: CVS). One line per author mapping and
+      the line format is:
   
         source author = destination author
   
@@ -399,7 +399,7 @@ test bogus URL
 
 test revset converted() lookup
 
-  $ hg --config convert.hg.saverev=True convert a c  
+  $ hg --config convert.hg.saverev=True convert a c
   initializing destination c repository
   scanning source...
   sorting...
