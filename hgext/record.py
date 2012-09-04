@@ -33,7 +33,7 @@ def scanpatch(fp):
     - ('file',    [header_lines + fromfile + tofile])
     - ('context', [context_lines])
     - ('hunk',    [hunk_lines])
-    - ('range',   (-start,len, +start,len, diffp))
+    - ('range',   (-start,len, +start,len, proc))
     """
     lr = patch.linereader(fp)
 
@@ -81,7 +81,7 @@ def scanpatch(fp):
 class header(object):
     """patch header
 
-    XXX shoudn't we move this to mercurial/patch.py ?
+    XXX shouldn't we move this to mercurial/patch.py ?
     """
     diffgit_re = re.compile('diff --git a/(.*) b/(.*)$')
     diff_re = re.compile('diff -r .* (.*)$')
