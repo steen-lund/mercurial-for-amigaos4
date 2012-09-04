@@ -533,7 +533,7 @@ Default destination, same directory
 
 destination directory not empty
 
-  $ mkdir a 
+  $ mkdir a
   $ echo stuff > a/a
   $ hg clone q a
   abort: destination 'a' is not empty
@@ -558,7 +558,7 @@ leave existing directory in place after clone failure
   $ test -d d/.hg
   [1]
 
-reenable perm to allow deletion
+re-enable perm to allow deletion
 
   $ chmod +rx c/.hg/store/data
 
