@@ -335,7 +335,7 @@ def bisect(repo, subset, x):
     Changesets marked in the specified bisect status:
 
     - ``good``, ``bad``, ``skip``: csets explicitly marked as good/bad/skip
-    - ``goods``, ``bads``      : csets topologicaly good/bad
+    - ``goods``, ``bads``      : csets topologically good/bad
     - ``range``              : csets taking part in the bisection
     - ``pruned``             : csets that are goods, bads or skipped
     - ``untested``           : csets whose fate is yet unknown
@@ -594,7 +594,7 @@ def destination(repo, subset, x):
 
             # The visited lineage is a match if the current source is in the arg
             # set.  Since every candidate dest is visited by way of iterating
-            # subset, any dests futher back in the lineage will be tested by a
+            # subset, any dests further back in the lineage will be tested by a
             # different iteration over subset.  Likewise, if the src was already
             # selected, the current lineage can be selected without going back
             # further.
@@ -837,6 +837,14 @@ def heads(repo, subset, x):
     s = getset(repo, subset, x)
     ps = set(parents(repo, subset, x))
     return [r for r in s if r not in ps]
+
+def hidden(repo, subset, x):
+    """``hidden()``
+    Hidden changesets.
+    """
+    # i18n: "hidden" is a keyword
+    getargs(x, 0, 0, _("hidden takes no arguments"))
+    return [r for r in subset if r in repo.hiddenrevs]
 
 def keyword(repo, subset, x):
     """``keyword(string)``
@@ -1484,6 +1492,7 @@ symbols = {
     "grep": grep,
     "head": head,
     "heads": heads,
+    "hidden": hidden,
     "id": node_,
     "keyword": keyword,
     "last": last,

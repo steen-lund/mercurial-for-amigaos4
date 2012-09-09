@@ -237,8 +237,8 @@ class changectx(object):
 
     def extinct(self):
         """True if the changeset is extinct"""
-        # We should just compute a cache a check againts it.
-        # see revset implementation for details
+        # We should just compute a cache and check against it.
+        # See revset implementation for details.
         #
         # But this naive implementation does not require cache
         if self.phase() <= phases.public:
@@ -885,8 +885,7 @@ class workingctx(changectx):
         p = self._repo.dirstate.parents()
         if p[1] == nullid:
             p = p[:-1]
-        self._parents = [changectx(self._repo, x) for x in p]
-        return self._parents
+        return [changectx(self._repo, x) for x in p]
 
     def status(self, ignored=False, clean=False, unknown=False):
         """Explicit status query
@@ -1168,7 +1167,7 @@ class workingfilectx(filectx):
 
         returns True if different than fctx.
         """
-        # fctx should be a filectx (not a wfctx)
+        # fctx should be a filectx (not a workingfilectx)
         # invert comparison to reuse the same code path
         return fctx.cmp(self)
 
