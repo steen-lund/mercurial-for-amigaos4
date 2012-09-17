@@ -118,42 +118,51 @@ def _buildlowerencodefun():
 
 lowerencode = _buildlowerencodefun()
 
-_winreservednames = '''con prn aux nul
-    com1 com2 com3 com4 com5 com6 com7 com8 com9
-    lpt1 lpt2 lpt3 lpt4 lpt5 lpt6 lpt7 lpt8 lpt9'''.split()
+# Windows reserved names: con, prn, aux, nul, com1..com9, lpt1..lpt9
+_winres3 = ('aux', 'con', 'prn', 'nul') # length 3
+_winres4 = ('com', 'lpt')               # length 4 (with trailing 1..9)
 def _auxencode(path, dotencode):
     '''
     Encodes filenames containing names reserved by Windows or which end in
     period or space. Does not touch other single reserved characters c.
     Specifically, c in '\\:*?"<>|' or ord(c) <= 31 are *not* encoded here.
     Additionally encodes space or period at the beginning, if dotencode is
-    True.
-    path is assumed to be all lowercase.
+    True. Parameter path is assumed to be all lowercase.
+    A segment only needs encoding if a reserved name appears as a
+    basename (e.g. "aux", "aux.foo"). A directory or file named "foo.aux"
+    doesn't need encoding.
 
     >>> _auxencode('.foo/aux.txt/txt.aux/con/prn/nul/foo.', True)
-    '~2efoo/au~78.txt/txt.aux/co~6e/pr~6e/nu~6c/foo~2e'
-    >>> _auxencode('.com1com2/lpt9.lpt4.lpt1/conprn/foo.', False)
-    '.com1com2/lp~749.lpt4.lpt1/conprn/foo~2e'
+    ['~2efoo', 'au~78.txt', 'txt.aux', 'co~6e', 'pr~6e', 'nu~6c', 'foo~2e']
+    >>> _auxencode('.com1com2/lpt9.lpt4.lpt1/conprn/com0/lpt0/foo.', False)
+    ['.com1com2', 'lp~749.lpt4.lpt1', 'conprn', 'com0', 'lpt0', 'foo~2e']
     >>> _auxencode('foo. ', True)
-    'foo.~20'
+    ['foo.~20']
     >>> _auxencode(' .foo', True)
-    '~20.foo'
+    ['~20.foo']
     '''
-    res = []
-    for n in path.split('/'):
-        if n:
-            base = n.split('.')[0]
-            if base and (base in _winreservednames):
+    res = path.split('/')
+    for i, n in enumerate(res):
+        if not n:
+            continue
+        if dotencode and n[0] in '. ':
+            n = "~%02x" % ord(n[0]) + n[1:]
+            res[i] = n
+        else:
+            l = n.find('.')
+            if l == -1:
+                l = len(n)
+            if ((l == 3 and n[:3] in _winres3) or
+                (l == 4 and n[3] <= '9' and n[3] >= '1'
+                        and n[:3] in _winres4)):
                 # encode third letter ('aux' -> 'au~78')
                 ec = "~%02x" % ord(n[2])
                 n = n[0:2] + ec + n[3:]
-            if n[-1] in '. ':
-                # encode last period or space ('foo...' -> 'foo..~2e')
-                n = n[:-1] + "~%02x" % ord(n[-1])
-            if dotencode and n[0] in '. ':
-                n = "~%02x" % ord(n[0]) + n[1:]
-        res.append(n)
-    return '/'.join(res)
+                res[i] = n
+        if n[-1] in '. ':
+            # encode last period or space ('foo...' -> 'foo..~2e')
+            res[i] = n[:-1] + "~%02x" % ord(n[-1])
+    return res
 
 _maxstorepathlen = 120
 _dirprefixlen = 8
@@ -194,12 +203,11 @@ def _hybridencode(path, auxencode):
     # escape directories ending with .i and .d
     path = encodedir(path)
     ndpath = path[len('data/'):]
-    res = 'data/' + auxencode(encodefilename(ndpath))
+    res = 'data/' + '/'.join(auxencode(encodefilename(ndpath)))
     if len(res) > _maxstorepathlen:
         digest = _sha(path).hexdigest()
-        aep = auxencode(lowerencode(ndpath))
-        _root, ext = os.path.splitext(aep)
-        parts = aep.split('/')
+        parts = auxencode(lowerencode(ndpath))
+        _root, ext = os.path.splitext(parts[-1])
         basename = parts[-1]
         sdirs = []
         for p in parts[:-1]:
@@ -373,6 +381,14 @@ class _fncacheopener(scmutil.abstractopener):
         self.fncache = fnc
         self.encode = encode
 
+    def _getmustaudit(self):
+        return self.opener.mustaudit
+
+    def _setmustaudit(self, onoff):
+        self.opener.mustaudit = onoff
+
+    mustaudit = property(_getmustaudit, _setmustaudit)
+
     def __call__(self, path, mode='r', *args, **kw):
         if mode not in ('r', 'rb') and path.startswith('data/'):
             self.fncache.add(path)
@@ -382,6 +398,7 @@ class fncachestore(basicstore):
     def __init__(self, path, openertype, encode):
         self.encode = encode
         self.path = path + '/store'
+        self.pathsep = self.path + '/'
         self.createmode = _calcmode(self.path)
         op = openertype(self.path)
         op.createmode = self.createmode
@@ -390,10 +407,10 @@ class fncachestore(basicstore):
         self.opener = _fncacheopener(op, fnc, encode)
 
     def join(self, f):
-        return self.path + '/' + self.encode(f)
+        return self.pathsep + self.encode(f)
 
     def getsize(self, path):
-        return os.stat(self.path + '/' + path).st_size
+        return os.stat(self.pathsep + path).st_size
 
     def datafiles(self):
         rewrite = False
