@@ -117,14 +117,14 @@ class localrepository(object):
         return self.requirements[:]
 
     def __init__(self, baseui, path=None, create=False):
-        self.wopener = scmutil.opener(path, expand=True)
-        self.wvfs = self.wopener
+        self.wvfs = scmutil.vfs(path, expand=True)
+        self.wopener = self.wvfs
         self.root = self.wvfs.base
         self.path = self.wvfs.join(".hg")
         self.origroot = path
         self.auditor = scmutil.pathauditor(self.root, self._checknested)
-        self.opener = scmutil.opener(self.path)
-        self.vfs = self.opener
+        self.vfs = scmutil.vfs(self.path)
+        self.opener = self.vfs
         self.baseui = baseui
         self.ui = baseui.copy()
         # A list of callback to shape the phase if no data were found.
@@ -182,12 +182,12 @@ class localrepository(object):
             if inst.errno != errno.ENOENT:
                 raise
 
-        self.store = store.store(requirements, self.sharedpath, scmutil.opener)
+        self.store = store.store(requirements, self.sharedpath, scmutil.vfs)
         self.spath = self.store.path
-        self.sopener = self.store.opener
-        self.svfs = self.sopener
+        self.svfs = self.store.vfs
+        self.sopener = self.svfs
         self.sjoin = self.store.join
-        self.opener.createmode = self.store.createmode
+        self.vfs.createmode = self.store.createmode
         self._applyrequirements(requirements)
         if create:
             self._writerequirements()
@@ -299,13 +299,15 @@ class localrepository(object):
     def hiddenrevs(self):
         """hiddenrevs: revs that should be hidden by command and tools
 
-        This set is carried on the repo to ease initialisation and lazy
-        loading it'll probably move back to changelog for efficienty and
-        consistency reason
+        This set is carried on the repo to ease initialization and lazy
+        loading; it'll probably move back to changelog for efficiency and
+        consistency reasons.
 
         Note that the hiddenrevs will needs invalidations when
         - a new changesets is added (possible unstable above extinct)
         - a new obsolete marker is added (possible new extinct changeset)
+
+        hidden changesets cannot have non-hidden descendants
         """
         hidden = set()
         if self.obsstore:
@@ -712,7 +714,7 @@ class localrepository(object):
             # Remove candidate heads that no longer are in the repo (e.g., as
             # the result of a strip that just happened).  Avoid using 'node in
             # self' here because that dives down into branchcache code somewhat
-            # recrusively.
+            # recursively.
             bheadrevs = [self.changelog.rev(node) for node in bheads
                          if self.changelog.hasnode(node)]
             newheadrevs = [self.changelog.rev(node) for node in newnodes
@@ -732,7 +734,7 @@ class localrepository(object):
                 iterrevs = list(bheadrevs)
 
             # This loop prunes out two kinds of heads - heads that are
-            # superceded by a head in newheadrevs, and newheadrevs that are not
+            # superseded by a head in newheadrevs, and newheadrevs that are not
             # heads because an existing head is their descendant.
             while iterrevs:
                 latest = iterrevs.pop()
@@ -1040,6 +1042,7 @@ class localrepository(object):
 
         self._branchcache = None # in UTF-8
         self._branchcachetip = None
+        obsolete.clearobscaches(self)
 
     def invalidatedirstate(self):
         '''Invalidates the dirstate, causing the next call to dirstate
@@ -1479,7 +1482,7 @@ class localrepository(object):
         and you also know the set of candidate new heads that may have resulted
         from the destruction, you can set newheadnodes.  This will enable the
         code to update the branchheads cache, rather than having future code
-        decide it's invalid and regenrating it from scratch.
+        decide it's invalid and regenerating it from scratch.
         '''
         # If we have info, newheadnodes, on how to update the branch cache, do
         # it, Otherwise, since nodes were destroyed, the cache is stale and this
@@ -1906,7 +1909,7 @@ class localrepository(object):
                         ret = remote.addchangegroup(cg, 'push', self.url())
 
                 if ret:
-                    # push succeed, synchonize target of the push
+                    # push succeed, synchronize target of the push
                     cheads = outgoing.missingheads
                 elif revs is None:
                     # All out push fails. synchronize all common
@@ -1925,7 +1928,7 @@ class localrepository(object):
                     #     missing = ((commonheads::missingheads) - commonheads)
                     #
                     # We can pick:
-                    # * missingheads part of comon (::commonheads)
+                    # * missingheads part of common (::commonheads)
                     common = set(outgoing.common)
                     cheads = [node for node in revs if node in common]
                     # and
@@ -1989,7 +1992,7 @@ class localrepository(object):
                 if nr in self:
                     cr = self[nr]
                     cl = self[nl]
-                    if cl in cr.descendants():
+                    if bookmarks.validdest(self, cr, cl):
                         r = remote.pushkey('bookmarks', k, nr, nl)
                         if r:
                             self.ui.status(_("updating bookmark %s\n") % k)
@@ -2402,6 +2405,7 @@ class localrepository(object):
             self.ui.status(_("added %d changesets"
                              " with %d changes to %d files%s\n")
                              % (changesets, revisions, files, htext))
+            obsolete.clearobscaches(self)
 
             if changesets > 0:
                 p = lambda: cl.writepending() and self.root or ""
@@ -2539,7 +2543,7 @@ class localrepository(object):
         # uncompressed only if compatible.
 
         if not stream:
-            # if the server explicitely prefer to stream (for fast LANs)
+            # if the server explicitly prefers to stream (for fast LANs)
             stream = remote.capable('stream-preferred')
 
         if stream and not heads:
