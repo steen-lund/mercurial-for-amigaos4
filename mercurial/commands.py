@@ -543,7 +543,7 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
           hg bisect --good
           hg bisect --bad
 
-      - mark the current revision, or a known revision, to be skipped (eg. if
+      - mark the current revision, or a known revision, to be skipped (e.g. if
         that revision is not usable because of another issue)::
 
           hg bisect --skip
@@ -833,7 +833,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
             raise util.Abort(
                 _("a bookmark cannot have the name of an existing branch"))
         if rev:
-            marks[mark] = repo.lookup(rev)
+            marks[mark] = scmutil.revsingle(repo, rev).node()
         else:
             marks[mark] = cur
         if not inactive and cur == marks[mark]:
@@ -1252,7 +1252,7 @@ def commit(ui, repo, *pats, **opts):
     Returns 0 on success, 1 if nothing changed.
     """
     if opts.get('subrepos'):
-        # Let --subrepos on the command line overide config setting.
+        # Let --subrepos on the command line override config setting.
         ui.setconfig('ui', 'commitsubrepos', True)
 
     extra = {}
@@ -1352,20 +1352,20 @@ def commit(ui, repo, *pats, **opts):
         # printed anyway.
         #
         # Par Msg Comment
-        # NN   y  additional topo root
+        # N N  y  additional topo root
         #
-        # BN   y  additional branch root
-        # CN   y  additional topo head
-        # HN   n  usual case
+        # B N  y  additional branch root
+        # C N  y  additional topo head
+        # H N  n  usual case
         #
-        # BB   y  weird additional branch root
-        # CB   y  branch merge
-        # HB   n  merge with named branch
+        # B B  y  weird additional branch root
+        # C B  y  branch merge
+        # H B  n  merge with named branch
         #
-        # CC   y  additional head from merge
-        # CH   n  merge with a head
+        # C C  y  additional head from merge
+        # C H  n  merge with a head
         #
-        # HH   n  head merge: head count decreases
+        # H H  n  head merge: head count decreases
 
     if not opts.get('close_branch'):
         for r in parents:
@@ -1696,7 +1696,7 @@ def debugdag(ui, repo, file_=None, *revs, **opts):
     """format the changelog or an index DAG as a concise textual description
 
     If you pass a revlog index, the revlog's DAG is emitted. If you list
-    revision numbers, they get labelled in the output as rN.
+    revision numbers, they get labeled in the output as rN.
 
     Otherwise, the changelog DAG of the current repo is emitted.
     """
@@ -4181,7 +4181,7 @@ def manifest(ui, repo, node=None, rev=None, **opts):
                     res.append(fn[plen:-slen])
         finally:
             lock.release()
-        for f in sorted(res):
+        for f in res:
             ui.write("%s\n" % f)
         return
 
@@ -4963,6 +4963,7 @@ def resolve(ui, repo, *pats, **opts):
                         ret = 1
                 finally:
                     ui.setconfig('ui', 'forcemerge', '')
+                    ms.commit()
 
                 # replace filemerge's .orig file with our resolve file
                 util.rename(a + ".resolve", a + ".orig")
