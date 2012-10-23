@@ -41,7 +41,7 @@ def _revdescendants(repo, revs, followfirst):
         return
 
     seen = set(revs)
-    for i in xrange(first + 1, len(cl)):
+    for i in cl.revs(first + 1):
         for x in cl.parentrevs(i)[:cut]:
             if x != nullrev and x in seen:
                 seen.add(i)
@@ -422,6 +422,17 @@ def branch(repo, subset, x):
     s = set(s)
     return [r for r in subset if r in s or repo[r].branch() in b]
 
+def bumped(repo, subset, x):
+    """``bumped()``
+    Mutable changesets marked as successors of public changesets.
+
+    Only non-public and non-obsolete changesets can be `bumped`.
+    """
+    # i18n: "bumped" is a keyword
+    getargs(x, 0, 0, _("bumped takes no arguments"))
+    bumped = obsmod.getrevs(repo, 'bumped')
+    return [r for r in subset if r in bumped]
+
 def checkstatus(repo, subset, pat, field):
     m = None
     s = []
@@ -622,7 +633,7 @@ def extinct(repo, subset, x):
     """
     # i18n: "extinct" is a keyword
     getargs(x, 0, 0, _("extinct takes no arguments"))
-    extincts = obsmod.getobscache(repo, 'extinct')
+    extincts = obsmod.getrevs(repo, 'extinct')
     return [r for r in subset if r in extincts]
 
 def extra(repo, subset, x):
@@ -977,7 +988,7 @@ def obsolete(repo, subset, x):
     Mutable changeset with a newer version."""
     # i18n: "obsolete" is a keyword
     getargs(x, 0, 0, _("obsolete takes no arguments"))
-    obsoletes = obsmod.getobscache(repo, 'obsolete')
+    obsoletes = obsmod.getrevs(repo, 'obsolete')
     return [r for r in subset if r in obsoletes]
 
 def origin(repo, subset, x):
@@ -1209,7 +1220,7 @@ def matching(repo, subset, x):
     # i18n: "matching" is a keyword
     l = getargs(x, 1, 2, _("matching takes 1 or 2 arguments"))
 
-    revs = getset(repo, xrange(len(repo)), l[0])
+    revs = getset(repo, repo.changelog, l[0])
 
     fieldlist = ['metadata']
     if len(l) > 1:
@@ -1307,7 +1318,7 @@ def roots(repo, subset, x):
     """``roots(set)``
     Changesets in set with no parent changeset in set.
     """
-    s = set(getset(repo, xrange(len(repo)), x))
+    s = set(getset(repo, repo.changelog, x))
     subset = [r for r in subset if r in s]
     cs = _children(repo, subset, s)
     return [r for r in subset if r not in cs]
@@ -1456,7 +1467,7 @@ def unstable(repo, subset, x):
     """
     # i18n: "unstable" is a keyword
     getargs(x, 0, 0, _("unstable takes no arguments"))
-    unstables = obsmod.getobscache(repo, 'unstable')
+    unstables = obsmod.getrevs(repo, 'unstable')
     return [r for r in subset if r in unstables]
 
 
@@ -1492,6 +1503,7 @@ symbols = {
     "bookmark": bookmark,
     "branch": branch,
     "branchpoint": branchpoint,
+    "bumped": bumped,
     "children": children,
     "closed": closed,
     "contains": contains,

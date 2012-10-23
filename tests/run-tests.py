@@ -476,11 +476,8 @@ def pytest(test, wd, options, replacements):
     py3kswitch = options.py3k_warnings and ' -3' or ''
     cmd = '%s%s "%s"' % (PYTHON, py3kswitch, test)
     vlog("# Running", cmd)
-    return run(cmd, wd, options, replacements)
-
-def shtest(test, wd, options, replacements):
-    cmd = '%s "%s"' % (options.shell, test)
-    vlog("# Running", cmd)
+    if os.name == 'nt':
+        replacements.append((r'\r\n', '\n'))
     return run(cmd, wd, options, replacements)
 
 needescape = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\xff]').search
@@ -872,10 +869,7 @@ def runone(options, test):
         runner = tsttest
         ref = testpath
     else:
-        # do not try to run non-executable programs
-        if not os.access(testpath, os.X_OK):
-            return skip("not executable")
-        runner = shtest
+        return skip("unknown test type")
 
     # Make a tmp subdirectory to work in
     testtmp = os.environ["TESTTMP"] = os.environ["HOME"] = \

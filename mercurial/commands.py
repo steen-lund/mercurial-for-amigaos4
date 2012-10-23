@@ -790,12 +790,11 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
     cur   = repo.changectx('.').node()
 
     def checkformat(mark):
-        if "\n" in mark:
-            raise util.Abort(_("bookmark name cannot contain newlines"))
         mark = mark.strip()
         if not mark:
             raise util.Abort(_("bookmark names cannot consist entirely of "
                                "whitespace"))
+        scmutil.checknewlabel(repo, mark, 'bookmark')
         return mark
 
     def checkconflict(repo, mark, force=False):
@@ -850,30 +849,32 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
         if not inactive and cur == marks[mark]:
             bookmarks.setcurrent(repo, mark)
         bookmarks.write(repo)
-        return
 
-    else: # mark is None
-        if len(marks) == 0:
-            ui.status(_("no bookmarks set\n"))
-        elif inactive:
-            if not repo._bookmarkcurrent:
-                ui.status(_("no active bookmark\n"))
-            else:
-                bookmarks.setcurrent(repo, None)
+    # Same message whether trying to deactivate the current bookmark (-i
+    # with no NAME) or listing bookmarks
+    elif len(marks) == 0:
+        ui.status(_("no bookmarks set\n"))
+
+    elif inactive:
+        if not repo._bookmarkcurrent:
+            ui.status(_("no active bookmark\n"))
         else:
-            for bmark, n in sorted(marks.iteritems()):
-                current = repo._bookmarkcurrent
-                if bmark == current and n == cur:
-                    prefix, label = '*', 'bookmarks.current'
-                else:
-                    prefix, label = ' ', ''
+            bookmarks.setcurrent(repo, None)
 
-                if ui.quiet:
-                    ui.write("%s\n" % bmark, label=label)
-                else:
-                    ui.write(" %s %-25s %d:%s\n" % (
-                        prefix, bmark, repo.changelog.rev(n), hexfn(n)),
-                        label=label)
+    else: # show bookmarks
+        for bmark, n in sorted(marks.iteritems()):
+            current = repo._bookmarkcurrent
+            if bmark == current and n == cur:
+                prefix, label = '*', 'bookmarks.current'
+            else:
+                prefix, label = ' ', ''
+
+            if ui.quiet:
+                ui.write("%s\n" % bmark, label=label)
+            else:
+                ui.write(" %s %-25s %d:%s\n" % (
+                    prefix, bmark, repo.changelog.rev(n), hexfn(n)),
+                    label=label)
 
 @command('branch',
     [('f', 'force', None,
@@ -2083,7 +2084,9 @@ def debugknown(ui, repopath, *ids, **opts):
     flags = repo.known([bin(s) for s in ids])
     ui.write("%s\n" % ("".join([f and "1" or "0" for f in flags])))
 
-@command('debugobsolete', [] + commitopts2,
+@command('debugobsolete',
+        [('', 'flags', 0, _('markers flag')),
+        ] + commitopts2,
          _('[OBSOLETED [REPLACEMENT] [REPL... ]'))
 def debugobsolete(ui, repo, precursor=None, *successors, **opts):
     """create arbitrary obsolete marker"""
@@ -2110,8 +2113,8 @@ def debugobsolete(ui, repo, precursor=None, *successors, **opts):
         try:
             tr = repo.transaction('debugobsolete')
             try:
-                repo.obsstore.create(tr, parsenodeid(precursor), succs, 0,
-                                     metadata)
+                repo.obsstore.create(tr, parsenodeid(precursor), succs,
+                                     opts['flags'], metadata)
                 tr.close()
             finally:
                 tr.release()
@@ -2994,16 +2997,17 @@ def grep(ui, repo, pattern, *pats, **opts):
         else:
             iter = [('', l) for l in states]
         for change, l in iter:
-            cols = [fn, str(rev)]
+            cols = [(fn, 'grep.filename'), (str(rev), 'grep.rev')]
             before, match, after = None, None, None
+
             if opts.get('line_number'):
-                cols.append(str(l.linenum))
+                cols.append((str(l.linenum), 'grep.linenumber'))
             if opts.get('all'):
-                cols.append(change)
+                cols.append((change, 'grep.change'))
             if opts.get('user'):
-                cols.append(ui.shortuser(ctx.user()))
+                cols.append((ui.shortuser(ctx.user()), 'grep.user'))
             if opts.get('date'):
-                cols.append(datefunc(ctx.date()))
+                cols.append((datefunc(ctx.date()), 'grep.date'))
             if opts.get('files_with_matches'):
                 c = (fn, rev)
                 if c in filerevmatches:
@@ -3013,12 +3017,16 @@ def grep(ui, repo, pattern, *pats, **opts):
                 before = l.line[:l.colstart]
                 match = l.line[l.colstart:l.colend]
                 after = l.line[l.colend:]
-            ui.write(sep.join(cols))
+            for col, label in cols[:-1]:
+                ui.write(col, label=label)
+                ui.write(sep, label='grep.sep')
+            ui.write(cols[-1][0], label=cols[-1][1])
             if before is not None:
+                ui.write(sep, label='grep.sep')
                 if not opts.get('text') and binary():
-                    ui.write(sep + " Binary file matches")
+                    ui.write(" Binary file matches")
                 else:
-                    ui.write(sep + before)
+                    ui.write(before)
                     ui.write(match, label='grep.match')
                     ui.write(after)
             ui.write(eol)
@@ -3257,8 +3265,12 @@ def help_(ui, name=None, unknowncmd=False, full=True, **opts):
                 rst.append(_('\nuse "hg help %s" to show the full help text\n')
                            % name)
             elif not ui.quiet:
-                rst.append(_('\nuse "hg -v help %s" to show more info\n')
-                           % name)
+                omitted = _('use "hg -v help %s" to show more complete'
+                            ' help and the global options') % name
+                notomitted = _('use "hg -v help %s" to show'
+                               ' the global options') % name
+                help.indicateomitted(rst, omitted, notomitted)
+
         return rst
 
 
@@ -3361,6 +3373,11 @@ def help_(ui, name=None, unknowncmd=False, full=True, **opts):
         if util.safehasattr(doc, '__call__'):
             rst += ["    %s\n" % l for l in doc().splitlines()]
 
+        if not ui.verbose:
+            omitted = (_('use "hg help -v %s" to show more complete help') %
+                       name)
+            help.indicateomitted(rst, omitted)
+
         try:
             cmdutil.findcmd(name, table)
             rst.append(_('\nuse "hg help -c %s" to see help for '
@@ -3387,6 +3404,11 @@ def help_(ui, name=None, unknowncmd=False, full=True, **opts):
         if tail:
             rst.extend(tail.splitlines(True))
             rst.append('\n')
+
+        if not ui.verbose:
+            omitted = (_('use "hg help -v %s" to show more complete help') %
+                       name)
+            help.indicateomitted(rst, omitted)
 
         if mod:
             try:
@@ -3451,7 +3473,13 @@ def help_(ui, name=None, unknowncmd=False, full=True, **opts):
         rst.extend(helplist())
 
     keep = ui.verbose and ['verbose'] or []
-    formatted, pruned = minirst.format(''.join(rst), textwidth, keep=keep)
+    text = ''.join(rst)
+    formatted, pruned = minirst.format(text, textwidth, keep=keep)
+    if 'verbose' in pruned:
+        keep.append('omitted')
+    else:
+        keep.append('notomitted')
+    formatted, pruned = minirst.format(text, textwidth, keep=keep)
     ui.write(formatted)
 
 
@@ -5638,8 +5666,7 @@ def tag(ui, repo, name1, *names, **opts):
         if len(names) != len(set(names)):
             raise util.Abort(_('tag names must be unique'))
         for n in names:
-            if n in ['tip', '.', 'null']:
-                raise util.Abort(_("the name '%s' is reserved") % n)
+            scmutil.checknewlabel(repo, n, 'tag')
             if not n:
                 raise util.Abort(_('tag names cannot consist entirely of '
                                    'whitespace'))
@@ -5843,7 +5870,7 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
 
     # with no argument, we also move the current bookmark, if any
     movemarkfrom = None
-    if rev is None or node == '':
+    if rev is None:
         movemarkfrom = repo['.'].node()
 
     # if we defined a bookmark, we have to remember the original bookmark name

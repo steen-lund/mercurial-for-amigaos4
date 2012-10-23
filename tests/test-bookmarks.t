@@ -214,13 +214,28 @@ reject bookmark name with newline
 
   $ hg bookmark '
   > '
-  abort: bookmark name cannot contain newlines
+  abort: bookmark names cannot consist entirely of whitespace
   [255]
 
   $ hg bookmark -m Z '
   > '
-  abort: bookmark name cannot contain newlines
+  abort: bookmark names cannot consist entirely of whitespace
   [255]
+
+bookmark with reserved name
+
+  $ hg bookmark tip
+  abort: the name 'tip' is reserved
+  [255]
+
+  $ hg bookmark .
+  abort: the name '.' is reserved
+  [255]
+
+  $ hg bookmark null
+  abort: the name 'null' is reserved
+  [255]
+
 
 bookmark with existing name
 
@@ -287,7 +302,12 @@ bookmark name with whitespace only
 invalid bookmark
 
   $ hg bookmark 'foo:bar'
-  abort: bookmark 'foo:bar' contains illegal character
+  abort: ':' cannot be used in a bookmark name
+  [255]
+
+  $ hg bookmark 'foo
+  > bar'
+  abort: '\n' cannot be used in a bookmark name
   [255]
 
 the bookmark extension should be ignored now that it is part of core

@@ -27,6 +27,14 @@ def nochangesfound(ui, repo, excluded=None):
     else:
         ui.status(_("no changes found\n"))
 
+def checknewlabel(repo, lbl, kind):
+    if lbl in ['tip', '.', 'null']:
+        raise util.Abort(_("the name '%s' is reserved") % lbl)
+    for c in (':', '\0', '\n', '\r'):
+        if c in lbl:
+            raise util.Abort(_("%r cannot be used in a %s name") %
+                               (c, kind))
+
 def checkfilename(f):
     '''Check that the filename f is an acceptable filename for a tracked file'''
     if '\r' in f or '\n' in f:
@@ -340,21 +348,33 @@ class vfs(abstractvfs):
 
 opener = vfs
 
-class filtervfs(abstractvfs):
+class auditvfs(object):
+    def __init__(self, vfs):
+        self.vfs = vfs
+
+    def _getmustaudit(self):
+        return self.vfs.mustaudit
+
+    def _setmustaudit(self, onoff):
+        self.vfs.mustaudit = onoff
+
+    mustaudit = property(_getmustaudit, _setmustaudit)
+
+class filtervfs(abstractvfs, auditvfs):
     '''Wrapper vfs for filtering filenames with a function.'''
 
-    def __init__(self, opener, filter):
+    def __init__(self, vfs, filter):
+        auditvfs.__init__(self, vfs)
         self._filter = filter
-        self._orig = opener
 
     def __call__(self, path, *args, **kwargs):
-        return self._orig(self._filter(path), *args, **kwargs)
+        return self.vfs(self._filter(path), *args, **kwargs)
 
     def join(self, path):
         if path:
-            return self._orig.join(self._filter(path))
+            return self.vfs.join(self._filter(path))
         else:
-            return self._orig.join(path)
+            return self.vfs.join(path)
 
 filteropener = filtervfs
 

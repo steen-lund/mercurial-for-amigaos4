@@ -10,12 +10,6 @@ from mercurial.node import hex
 from mercurial import encoding, error, util, obsolete, phases
 import errno, os
 
-def valid(mark):
-    for c in (':', '\0', '\n', '\r'):
-        if c in mark:
-            return False
-    return True
-
 def read(repo):
     '''Parse .hg/bookmarks file and return a dictionary
 
@@ -79,10 +73,6 @@ def write(repo):
 
     if repo._bookmarkcurrent not in refs:
         setcurrent(repo, None)
-    for mark in refs.keys():
-        if not valid(mark):
-            raise util.Abort(_("bookmark '%s' contains illegal "
-                "character" % mark))
 
     wlock = repo.wlock()
     try:
@@ -113,9 +103,6 @@ def setcurrent(repo, mark):
 
     if mark not in repo._bookmarks:
         mark = ''
-    if not valid(mark):
-        raise util.Abort(_("bookmark '%s' contains illegal "
-            "character" % mark))
 
     wlock = repo.wlock()
     try:
@@ -279,8 +266,8 @@ def validdest(repo, old, new):
             for c in validdests:
                 if c.phase() > phases.public:
                     # obsolescence marker does not apply to public changeset
-                    succs.update(obsolete.anysuccessors(repo.obsstore,
-                                                        c.node()))
+                    succs.update(obsolete.allsuccessors(repo.obsstore,
+                                                        [c.node()]))
             validdests = set(repo.set('%ln::', succs))
         validdests.remove(old)
         return new in validdests

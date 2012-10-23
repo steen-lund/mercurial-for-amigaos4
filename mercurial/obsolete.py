@@ -102,6 +102,37 @@ _fmnode = '20s'
 _fmfsize = struct.calcsize(_fmfixed)
 _fnodesize = struct.calcsize(_fmnode)
 
+### obsolescence marker flag
+
+## bumpedfix flag
+#
+# When a changeset A' succeed to a changeset A which became public, we call A'
+# "bumped" because it's a successors of a public changesets
+#
+# o    A' (bumped)
+# |`:
+# | o  A
+# |/
+# o    Z
+#
+# The way to solve this situation is to create a new changeset Ad as children
+# of A. This changeset have the same content than A'. So the diff from A to A'
+# is the same than the diff from A to Ad. Ad is marked as a successors of A'
+#
+# o   Ad
+# |`:
+# | x A'
+# |'|
+# o | A
+# |/
+# o Z
+#
+# But by transitivity Ad is also a successors of A. To avoid having Ad marked
+# as bumped too, we add the `bumpedfix` flag to the marker. <A', (Ad,)>.
+# This flag mean that the successors are an interdiff that fix the bumped
+# situation, breaking the transitivity of "bumped" here.
+bumpedfix = 1
+
 def _readmarkers(data):
     """Read and enumerate markers from raw data"""
     off = 0
@@ -351,22 +382,37 @@ def successormarkers(ctx):
     for data in ctx._repo.obsstore.successors.get(ctx.node(), ()):
         yield marker(ctx._repo, data)
 
-def anysuccessors(obsstore, node):
-    """Yield every successor of <node>
+def allsuccessors(obsstore, nodes, ignoreflags=0):
+    """Yield node for every successor of <nodes>.
+
+    Some successors may be unknown locally.
 
     This is a linear yield unsuited to detecting split changesets."""
-    remaining = set([node])
+    remaining = set(nodes)
     seen = set(remaining)
     while remaining:
         current = remaining.pop()
         yield current
         for mark in obsstore.successors.get(current, ()):
+            # ignore marker flagged with with specified flag
+            if mark[2] & ignoreflags:
+                continue
             for suc in mark[1]:
                 if suc not in seen:
                     seen.add(suc)
                     remaining.add(suc)
 
-# mapping of 'set-name' -> <function to computer this set>
+def _knownrevs(repo, nodes):
+    """yield revision numbers of known nodes passed in parameters
+
+    Unknown revisions are silently ignored."""
+    torev = repo.changelog.nodemap.get
+    for n in nodes:
+        rev = torev(n)
+        if rev is not None:
+            yield rev
+
+# mapping of 'set-name' -> <function to compute this set>
 cachefuncs = {}
 def cachefor(name):
     """Decorator to register a function as computing the cache for a set"""
@@ -376,7 +422,7 @@ def cachefor(name):
         return func
     return decorator
 
-def getobscache(repo, name):
+def getrevs(repo, name):
     """Return the set of revision that belong to the <name> set
 
     Such access may compute the set and cache it for future use"""
@@ -429,6 +475,19 @@ def _computesuspendedset(repo):
 def _computeextinctset(repo):
     """the set of obsolete parents without non obsolete descendants"""
     return set(repo.revs('obsolete() - obsolete()::unstable()'))
+
+
+@cachefor('bumped')
+def _computebumpedset(repo):
+    """the set of revs trying to obsolete public revisions"""
+    # get all possible bumped changesets
+    tonode = repo.changelog.node
+    publicnodes = (tonode(r) for r in repo.revs('public()'))
+    successors = allsuccessors(repo.obsstore, publicnodes,
+                               ignoreflags=bumpedfix)
+    # revision public or already obsolete don't count as bumped
+    query = '%ld - obsolete() - public()'
+    return set(repo.revs(query, _knownrevs(repo, successors)))
 
 def createmarkers(repo, relations, flag=0, metadata=None):
     """Add obsolete markers between changesets in a repo
