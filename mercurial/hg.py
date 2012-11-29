@@ -171,11 +171,14 @@ def share(ui, source, dest=None, update=True):
     r = repository(ui, root)
 
     default = srcrepo.ui.config('paths', 'default')
-    if default:
-        fp = r.opener("hgrc", "w", text=True)
-        fp.write("[paths]\n")
-        fp.write("default = %s\n" % default)
-        fp.close()
+    if not default:
+        # set default to source for being able to clone subrepos
+        default = os.path.abspath(util.urllocalpath(origsource))
+    fp = r.opener("hgrc", "w", text=True)
+    fp.write("[paths]\n")
+    fp.write("default = %s\n" % default)
+    fp.close()
+    r.ui.setconfig('paths', 'default', default)
 
     if update:
         r.ui.status(_("updating working directory\n"))
@@ -391,14 +394,15 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
         destrepo = destpeer.local()
         if destrepo and srcpeer.capable("pushkey"):
             rb = srcpeer.listkeys('bookmarks')
+            marks = destrepo._bookmarks
             for k, n in rb.iteritems():
                 try:
                     m = destrepo.lookup(n)
-                    destrepo._bookmarks[k] = m
+                    marks[k] = m
                 except error.RepoLookupError:
                     pass
             if rb:
-                bookmarks.write(destrepo)
+                marks.write()
         elif srcrepo and destpeer.capable("pushkey"):
             for k, n in srcrepo._bookmarks.iteritems():
                 destpeer.pushkey('bookmarks', k, '', hex(n))
