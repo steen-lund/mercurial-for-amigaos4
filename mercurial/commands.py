@@ -549,6 +549,10 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
           hg bisect --skip
           hg bisect --skip 23
 
+      - skip all revisions that do not touch directories ``foo`` or ``bar``
+
+          hg bisect --skip '!( file("path:foo") & file("path:bar") )'
+
       - forget the current bisection::
 
           hg bisect --reset
@@ -821,7 +825,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
         if mark == repo._bookmarkcurrent:
             bookmarks.setcurrent(repo, None)
         del marks[mark]
-        bookmarks.write(repo)
+        marks.write()
 
     elif rename:
         if mark is None:
@@ -834,7 +838,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
         if repo._bookmarkcurrent == rename and not inactive:
             bookmarks.setcurrent(repo, mark)
         del marks[rename]
-        bookmarks.write(repo)
+        marks.write()
 
     elif mark is not None:
         mark = checkformat(mark)
@@ -848,7 +852,7 @@ def bookmark(ui, repo, mark=None, rev=None, force=False, delete=False,
             marks[mark] = cur
         if not inactive and cur == marks[mark]:
             bookmarks.setcurrent(repo, mark)
-        bookmarks.write(repo)
+        marks.write()
 
     # Same message whether trying to deactivate the current bookmark (-i
     # with no NAME) or listing bookmarks
@@ -1322,11 +1326,12 @@ def commit(ui, repo, *pats, **opts):
         elif marks:
             ui.debug('moving bookmarks %r from %s to %s\n' %
                      (marks, old.hex(), hex(node)))
+            newmarks = repo._bookmarks
             for bm in marks:
-                repo._bookmarks[bm] = node
+                newmarks[bm] = node
                 if bm == current:
                     bookmarks.setcurrent(repo, bm)
-            bookmarks.write(repo)
+            newmarks.write()
     else:
         e = cmdutil.commiteditor
         if opts.get('force_editor'):
@@ -1513,7 +1518,7 @@ def debugbuilddag(ui, repo, text=None,
         ui.progress(_('building'), id, unit=_('revisions'), total=total)
         for type, data in dagparser.parsedag(text):
             if type == 'n':
-                ui.note('node %s\n' % str(data))
+                ui.note(('node %s\n' % str(data)))
                 id, ps = data
 
                 files = []
@@ -1574,10 +1579,10 @@ def debugbuilddag(ui, repo, text=None,
                 at = id
             elif type == 'l':
                 id, name = data
-                ui.note('tag %s\n' % name)
+                ui.note(('tag %s\n' % name))
                 tags.append("%s %s\n" % (hex(repo.changelog.node(id)), name))
             elif type == 'a':
-                ui.note('branch %s\n' % data)
+                ui.note(('branch %s\n' % data))
                 atbranch = data
             ui.progress(_('building'), id, unit=_('revisions'), total=total)
         tr.close()
@@ -1595,7 +1600,7 @@ def debugbundle(ui, bundlepath, all=None, **opts):
     try:
         gen = changegroup.readbundle(f, bundlepath)
         if all:
-            ui.write("format: id, p1, p2, cset, delta base, len(delta)\n")
+            ui.write(("format: id, p1, p2, cset, delta base, len(delta)\n"))
 
             def showchunks(named):
                 ui.write("\n%s\n" % named)
@@ -1787,11 +1792,11 @@ def debugdate(ui, date, range=None, **opts):
         d = util.parsedate(date, util.extendeddateformats)
     else:
         d = util.parsedate(date)
-    ui.write("internal: %s %s\n" % d)
-    ui.write("standard: %s\n" % util.datestr(d))
+    ui.write(("internal: %s %s\n") % d)
+    ui.write(("standard: %s\n") % util.datestr(d))
     if range:
         m = util.matchdate(range)
-        ui.write("match: %s\n" % m(d[0]))
+        ui.write(("match: %s\n") % m(d[0]))
 
 @command('debugdiscovery',
     [('', 'old', None, _('use old-style discovery')),
@@ -1821,7 +1826,7 @@ def debugdiscovery(ui, repo, remoteurl="default", **opts):
                                                                 force=True)
             common = set(common)
             if not opts.get('nonheads'):
-                ui.write("unpruned common: %s\n" % " ".join([short(n)
+                ui.write(("unpruned common: %s\n") % " ".join([short(n)
                                                             for n in common]))
                 dag = dagutil.revlogdag(repo.changelog)
                 all = dag.ancestorset(dag.internalizeall(common))
@@ -1831,11 +1836,11 @@ def debugdiscovery(ui, repo, remoteurl="default", **opts):
         common = set(common)
         rheads = set(hds)
         lheads = set(repo.heads())
-        ui.write("common heads: %s\n" % " ".join([short(n) for n in common]))
+        ui.write(("common heads: %s\n") % " ".join([short(n) for n in common]))
         if lheads <= common:
-            ui.write("local is subset\n")
+            ui.write(("local is subset\n"))
         elif rheads <= common:
-            ui.write("remote is subset\n")
+            ui.write(("remote is subset\n"))
 
     serverlogs = opts.get('serverlog')
     if serverlogs:
@@ -1879,9 +1884,9 @@ def debugfileset(ui, repo, expr, **opts):
 def debugfsinfo(ui, path = "."):
     """show information detected about current filesystem"""
     util.writefile('.debugfsinfo', '')
-    ui.write('exec: %s\n' % (util.checkexec(path) and 'yes' or 'no'))
-    ui.write('symlink: %s\n' % (util.checklink(path) and 'yes' or 'no'))
-    ui.write('case-sensitive: %s\n' % (util.checkcase('.debugfsinfo')
+    ui.write(('exec: %s\n') % (util.checkexec(path) and 'yes' or 'no'))
+    ui.write(('symlink: %s\n') % (util.checklink(path) and 'yes' or 'no'))
+    ui.write(('case-sensitive: %s\n') % (util.checkcase('.debugfsinfo')
                                 and 'yes' or 'no'))
     os.unlink('.debugfsinfo')
 
@@ -1979,7 +1984,7 @@ def debugindexdot(ui, repo, file_):
             r = filelog
     if not r:
         r = revlog.revlog(scmutil.opener(os.getcwd(), audit=False), file_)
-    ui.write("digraph G {\n")
+    ui.write(("digraph G {\n"))
     for i in r:
         node = r.node(i)
         pp = r.parents(node)
@@ -2325,52 +2330,54 @@ def debugrevlog(ui, repo, file_ = None, **opts):
     def pcfmt(value, total):
         return (value, 100 * float(value) / total)
 
-    ui.write('format : %d\n' % format)
-    ui.write('flags  : %s\n' % ', '.join(flags))
+    ui.write(('format : %d\n') % format)
+    ui.write(('flags  : %s\n') % ', '.join(flags))
 
     ui.write('\n')
     fmt = pcfmtstr(totalsize)
     fmt2 = dfmtstr(totalsize)
-    ui.write('revisions     : ' + fmt2 % numrevs)
-    ui.write('    merges    : ' + fmt % pcfmt(nummerges, numrevs))
-    ui.write('    normal    : ' + fmt % pcfmt(numrevs - nummerges, numrevs))
-    ui.write('revisions     : ' + fmt2 % numrevs)
-    ui.write('    full      : ' + fmt % pcfmt(numfull, numrevs))
-    ui.write('    deltas    : ' + fmt % pcfmt(numdeltas, numrevs))
-    ui.write('revision size : ' + fmt2 % totalsize)
-    ui.write('    full      : ' + fmt % pcfmt(fulltotal, totalsize))
-    ui.write('    deltas    : ' + fmt % pcfmt(deltatotal, totalsize))
+    ui.write(('revisions     : ') + fmt2 % numrevs)
+    ui.write(('    merges    : ') + fmt % pcfmt(nummerges, numrevs))
+    ui.write(('    normal    : ') + fmt % pcfmt(numrevs - nummerges, numrevs))
+    ui.write(('revisions     : ') + fmt2 % numrevs)
+    ui.write(('    full      : ') + fmt % pcfmt(numfull, numrevs))
+    ui.write(('    deltas    : ') + fmt % pcfmt(numdeltas, numrevs))
+    ui.write(('revision size : ') + fmt2 % totalsize)
+    ui.write(('    full      : ') + fmt % pcfmt(fulltotal, totalsize))
+    ui.write(('    deltas    : ') + fmt % pcfmt(deltatotal, totalsize))
 
     ui.write('\n')
     fmt = dfmtstr(max(avgchainlen, compratio))
-    ui.write('avg chain length  : ' + fmt % avgchainlen)
-    ui.write('compression ratio : ' + fmt % compratio)
+    ui.write(('avg chain length  : ') + fmt % avgchainlen)
+    ui.write(('compression ratio : ') + fmt % compratio)
 
     if format > 0:
         ui.write('\n')
-        ui.write('uncompressed data size (min/max/avg) : %d / %d / %d\n'
+        ui.write(('uncompressed data size (min/max/avg) : %d / %d / %d\n')
                  % tuple(datasize))
-    ui.write('full revision size (min/max/avg)     : %d / %d / %d\n'
+    ui.write(('full revision size (min/max/avg)     : %d / %d / %d\n')
              % tuple(fullsize))
-    ui.write('delta size (min/max/avg)             : %d / %d / %d\n'
+    ui.write(('delta size (min/max/avg)             : %d / %d / %d\n')
              % tuple(deltasize))
 
     if numdeltas > 0:
         ui.write('\n')
         fmt = pcfmtstr(numdeltas)
         fmt2 = pcfmtstr(numdeltas, 4)
-        ui.write('deltas against prev  : ' + fmt % pcfmt(numprev, numdeltas))
+        ui.write(('deltas against prev  : ') + fmt % pcfmt(numprev, numdeltas))
         if numprev > 0:
-            ui.write('    where prev = p1  : ' + fmt2 % pcfmt(nump1prev,
+            ui.write(('    where prev = p1  : ') + fmt2 % pcfmt(nump1prev,
                                                               numprev))
-            ui.write('    where prev = p2  : ' + fmt2 % pcfmt(nump2prev,
+            ui.write(('    where prev = p2  : ') + fmt2 % pcfmt(nump2prev,
                                                               numprev))
-            ui.write('    other            : ' + fmt2 % pcfmt(numoprev,
+            ui.write(('    other            : ') + fmt2 % pcfmt(numoprev,
                                                               numprev))
         if gdelta:
-            ui.write('deltas against p1    : ' + fmt % pcfmt(nump1, numdeltas))
-            ui.write('deltas against p2    : ' + fmt % pcfmt(nump2, numdeltas))
-            ui.write('deltas against other : ' + fmt % pcfmt(numother,
+            ui.write(('deltas against p1    : ')
+                     + fmt % pcfmt(nump1, numdeltas))
+            ui.write(('deltas against p2    : ')
+                     + fmt % pcfmt(nump2, numdeltas))
+            ui.write(('deltas against other : ') + fmt % pcfmt(numother,
                                                              numdeltas))
 
 @command('debugrevspec', [], ('REVSPEC'))
@@ -2448,9 +2455,9 @@ def debugstate(ui, repo, nodates=None, datesort=None):
 def debugsub(ui, repo, rev=None):
     ctx = scmutil.revsingle(repo, rev, None)
     for k, v in sorted(ctx.substate.items()):
-        ui.write('path %s\n' % k)
-        ui.write(' source   %s\n' % v[0])
-        ui.write(' revision %s\n' % v[1])
+        ui.write(('path %s\n') % k)
+        ui.write((' source   %s\n') % v[0])
+        ui.write((' revision %s\n') % v[1])
 
 @command('debugwalk', walkopts, _('[OPTION]... [FILE]...'))
 def debugwalk(ui, repo, *pats, **opts):
@@ -4207,6 +4214,9 @@ def manifest(ui, repo, node=None, rev=None, **opts):
 
     Returns 0 on success.
     """
+
+    fm = ui.formatter('manifest', opts)
+
     if opts.get('all'):
         if rev or node:
             raise util.Abort(_("can't specify a revision with --all"))
@@ -4224,7 +4234,9 @@ def manifest(ui, repo, node=None, rev=None, **opts):
         finally:
             lock.release()
         for f in res:
-            ui.write("%s\n" % f)
+            fm.startitem()
+            fm.write("path", '%s\n', f)
+        fm.end()
         return
 
     if rev and node:
@@ -4233,14 +4245,17 @@ def manifest(ui, repo, node=None, rev=None, **opts):
     if not node:
         node = rev
 
-    decor = {'l':'644 @ ', 'x':'755 * ', '':'644   '}
+    char = {'l': '@', 'x': '*', '': ''}
+    mode = {'l': '644', 'x': '755', '': '644'}
     ctx = scmutil.revsingle(repo, node)
+    mf = ctx.manifest()
     for f in ctx:
-        if ui.debugflag:
-            ui.write("%40s " % hex(ctx.manifest()[f]))
-        if ui.verbose:
-            ui.write(decor[ctx.flags(f)])
-        ui.write("%s\n" % f)
+        fm.startitem()
+        fl = ctx[f].flags()
+        fm.condwrite(ui.debugflag, 'hash', '%s ', hex(mf[f]))
+        fm.condwrite(ui.verbose, 'mode type', '%s %1s ', mode[fl], char[fl])
+        fm.write('path', '%s\n', f)
+    fm.end()
 
 @command('^merge',
     [('f', 'force', None, _('force a merge with outstanding changes')),
@@ -4666,11 +4681,12 @@ def pull(ui, repo, source="default", **opts):
 
     # update specified bookmarks
     if opts.get('bookmark'):
+        marks = repo._bookmarks
         for b in opts['bookmark']:
             # explicit pull overrides local bookmark if any
             ui.status(_("importing bookmark %s\n") % b)
-            repo._bookmarks[b] = repo[rb[b]].node()
-        bookmarks.write(repo)
+            marks[b] = repo[rb[b]].node()
+        marks.write()
 
     return ret
 
@@ -5427,17 +5443,16 @@ def status(ui, repo, *pats, **opts):
         copy = copies.pathcopies(repo[node1], repo[node2])
 
     fm = ui.formatter('status', opts)
-    format = '%s %s' + end
-    if opts.get('no_status'):
-        format = '%.0s%s' + end
+    fmt = '%s' + end
+    showchar = not opts.get('no_status')
 
     for state, char, files in changestates:
         if state in show:
             label = 'status.' + state
             for f in files:
                 fm.startitem()
-                fm.write("status path", format, char,
-                         repo.pathto(f, cwd), label=label)
+                fm.condwrite(showchar, 'status', '%s ', char, label=label)
+                fm.write('path', fmt, repo.pathto(f, cwd), label=label)
                 if f in copy:
                     fm.write("copy", '  %s' + end, repo.pathto(copy[f], cwd),
                              label='status.copied')
@@ -5743,7 +5758,7 @@ def tag(ui, repo, name1, *names, **opts):
         release(lock, wlock)
 
 @command('tags', [], '')
-def tags(ui, repo):
+def tags(ui, repo, **opts):
     """list repository tags
 
     This lists both regular and local tags. When the -v/--verbose
@@ -5752,27 +5767,27 @@ def tags(ui, repo):
     Returns 0 on success.
     """
 
+    fm = ui.formatter('tags', opts)
     hexfunc = ui.debugflag and hex or short
     tagtype = ""
 
     for t, n in reversed(repo.tagslist()):
-        if ui.quiet:
-            ui.write("%s\n" % t, label='tags.normal')
-            continue
-
         hn = hexfunc(n)
-        r = "%5d:%s" % (repo.changelog.rev(n), hn)
-        rev = ui.label(r, 'log.changeset changeset.%s' % repo[n].phasestr())
-        spaces = " " * (30 - encoding.colwidth(t))
+        label = 'tags.normal'
+        tagtype = ''
+        if repo.tagtype(t) == 'local':
+            label = 'tags.local'
+            tagtype = 'local'
 
-        tag = ui.label(t, 'tags.normal')
-        if ui.verbose:
-            if repo.tagtype(t) == 'local':
-                tagtype = " local"
-                tag = ui.label(t, 'tags.local')
-            else:
-                tagtype = ""
-        ui.write("%s%s %s%s\n" % (tag, spaces, rev, tagtype))
+        fm.startitem()
+        fm.write('tag', '%s', t, label=label)
+        fmt = " " * (30 - encoding.colwidth(t)) + ' %5d:%s'
+        fm.condwrite(not ui.quiet, 'rev id', fmt,
+                     repo.changelog.rev(n), hn, label=label)
+        fm.condwrite(ui.verbose and tagtype, 'type', ' %s',
+                     tagtype, label=label)
+        fm.plain('\n')
+    fm.end()
 
 @command('tip',
     [('p', 'patch', None, _('show patch')),
