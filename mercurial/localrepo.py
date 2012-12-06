@@ -18,10 +18,44 @@ import weakref, errno, os, time, inspect
 propertycache = util.propertycache
 filecache = scmutil.filecache
 
-class storecache(filecache):
+class repofilecache(filecache):
+    """All filecache usage on repo are done for logic that should be unfiltered
+    """
+
+    def __get__(self, repo, type=None):
+        return super(repofilecache, self).__get__(repo.unfiltered(), type)
+    def __set__(self, repo, value):
+        return super(repofilecache, self).__set__(repo.unfiltered(), value)
+    def __delete__(self, repo):
+        return super(repofilecache, self).__delete__(repo.unfiltered())
+
+class storecache(repofilecache):
     """filecache for files in the store"""
     def join(self, obj, fname):
         return obj.sjoin(fname)
+
+class unfilteredpropertycache(propertycache):
+    """propertycache that apply to unfiltered repo only"""
+
+    def __get__(self, repo, type=None):
+        return super(unfilteredpropertycache, self).__get__(repo.unfiltered())
+
+class filteredpropertycache(propertycache):
+    """propertycache that must take filtering in account"""
+
+    def cachevalue(self, obj, value):
+        object.__setattr__(obj, self.name, value)
+
+
+def hasunfilteredcache(repo, name):
+    """check if an repo and a unfilteredproperty cached value for <name>"""
+    return name in vars(repo.unfiltered())
+
+def unfilteredmethod(orig):
+    """decorate method that always need to be run on unfiltered version"""
+    def wrapper(repo, *args, **kwargs):
+        return orig(repo.unfiltered(), *args, **kwargs)
+    return wrapper
 
 MODERNCAPS = set(('lookup', 'branchmap', 'pushkey', 'known', 'getbundle'))
 LEGACYCAPS = MODERNCAPS.union(set(['changegroupsubset']))
@@ -263,16 +297,19 @@ class localrepository(object):
     def peer(self):
         return localpeer(self) # not cached to avoid reference cycle
 
-    @filecache('bookmarks')
-    def _bookmarks(self):
-        return bookmarks.read(self)
+    def unfiltered(self):
+        """Return unfiltered version of the repository
 
-    @filecache('bookmarks.current')
+        Intended to be ovewritten by filtered repo."""
+        return self
+
+    @repofilecache('bookmarks')
+    def _bookmarks(self):
+        return bookmarks.bmstore(self)
+
+    @repofilecache('bookmarks.current')
     def _bookmarkcurrent(self):
         return bookmarks.readcurrent(self)
-
-    def _writebookmarks(self, marks):
-        bookmarks.write(self)
 
     def bookmarkheads(self, bookmark):
         name = bookmark.split('@', 1)[0]
@@ -295,7 +332,7 @@ class localrepository(object):
             self.ui.warn(msg % len(list(store)))
         return store
 
-    @propertycache
+    @unfilteredpropertycache
     def hiddenrevs(self):
         """hiddenrevs: revs that should be hidden by command and tools
 
@@ -329,7 +366,7 @@ class localrepository(object):
     def manifest(self):
         return manifest.manifest(self.sopener)
 
-    @filecache('dirstate')
+    @repofilecache('dirstate')
     def dirstate(self):
         warned = [0]
         def validate(node):
@@ -385,6 +422,7 @@ class localrepository(object):
     def hook(self, name, throw=False, **args):
         return hook.hook(self.ui, self, name, throw, **args)
 
+    @unfilteredmethod
     def _tag(self, names, node, message, local, user, date, extra={}):
         if isinstance(names, str):
             names = (names,)
@@ -482,7 +520,7 @@ class localrepository(object):
         self.tags() # instantiate the cache
         self._tag(names, node, message, local, user, date)
 
-    @propertycache
+    @filteredpropertycache
     def _tagscache(self):
         '''Returns a tagscache object that contains various tags related
         caches.'''
@@ -604,6 +642,7 @@ class localrepository(object):
 
         return partial
 
+    @unfilteredmethod # Until we get a smarter cache management
     def updatebranchcache(self):
         tip = self.changelog.tip()
         if self._branchcache is not None and self._branchcachetip == tip:
@@ -656,6 +695,7 @@ class localrepository(object):
             bt[bn] = self._branchtip(heads)
         return bt
 
+    @unfilteredmethod # Until we get a smarter cache management
     def _readbranchcache(self):
         partial = {}
         try:
@@ -688,6 +728,7 @@ class localrepository(object):
             partial, last, lrev = {}, nullid, nullrev
         return partial, last, lrev
 
+    @unfilteredmethod # Until we get a smarter cache management
     def _writebranchcache(self, branches, tip, tiprev):
         try:
             f = self.opener("cache/branchheads", "w", atomictemp=True)
@@ -699,6 +740,7 @@ class localrepository(object):
         except (IOError, OSError):
             pass
 
+    @unfilteredmethod # Until we get a smarter cache management
     def _updatebranchcache(self, partial, ctxgen):
         """Given a branchhead cache, partial, that may have extra nodes or be
         missing heads, and a generator of nodes that are at least a superset of
@@ -865,11 +907,11 @@ class localrepository(object):
 
         return data
 
-    @propertycache
+    @unfilteredpropertycache
     def _encodefilterpats(self):
         return self._loadfilter('encode')
 
-    @propertycache
+    @unfilteredpropertycache
     def _decodefilterpats(self):
         return self._loadfilter('decode')
 
@@ -964,6 +1006,7 @@ class localrepository(object):
         finally:
             release(lock, wlock)
 
+    @unfilteredmethod # Until we get smarter cache management
     def _rollback(self, dryrun, force):
         ui = self.ui
         try:
@@ -1034,16 +1077,13 @@ class localrepository(object):
         return 0
 
     def invalidatecaches(self):
-        def delcache(name):
-            try:
-                delattr(self, name)
-            except AttributeError:
-                pass
 
-        delcache('_tagscache')
+        if '_tagscache' in vars(self):
+            # can't use delattr on proxy
+            del self.__dict__['_tagscache']
 
-        self._branchcache = None # in UTF-8
-        self._branchcachetip = None
+        self.unfiltered()._branchcache = None # in UTF-8
+        self.unfiltered()._branchcachetip = None
         obsolete.clearobscaches(self)
 
     def invalidatedirstate(self):
@@ -1055,22 +1095,23 @@ class localrepository(object):
         rereads the dirstate. Use dirstate.invalidate() if you want to
         explicitly read the dirstate again (i.e. restoring it to a previous
         known good state).'''
-        if 'dirstate' in self.__dict__:
+        if hasunfilteredcache(self, 'dirstate'):
             for k in self.dirstate._filecache:
                 try:
                     delattr(self.dirstate, k)
                 except AttributeError:
                     pass
-            delattr(self, 'dirstate')
+            delattr(self.unfiltered(), 'dirstate')
 
     def invalidate(self):
+        unfiltered = self.unfiltered() # all filecaches are stored on unfiltered
         for k in self._filecache:
             # dirstate is invalidated separately in invalidatedirstate()
             if k == 'dirstate':
                 continue
 
             try:
-                delattr(self, k)
+                delattr(unfiltered, k)
             except AttributeError:
                 pass
         self.invalidatecaches()
@@ -1111,7 +1152,7 @@ class localrepository(object):
 
         def unlock():
             self.store.write()
-            if '_phasecache' in vars(self):
+            if hasunfilteredcache(self, '_phasecache'):
                 self._phasecache.write()
             for k, ce in self._filecache.items():
                 if k == 'dirstate':
@@ -1224,6 +1265,7 @@ class localrepository(object):
 
         return fparent1
 
+    @unfilteredmethod
     def commit(self, text="", user=None, date=None, match=None, force=False,
                editor=False, extra={}):
         """Add a new revision to current repository.
@@ -1394,6 +1436,7 @@ class localrepository(object):
         self._afterlock(commithook)
         return ret
 
+    @unfilteredmethod
     def commitctx(self, ctx, error=False):
         """Add a new revision to current repository.
         Revision information is passed via the context argument.
@@ -1475,6 +1518,7 @@ class localrepository(object):
                 tr.release()
             lock.release()
 
+    @unfilteredmethod
     def destroyed(self, newheadnodes=None):
         '''Inform the repository that nodes have been destroyed.
         Intended for use by strip and rollback, so there's a common
@@ -1842,6 +1886,7 @@ class localrepository(object):
         if not remote.canpush():
             raise util.Abort(_("destination does not support push"))
         # get local lock as we might write phase data
+        unfi = self.unfiltered()
         locallock = self.lock()
         try:
             self.checkpush(force, revs)
@@ -1852,23 +1897,23 @@ class localrepository(object):
             try:
                 # discovery
                 fci = discovery.findcommonincoming
-                commoninc = fci(self, remote, force=force)
+                commoninc = fci(unfi, remote, force=force)
                 common, inc, remoteheads = commoninc
                 fco = discovery.findcommonoutgoing
-                outgoing = fco(self, remote, onlyheads=revs,
+                outgoing = fco(unfi, remote, onlyheads=revs,
                                commoninc=commoninc, force=force)
 
 
                 if not outgoing.missing:
                     # nothing to push
-                    scmutil.nochangesfound(self.ui, self, outgoing.excluded)
+                    scmutil.nochangesfound(unfi.ui, unfi, outgoing.excluded)
                     ret = None
                 else:
                     # something to push
                     if not force:
                         # if self.obsstore == False --> no obsolete
                         # then, save the iteration
-                        if self.obsstore:
+                        if unfi.obsstore:
                             # this message are here for 80 char limit reason
                             mso = _("push includes obsolete changeset: %s!")
                             msu = _("push includes unstable changeset: %s!")
@@ -1878,14 +1923,14 @@ class localrepository(object):
                             # least one of the missinghead will be obsolete or
                             # unstable. So checking heads only is ok
                             for node in outgoing.missingheads:
-                                ctx = self[node]
+                                ctx = unfi[node]
                                 if ctx.obsolete():
                                     raise util.Abort(mso % ctx)
                                 elif ctx.unstable():
                                     raise util.Abort(msu % ctx)
                                 elif ctx.bumped():
                                     raise util.Abort(msb % ctx)
-                        discovery.checkheads(self, remote, outgoing,
+                        discovery.checkheads(unfi, remote, outgoing,
                                              remoteheads, newbranch,
                                              bool(inc))
 
@@ -1938,7 +1983,7 @@ class localrepository(object):
                     cheads = [node for node in revs if node in common]
                     # and
                     # * commonheads parents on missing
-                    revset = self.set('%ln and parents(roots(%ln))',
+                    revset = unfi.set('%ln and parents(roots(%ln))',
                                      outgoing.commonheads,
                                      outgoing.missing)
                     cheads.extend(c.node() for c in revset)
@@ -1961,7 +2006,7 @@ class localrepository(object):
                     # Get the list of all revs draft on remote by public here.
                     # XXX Beware that revset break if droots is not strictly
                     # XXX root we may want to ensure it is but it is costly
-                    outdated =  self.set('heads((%ln::%ln) and public())',
+                    outdated =  unfi.set('heads((%ln::%ln) and public())',
                                          droots, cheads)
                     for newremotehead in outdated:
                         r = remote.pushkey('phases',
@@ -1992,12 +2037,12 @@ class localrepository(object):
         self.ui.debug("checking for updated bookmarks\n")
         rb = remote.listkeys('bookmarks')
         for k in rb.keys():
-            if k in self._bookmarks:
+            if k in unfi._bookmarks:
                 nr, nl = rb[k], hex(self._bookmarks[k])
-                if nr in self:
-                    cr = self[nr]
-                    cl = self[nl]
-                    if bookmarks.validdest(self, cr, cl):
+                if nr in unfi:
+                    cr = unfi[nr]
+                    cl = unfi[nl]
+                    if bookmarks.validdest(unfi, cr, cl):
                         r = remote.pushkey('bookmarks', k, nr, nl)
                         if r:
                             self.ui.status(_("updating bookmark %s\n") % k)
@@ -2068,6 +2113,7 @@ class localrepository(object):
         return self.getlocalbundle(source,
                                    discovery.outgoing(cl, common, heads))
 
+    @unfilteredmethod
     def _changegroupsubset(self, commonrevs, csets, heads, source):
 
         cl = self.changelog
@@ -2179,6 +2225,7 @@ class localrepository(object):
         # to avoid a race we use changegroupsubset() (issue1320)
         return self.changegroupsubset(basenodes, self.heads(), source)
 
+    @unfilteredmethod
     def _changegroup(self, nodes, source):
         """Compute the changegroup of all nodes that we have that a recipient
         doesn't.  Return a chunkbuffer object whose read() method will return
@@ -2272,6 +2319,7 @@ class localrepository(object):
 
         return changegroup.unbundle10(util.chunkbuffer(gengroup()), 'UN')
 
+    @unfilteredmethod
     def addchangegroup(self, source, srctype, url, emptyok=False):
         """Add the changegroup returned by source.read() to this repo.
         srctype is a string like 'push', 'pull', or 'unbundle'.  url is
