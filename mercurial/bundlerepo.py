@@ -33,6 +33,7 @@ class bundlerevlog(revlog.revlog):
         self.basemap = {}
         n = len(self)
         chain = None
+        self.bundlenodes = []
         while True:
             chunkdata = bundle.deltachunk(chain)
             if not chunkdata:
@@ -48,6 +49,7 @@ class bundlerevlog(revlog.revlog):
             start = bundle.tell() - size
 
             link = linkmapper(cs)
+            self.bundlenodes.append(node)
             if node in self.nodemap:
                 # this can happen if two branches make the same change
                 chain = node
@@ -212,7 +214,7 @@ class bundlerepository(localrepo.localrepository):
         # dict with the mapping 'filename' -> position in the bundle
         self.bundlefilespos = {}
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def changelog(self):
         # consume the header if it exists
         self.bundle.changelogheader()
@@ -220,7 +222,7 @@ class bundlerepository(localrepo.localrepository):
         self.manstart = self.bundle.tell()
         return c
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def manifest(self):
         self.bundle.seek(self.manstart)
         # consume the header if it exists
@@ -229,12 +231,12 @@ class bundlerepository(localrepo.localrepository):
         self.filestart = self.bundle.tell()
         return m
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def manstart(self):
         self.changelog
         return self.manstart
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def filestart(self):
         self.manifest
         return self.filestart

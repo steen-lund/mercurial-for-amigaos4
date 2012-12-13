@@ -40,11 +40,11 @@ def perfwalk(ui, repo, *pats):
         except Exception:
             timer(lambda: len(list(cmdutil.walk(repo, pats, {}))))
 
-def perfstatus(ui, repo, *pats):
+def perfstatus(ui, repo, **opts):
     #m = match.always(repo.root, repo.getcwd())
     #timer(lambda: sum(map(len, repo.dirstate.status(m, [], False, False,
     #                                                False))))
-    timer(lambda: sum(map(len, repo.status())))
+    timer(lambda: sum(map(len, repo.status(**opts))))
 
 def clearcaches(cl):
     # behave somewhat consistently across internal API changes
@@ -228,6 +228,11 @@ def perfrevlog(ui, repo, file_, **opts):
 
     timer(d)
 
+def perfrevset(ui, repo, expr):
+    def d():
+        repo.revs(expr)
+    timer(d)
+
 cmdtable = {
     'perfcca': (perfcca, []),
     'perffncacheload': (perffncacheload, []),
@@ -238,7 +243,9 @@ cmdtable = {
     'perfnodelookup': (perfnodelookup, []),
     'perfparents': (perfparents, []),
     'perfstartup': (perfstartup, []),
-    'perfstatus': (perfstatus, []),
+    'perfstatus': (perfstatus,
+                   [('u', 'unknown', False,
+                     'ask status to look for unknown files')]),
     'perfwalk': (perfwalk, []),
     'perfmanifest': (perfmanifest, []),
     'perfchangeset': (perfchangeset, []),
@@ -256,4 +263,5 @@ cmdtable = {
     'perfrevlog': (perfrevlog,
                    [('d', 'dist', 100, 'distance between the revisions')],
                    "[INDEXFILE]"),
+    'perfrevset': (perfrevset, [], "REVSET")
 }

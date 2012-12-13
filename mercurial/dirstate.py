@@ -260,7 +260,6 @@ class dirstate(object):
         return copies
 
     def setbranch(self, branch):
-        # no repo object here, just check for reserved names
         self._branch = encoding.fromlocal(branch)
         f = self._opener('branch', 'w', atomictemp=True)
         try:
@@ -606,7 +605,7 @@ class dirstate(object):
             normalize = self._normalize
             skipstep3 = False
         else:
-            normalize = lambda x, y, z: x
+            normalize = None
 
         files = sorted(match.files())
         subrepos.sort()
@@ -627,7 +626,10 @@ class dirstate(object):
 
         # step 1: find all explicit files
         for ff in files:
-            nf = normalize(normpath(ff), False, True)
+            if normalize:
+                nf = normalize(normpath(ff), False, True)
+            else:
+                nf = normpath(ff)
             if nf in results:
                 continue
 
@@ -677,7 +679,10 @@ class dirstate(object):
                     continue
                 raise
             for f, kind, st in entries:
-                nf = normalize(nd and (nd + "/" + f) or f, True, True)
+                if normalize:
+                    nf = normalize(nd and (nd + "/" + f) or f, True, True)
+                else:
+                    nf = nd and (nd + "/" + f) or f
                 if nf not in results:
                     if kind == dirkind:
                         if not ignore(nf):
@@ -697,11 +702,9 @@ class dirstate(object):
         # step 3: report unseen items in the dmap hash
         if not skipstep3 and not exact:
             visit = sorted([f for f in dmap if f not in results and matchfn(f)])
-            for nf, st in zip(visit, util.statfiles([join(i) for i in visit])):
-                if (not st is None and
-                    getkind(st.st_mode) not in (regkind, lnkkind)):
-                    st = None
-                results[nf] = st
+            nf = iter(visit).next
+            for st in util.statfiles([join(i) for i in visit]):
+                results[nf()] = st
         for s in subrepos:
             del results[s]
         del results['.hg']
@@ -747,13 +750,19 @@ class dirstate(object):
         radd = removed.append
         dadd = deleted.append
         cadd = clean.append
+        mexact = match.exact
+        dirignore = self._dirignore
+        checkexec = self._checkexec
+        checklink = self._checklink
+        copymap = self._copymap
+        lastnormaltime = self._lastnormaltime
 
         lnkkind = stat.S_IFLNK
 
         for fn, st in self.walk(match, subrepos, listunknown,
                                 listignored).iteritems():
             if fn not in dmap:
-                if (listignored or match.exact(fn)) and self._dirignore(fn):
+                if (listignored or mexact(fn)) and dirignore(fn):
                     if listignored:
                         iadd(fn)
                 elif listunknown:
@@ -772,15 +781,15 @@ class dirstate(object):
                 mtime = int(st.st_mtime)
                 if (size >= 0 and
                     ((size != st.st_size and size != st.st_size & _rangemask)
-                     or ((mode ^ st.st_mode) & 0100 and self._checkexec))
-                    and (mode & lnkkind != lnkkind or self._checklink)
+                     or ((mode ^ st.st_mode) & 0100 and checkexec))
+                    and (mode & lnkkind != lnkkind or checklink)
                     or size == -2 # other parent
-                    or fn in self._copymap):
+                    or fn in copymap):
                     madd(fn)
                 elif ((time != mtime and time != mtime & _rangemask)
-                      and (mode & lnkkind != lnkkind or self._checklink)):
+                      and (mode & lnkkind != lnkkind or checklink)):
                     ladd(fn)
-                elif mtime == self._lastnormaltime:
+                elif mtime == lastnormaltime:
                     # fn may have been changed in the same timeslot without
                     # changing its size. This can happen if we quickly do
                     # multiple commits in a single transaction.
