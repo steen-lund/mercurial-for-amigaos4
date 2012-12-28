@@ -442,6 +442,19 @@ def bumped(repo, subset, x):
     bumped = obsmod.getrevs(repo, 'bumped')
     return [r for r in subset if r in bumped]
 
+def bundle(repo, subset, x):
+    """``bundle()``
+    Changesets in the bundle.
+
+    Bundle must be specified by the -R option."""
+
+    try:
+        bundlenodes = repo.changelog.bundlenodes
+    except AttributeError:
+        raise util.Abort(_("no bundle provided - specify with -R"))
+    revs = set(repo[n].rev() for n in bundlenodes)
+    return [r for r in subset if r in revs]
+
 def checkstatus(repo, subset, pat, field):
     m = None
     s = []
@@ -475,8 +488,13 @@ def checkstatus(repo, subset, pat, field):
 
 def _children(repo, narrow, parentset):
     cs = set()
+    if not parentset:
+        return cs
     pr = repo.changelog.parentrevs
+    minrev = min(parentset)
     for r in narrow:
+        if r <= minrev:
+            continue
         for p in pr(r):
             if p in parentset:
                 cs.add(r)
@@ -627,6 +645,15 @@ def destination(repo, subset, x):
             src = _getrevsource(repo, r)
 
     return [r for r in subset if r in dests]
+
+def divergent(repo, subset, x):
+    """``divergent()``
+    Final successors of changesets with an alternative set of final successors.
+    """
+    # i18n: "divergent" is a keyword
+    getargs(x, 0, 0, _("divergent takes no arguments"))
+    divergent = obsmod.getrevs(repo, 'divergent')
+    return [r for r in subset if r in divergent]
 
 def draft(repo, subset, x):
     """``draft()``
@@ -1513,6 +1540,7 @@ symbols = {
     "branch": branch,
     "branchpoint": branchpoint,
     "bumped": bumped,
+    "bundle": bundle,
     "children": children,
     "closed": closed,
     "contains": contains,
@@ -1522,6 +1550,7 @@ symbols = {
     "descendants": descendants,
     "_firstdescendants": _firstdescendants,
     "destination": destination,
+    "divergent": divergent,
     "draft": draft,
     "extinct": extinct,
     "extra": extra,

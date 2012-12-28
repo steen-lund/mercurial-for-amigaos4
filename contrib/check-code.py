@@ -133,9 +133,9 @@ pypats = [
     (r'\S;\s*\n', "semicolon"),
     (r'[^_]_\("[^"]+"\s*%', "don't use % inside _()"),
     (r"[^_]_\('[^']+'\s*%", "don't use % inside _()"),
-    (r'\w,\w', "missing whitespace after ,"),
-    (r'\w[+/*\-<>]\w', "missing whitespace in expression"),
-    (r'^\s+\w+=\w+[^,)\n]$', "missing whitespace in assignment"),
+    (r'(\w|\)),\w', "missing whitespace after ,"),
+    (r'(\w|\))[+/*\-<>]\w', "missing whitespace in expression"),
+    (r'^\s+(\w|\.)+=\w[^,()\n]*$', "missing whitespace in assignment"),
     (r'(\s+)try:\n((?:\n|\1\s.*\n)+?)\1except.*?:\n'
      r'((?:\n|\1\s.*\n)+?)\1finally:', 'no try/except/finally in Python 2.4'),
     (r'(\s+)try:\n((?:\n|\1\s.*\n)*?)\1\s*yield\b.*?'
@@ -211,11 +211,11 @@ pypats = [
     (r'\.strip\(\)\.split\(\)', "no need to strip before splitting"),
     (r'^\s*except\s*:', "warning: naked except clause", r'#.*re-raises'),
     (r':\n(    )*( ){1,3}[^ ]', "must indent 4 spaces"),
+    (r'ui\.(status|progress|write|note|warn)\([\'\"]x',
+     "missing _() in ui message (use () to hide false-positives)"),
   ],
   # warnings
   [
-    (r'ui\.(status|progress|write|note|warn)\([\'\"]x',
-     "warning: unwrapped ui message"),
   ]
 ]
 
