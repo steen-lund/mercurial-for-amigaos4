@@ -104,7 +104,6 @@ import errno
 from node import nullid, nullrev, bin, hex, short
 from i18n import _
 import util, error
-import obsolete
 
 allphases = public, draft, secret = range(3)
 trackedphases = allphases[1:]
@@ -139,6 +138,7 @@ def _readroots(repo, phasedefaults=None):
     Return (roots, dirty) where dirty is true if roots differ from
     what is being stored.
     """
+    repo = repo.unfiltered()
     dirty = False
     roots = [set() for i in allphases]
     try:
@@ -184,6 +184,7 @@ class phasecache(object):
 
     def getphaserevs(self, repo, rebuild=False):
         if rebuild or self._phaserevs is None:
+            repo = repo.unfiltered()
             revs = [public] * len(repo.changelog)
             for phase in trackedphases:
                 roots = map(repo.changelog.rev, self.phaseroots[phase])
@@ -228,6 +229,7 @@ class phasecache(object):
         # Be careful to preserve shallow-copied values: do not update
         # phaseroots values, replace them.
 
+        repo = repo.unfiltered()
         delroots = [] # set of root deleted by this path
         for phase in xrange(targetphase + 1, len(allphases)):
             # filter nodes that are not in a compatible phase already
@@ -245,12 +247,13 @@ class phasecache(object):
             # declare deleted root in the target phase
             if targetphase != 0:
                 self.retractboundary(repo, targetphase, delroots)
-        obsolete.clearobscaches(repo)
+        repo.invalidatevolatilesets()
 
     def retractboundary(self, repo, targetphase, nodes):
         # Be careful to preserve shallow-copied values: do not update
         # phaseroots values, replace them.
 
+        repo = repo.unfiltered()
         currentroots = self.phaseroots[targetphase]
         newroots = [n for n in nodes
                     if self.phase(repo, repo[n].rev()) < targetphase]
@@ -262,7 +265,7 @@ class phasecache(object):
             ctxs = repo.set('roots(%ln::)', currentroots)
             currentroots.intersection_update(ctx.node() for ctx in ctxs)
             self._updateroots(targetphase, currentroots)
-        obsolete.clearobscaches(repo)
+        repo.invalidatevolatilesets()
 
 def advanceboundary(repo, targetphase, nodes):
     """Add nodes to a phase changing other nodes phases if necessary.
@@ -316,6 +319,7 @@ def listphases(repo):
 
 def pushphase(repo, nhex, oldphasestr, newphasestr):
     """List phases root for serialization over pushkey"""
+    repo = repo.unfiltered()
     lock = repo.lock()
     try:
         currentphase = repo[nhex].phase()
@@ -340,6 +344,7 @@ def analyzeremotephases(repo, subset, roots):
 
     Accept unknown element input
     """
+    repo = repo.unfiltered()
     # build list from dictionary
     draftroots = []
     nodemap = repo.changelog.nodemap # to filter unknown nodes
@@ -367,6 +372,7 @@ def newheads(repo, heads, roots):
 
     * `heads`: define the first subset
     * `roots`: define the second we subtract from the first"""
+    repo = repo.unfiltered()
     revset = repo.set('heads((%ln + parents(%ln)) - (%ln::%ln))',
                       heads, roots, roots, heads)
     return [c.node() for c in revset]

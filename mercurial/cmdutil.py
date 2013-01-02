@@ -10,7 +10,7 @@ from i18n import _
 import os, sys, errno, re, tempfile
 import util, scmutil, templater, patch, error, templatekw, revlog, copies
 import match as matchmod
-import subrepo, context, repair, bookmarks, graphmod, revset, phases, obsolete
+import subrepo, context, repair, graphmod, revset, phases, obsolete
 import changelog
 import lock as lockmod
 
@@ -1399,39 +1399,18 @@ def getgraphlogrevs(repo, pats, opts):
     callable taking a revision number and returning a match objects
     filtering the files to be detailed when displaying the revision.
     """
-    def increasingrevs(repo, revs, matcher):
-        # The sorted input rev sequence is chopped in sub-sequences
-        # which are sorted in ascending order and passed to the
-        # matcher. The filtered revs are sorted again as they were in
-        # the original sub-sequence. This achieve several things:
-        #
-        # - getlogrevs() now returns a generator which behaviour is
-        #   adapted to log need. First results come fast, last ones
-        #   are batched for performances.
-        #
-        # - revset matchers often operate faster on revision in
-        #   changelog order, because most filters deal with the
-        #   changelog.
-        #
-        # - revset matchers can reorder revisions. "A or B" typically
-        #   returns returns the revision matching A then the revision
-        #   matching B. We want to hide this internal implementation
-        #   detail from the caller, and sorting the filtered revision
-        #   again achieves this.
-        for i, window in increasingwindows(0, len(revs), windowsize=1):
-            orevs = revs[i:i + window]
-            nrevs = set(matcher(repo, sorted(orevs)))
-            for rev in orevs:
-                if rev in nrevs:
-                    yield rev
-
     if not len(repo):
-        return iter([]), None, None
+        return [], None, None
+    limit = loglimit(opts)
     # Default --rev value depends on --follow but --follow behaviour
     # depends on revisions resolved from --rev...
     follow = opts.get('follow') or opts.get('follow_first')
+    possiblyunsorted = False # whether revs might need sorting
     if opts.get('rev'):
         revs = scmutil.revrange(repo, opts['rev'])
+        # Don't sort here because _makegraphlogrevset might depend on the
+        # order of revs
+        possiblyunsorted = True
     else:
         if follow and len(repo) > 0:
             revs = repo.revs('reverse(:.)')
@@ -1439,17 +1418,40 @@ def getgraphlogrevs(repo, pats, opts):
             revs = list(repo.changelog)
             revs.reverse()
     if not revs:
-        return iter([]), None, None
+        return [], None, None
     expr, filematcher = _makegraphlogrevset(repo, pats, opts, revs)
+    if possiblyunsorted:
+        revs.sort(reverse=True)
     if expr:
+        # Revset matchers often operate faster on revisions in changelog
+        # order, because most filters deal with the changelog.
+        revs.reverse()
         matcher = revset.match(repo.ui, expr)
-        revs = increasingrevs(repo, revs, matcher)
+        # Revset matches can reorder revisions. "A or B" typically returns
+        # returns the revision matching A then the revision matching B. Sort
+        # again to fix that.
+        revs = matcher(repo, revs)
+        revs.sort(reverse=True)
     if not opts.get('hidden'):
         # --hidden is still experimental and not worth a dedicated revset
         # yet. Fortunately, filtering revision number is fast.
-        revs = (r for r in revs if r not in repo.hiddenrevs)
-    else:
-        revs = iter(revs)
+        hiddenrevs = repo.hiddenrevs
+        nrevs = []
+        taken = 0
+        if limit is not None:
+            for i in xrange(len(revs)):
+                if taken >= limit:
+                    break
+                r = revs[i]
+                if r not in hiddenrevs:
+                    nrevs.append(r)
+                    taken += 1
+            revs = nrevs
+        else:
+            revs = [r for r in revs if r not in hiddenrevs]
+    elif limit is not None:
+        revs = revs[:limit]
+
     return revs, expr, filematcher
 
 def displaygraph(ui, dag, displayer, showparents, edgefn, getrenamed=None,
@@ -1484,10 +1486,6 @@ def displaygraph(ui, dag, displayer, showparents, edgefn, getrenamed=None,
 def graphlog(ui, repo, *pats, **opts):
     # Parameters are identical to log command ones
     revs, expr, filematcher = getgraphlogrevs(repo, pats, opts)
-    revs = sorted(revs, reverse=1)
-    limit = loglimit(opts)
-    if limit is not None:
-        revs = revs[:limit]
     revdag = graphmod.dagwalker(repo, revs)
 
     getrenamed = None
@@ -1762,9 +1760,10 @@ def amend(ui, repo, commitfunc, old, extra, pats, opts):
                 # Move bookmarks from old parent to amend commit
                 bms = repo.nodebookmarks(old.node())
                 if bms:
+                    marks = repo._bookmarks
                     for bm in bms:
-                        repo._bookmarks[bm] = newid
-                    bookmarks.write(repo)
+                        marks[bm] = newid
+                    marks.write()
             #commit the whole amend process
             if obsolete._enabled and newid != old.node():
                 # mark the new changeset as successor of the rewritten one

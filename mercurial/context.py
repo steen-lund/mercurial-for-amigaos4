@@ -25,8 +25,12 @@ class changectx(object):
         self._repo = repo
 
         if isinstance(changeid, int):
+            try:
+                self._node = repo.changelog.node(changeid)
+            except IndexError:
+                raise error.RepoLookupError(
+                    _("unknown revision '%s'") % changeid)
             self._rev = changeid
-            self._node = repo.changelog.node(changeid)
             return
         if isinstance(changeid, long):
             changeid = str(changeid)
@@ -95,7 +99,10 @@ class changectx(object):
 
         # lookup failed
         # check if it might have come from damaged dirstate
-        if changeid in repo.dirstate.parents():
+        #
+        # XXX we could avoid the unfiltered if we had a recognizable exception
+        # for filtered changeset access
+        if changeid in repo.unfiltered().dirstate.parents():
             raise error.Abort(_("working directory has unknown parent '%s'!")
                               % short(changeid))
         try:
@@ -250,6 +257,34 @@ class changectx(object):
         """
         return self.rev() in obsmod.getrevs(self._repo, 'bumped')
 
+    def divergent(self):
+        """Is a successors of a changeset with multiple possible successors set
+
+        Only non-public and non-obsolete changesets may be divergent.
+        """
+        return self.rev() in obsmod.getrevs(self._repo, 'divergent')
+
+    def troubled(self):
+        """True if the changeset is either unstable, bumped or divergent"""
+        return self.unstable() or self.bumped() or self.divergent()
+
+    def troubles(self):
+        """return the list of troubles affecting this changesets.
+
+        Troubles are returned as strings. possible values are:
+        - unstable,
+        - bumped,
+        - divergent.
+        """
+        troubles = []
+        if self.unstable():
+            troubles.append('unstable')
+        if self.bumped():
+            troubles.append('bumped')
+        if self.divergent():
+            troubles.append('divergent')
+        return troubles
+
     def _fileinfo(self, path):
         if '_manifest' in self.__dict__:
             try:
@@ -351,6 +386,9 @@ class changectx(object):
 
     def dirs(self):
         return self._dirs
+
+    def dirty(self):
+        return False
 
 class filectx(object):
     """A filecontext object makes access to data related to a particular

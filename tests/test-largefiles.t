@@ -17,8 +17,8 @@
   > EOF
 
 Create the repo with a couple of revisions of both large and normal
-files, testing that status correctly shows largefiles and that summary output
-is correct.
+files.
+Test status and dirstate of largefiles and that summary output is correct.
 
   $ hg init a
   $ cd a
@@ -35,6 +35,17 @@ is correct.
   A normal1
   A sub/large2
   A sub/normal2
+  $ touch large1 sub/large2
+  $ sleep 1
+  $ hg st
+  $ hg debugstate --nodates
+  n 644         41 .hglf/large1
+  n 644         41 .hglf/sub/large2
+  n 644          8 normal1
+  n 644          8 sub/normal2
+  $ hg debugstate --large
+  n 644          7 large1
+  n 644          7 sub/large2
   $ echo normal11 > normal1
   $ echo normal22 > sub/normal2
   $ echo large11 > large1
@@ -79,15 +90,25 @@ Test status, subdir and unknown files
   C sub/normal2
   $ rm sub/unknown
 
-Test exit codes for remove warning cases (modified and still exiting)
+Test messages and exit codes for remove warning cases
 
   $ hg remove -A large1
-  not removing large1: file still exists (use forget to undo)
+  not removing large1: file still exists
   [1]
   $ echo 'modified' > large1
   $ hg remove large1
-  not removing large1: file is modified (use forget to undo)
+  not removing large1: file is modified (use -f to force removal)
   [1]
+  $ echo 'new' > normalnew
+  $ hg add normalnew
+  $ echo 'new' > largenew
+  $ hg add --large normalnew
+  normalnew already tracked!
+  $ hg remove normalnew largenew
+  not removing largenew: file is untracked
+  not removing normalnew: file has been marked for add (use forget to undo)
+  [1]
+  $ rm normalnew largenew
   $ hg up -Cq
 
 Remove both largefiles and normal files.
@@ -895,24 +916,15 @@ The error messages go away if repo 'b' is created with --all-largefiles.
   M sub/normal4
   M sub2/large6
   saved backup bundle to $TESTTMP/d/.hg/strip-backup/f574fb32bb45-backup.hg (glob)
-  large3: can't get file locally
-  (no default or default-push path set in hgrc)
-  sub/large4: can't get file locally
-  (no default or default-push path set in hgrc)
-  large1: can't get file locally
-  (no default or default-push path set in hgrc)
-  sub/large2: can't get file locally
-  (no default or default-push path set in hgrc)
-  sub/large2: can't get file locally
-  (no default or default-push path set in hgrc)
-  large1: can't get file locally
-  (no default or default-push path set in hgrc)
-  sub/large2: can't get file locally
-  (no default or default-push path set in hgrc)
-  large1: can't get file locally
-  (no default or default-push path set in hgrc)
-  sub/large2: can't get file locally
-  (no default or default-push path set in hgrc)
+  error getting eb7338044dc27f9bc59b8dd5a246b065ead7a9c4 from file:$TESTTMP/b for large3: can't get file locally (glob)
+  error getting eb7338044dc27f9bc59b8dd5a246b065ead7a9c4 from file:$TESTTMP/b for sub/large4: can't get file locally (glob)
+  error getting eb7338044dc27f9bc59b8dd5a246b065ead7a9c4 from file:$TESTTMP/b for large1: can't get file locally (glob)
+  error getting eb7338044dc27f9bc59b8dd5a246b065ead7a9c4 from file:$TESTTMP/b for sub/large2: can't get file locally (glob)
+  error getting eb7338044dc27f9bc59b8dd5a246b065ead7a9c4 from file:$TESTTMP/b for sub/large2: can't get file locally (glob)
+  error getting 5f78770c0e77ba4287ad6ef3071c9bf9c379742f from file:$TESTTMP/b for large1: can't get file locally (glob)
+  error getting eb7338044dc27f9bc59b8dd5a246b065ead7a9c4 from file:$TESTTMP/b for sub/large2: can't get file locally (glob)
+  error getting 4669e532d5b2c093a78eca010077e708a071bb64 from file:$TESTTMP/b for large1: can't get file locally (glob)
+  error getting 1deebade43c8c498a3c8daddac0244dc55d1331d from file:$TESTTMP/b for sub/large2: can't get file locally (glob)
   0 additional largefiles cached
   9 largefiles failed to download
   nothing to rebase
@@ -1457,7 +1469,33 @@ Push a largefiles repository to a served empty repository
   remote: adding manifests
   remote: adding file changes
   remote: added 1 changesets with 1 changes to 1 files
-  $ rm -rf empty
+
+Clone over http, with largefiles being pulled on update, not on clone.
+
+  $ hg clone -q http://localhost:$HGPORT2/ http-clone -U
+
+  $ hg -R http-clone --debug up --config largefiles.usercache=http-clone-usercache
+  resolving manifests
+   overwrite: False, partial: False
+   ancestor: 000000000000, local: 000000000000+, remote: cf03e5bb9936
+   .hglf/f1: remote created -> g
+  updating: .hglf/f1 1/1 files (100.00%)
+  getting .hglf/f1
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  getting changed largefiles
+  using http://localhost:$HGPORT2/
+  sending capabilities command
+  getting largefiles: 0/1 lfile (0.00%)
+  getting f1:02a439e5c31c526465ab1a0ca1f431f76b827b90
+  sending batch command
+  sending getlfile command
+  found 02a439e5c31c526465ab1a0ca1f431f76b827b90 in store
+  1 largefiles updated, 0 removed
+
+  $ ls http-clone-usercache/*
+  http-clone-usercache/02a439e5c31c526465ab1a0ca1f431f76b827b90
+
+  $ rm -rf empty http-clone http-clone-usercache
 
 used all HGPORTs, kill all daemons
   $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS

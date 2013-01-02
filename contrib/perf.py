@@ -40,11 +40,11 @@ def perfwalk(ui, repo, *pats):
         except Exception:
             timer(lambda: len(list(cmdutil.walk(repo, pats, {}))))
 
-def perfstatus(ui, repo, *pats):
+def perfstatus(ui, repo, **opts):
     #m = match.always(repo.root, repo.getcwd())
     #timer(lambda: sum(map(len, repo.dirstate.status(m, [], False, False,
     #                                                False))))
-    timer(lambda: sum(map(len, repo.status())))
+    timer(lambda: sum(map(len, repo.status(**opts))))
 
 def clearcaches(cl):
     # behave somewhat consistently across internal API changes
@@ -76,6 +76,15 @@ def perfancestors(ui, repo):
     def d():
         for a in repo.changelog.ancestors(heads):
             pass
+    timer(d)
+
+def perfancestorset(ui, repo, revset):
+    revs = repo.revs(revset)
+    heads = repo.changelog.headrevs()
+    def d():
+        s = repo.changelog.ancestors(heads)
+        for rev in revs:
+            rev in s
     timer(d)
 
 def perfdirstate(ui, repo):
@@ -228,6 +237,11 @@ def perfrevlog(ui, repo, file_, **opts):
 
     timer(d)
 
+def perfrevset(ui, repo, expr):
+    def d():
+        repo.revs(expr)
+    timer(d)
+
 cmdtable = {
     'perfcca': (perfcca, []),
     'perffncacheload': (perffncacheload, []),
@@ -238,7 +252,9 @@ cmdtable = {
     'perfnodelookup': (perfnodelookup, []),
     'perfparents': (perfparents, []),
     'perfstartup': (perfstartup, []),
-    'perfstatus': (perfstatus, []),
+    'perfstatus': (perfstatus,
+                   [('u', 'unknown', False,
+                     'ask status to look for unknown files')]),
     'perfwalk': (perfwalk, []),
     'perfmanifest': (perfmanifest, []),
     'perfchangeset': (perfchangeset, []),
@@ -246,6 +262,7 @@ cmdtable = {
     'perfheads': (perfheads, []),
     'perftags': (perftags, []),
     'perfancestors': (perfancestors, []),
+    'perfancestorset': (perfancestorset, [], "REVSET"),
     'perfdirstate': (perfdirstate, []),
     'perfdirstatedirs': (perfdirstate, []),
     'perfdirstatewrite': (perfdirstatewrite, []),
@@ -256,4 +273,5 @@ cmdtable = {
     'perfrevlog': (perfrevlog,
                    [('d', 'dist', 100, 'distance between the revisions')],
                    "[INDEXFILE]"),
+    'perfrevset': (perfrevset, [], "REVSET")
 }
