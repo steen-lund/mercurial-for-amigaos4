@@ -14,7 +14,7 @@ were part of the actual repository.
 from node import nullid
 from i18n import _
 import os, tempfile, shutil
-import changegroup, util, mdiff, discovery, cmdutil
+import changegroup, util, mdiff, discovery, cmdutil, scmutil
 import localrepo, changelog, manifest, filelog, revlog, error
 
 class bundlerevlog(revlog.revlog):
@@ -28,11 +28,14 @@ class bundlerevlog(revlog.revlog):
         # len(index[r]). If the tuple is bigger than 7, it is a bundle
         # (it is bigger since we store the node to which the delta is)
         #
+        opener = scmutil.readonlyvfs(opener)
         revlog.revlog.__init__(self, opener, indexfile)
         self.bundle = bundle
         self.basemap = {}
         n = len(self)
+        self.disktiprev = n - 1
         chain = None
+        self.bundlenodes = []
         while True:
             chunkdata = bundle.deltachunk(chain)
             if not chunkdata:
@@ -48,6 +51,7 @@ class bundlerevlog(revlog.revlog):
             start = bundle.tell() - size
 
             link = linkmapper(cs)
+            self.bundlenodes.append(node)
             if node in self.nodemap:
                 # this can happen if two branches make the same change
                 chain = node
@@ -212,7 +216,7 @@ class bundlerepository(localrepo.localrepository):
         # dict with the mapping 'filename' -> position in the bundle
         self.bundlefilespos = {}
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def changelog(self):
         # consume the header if it exists
         self.bundle.changelogheader()
@@ -220,7 +224,7 @@ class bundlerepository(localrepo.localrepository):
         self.manstart = self.bundle.tell()
         return c
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def manifest(self):
         self.bundle.seek(self.manstart)
         # consume the header if it exists
@@ -229,12 +233,12 @@ class bundlerepository(localrepo.localrepository):
         self.filestart = self.bundle.tell()
         return m
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def manstart(self):
         self.changelog
         return self.manstart
 
-    @util.propertycache
+    @localrepo.unfilteredpropertycache
     def filestart(self):
         self.manifest
         return self.filestart
@@ -282,9 +286,6 @@ class bundlerepository(localrepo.localrepository):
     def getcwd(self):
         return os.getcwd() # always outside the repo
 
-    def _writebranchcache(self, branches, tip, tiprev):
-        # don't overwrite the disk cache with bundle-augmented data
-        pass
 
 def instance(ui, path, create):
     if create:
