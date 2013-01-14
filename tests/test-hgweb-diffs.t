@@ -78,7 +78,7 @@ revision
   
   <div class="main">
   
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>changeset 0:0cd96de13884   </h3>
   
   <form class="search" action="/log">
@@ -138,6 +138,14 @@ revision
   </table>
       </div>
     </td>
+  </tr>
+  <tr>
+   <th class="author">change baseline</th>
+   <td class="author"></td>
+  </tr>
+  <tr>
+   <th class="author">current baseline</th>
+   <td class="author"><a href="/rev/000000000000">000000000000</a></td>
   </tr>
   </table>
   
@@ -238,7 +246,7 @@ diff removed file
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>diff b @ 1:559edbd9ed20</h3>
   
   <form class="search" action="/log">
@@ -339,7 +347,7 @@ revision
   
   <div class="main">
   
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>changeset 0:0cd96de13884   </h3>
   
   <form class="search" action="/log">
@@ -399,6 +407,14 @@ revision
   </table>
       </div>
     </td>
+  </tr>
+  <tr>
+   <th class="author">change baseline</th>
+   <td class="author"></td>
+  </tr>
+  <tr>
+   <th class="author">current baseline</th>
+   <td class="author"><a href="/rev/000000000000">000000000000</a></td>
   </tr>
   </table>
   
@@ -503,7 +519,7 @@ diff removed file
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>diff a @ 1:559edbd9ed20</h3>
   
   <form class="search" action="/log">
@@ -601,7 +617,7 @@ comparison new file
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>comparison a @ 0:0cd96de13884</h3>
   
   <form class="search" action="/log">
@@ -723,7 +739,7 @@ comparison existing file
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>comparison a @ 2:d73db4d812ff</h3>
   
   <form class="search" action="/log">
@@ -847,7 +863,7 @@ comparison removed file
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>comparison a @ 3:20e80271eb7a</h3>
   
   <form class="search" action="/log">

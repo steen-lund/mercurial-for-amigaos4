@@ -7,7 +7,7 @@
 
 from i18n import _
 import encoding
-import os, sys, errno, stat, getpass, pwd, grp, tempfile, unicodedata
+import os, sys, errno, stat, getpass, pwd, grp, socket, tempfile, unicodedata
 
 posixfile = open
 normpath = os.path.normpath
@@ -21,14 +21,26 @@ umask = os.umask(0)
 os.umask(umask)
 
 def split(p):
-    '''Same as os.path.split, but faster'''
+    '''Same as posixpath.split, but faster
+
+    >>> import posixpath
+    >>> for f in ['/absolute/path/to/file',
+    ...           'relative/path/to/file',
+    ...           'file_alone',
+    ...           'path/to/directory/',
+    ...           '/multiple/path//separators',
+    ...           '/file_at_root',
+    ...           '///multiple_leading_separators_at_root',
+    ...           '']:
+    ...     assert split(f) == posixpath.split(f), f
+    '''
     ht = p.rsplit('/', 1)
     if len(ht) == 1:
         return '', p
     nh = ht[0].rstrip('/')
     if nh:
         return nh, ht[1]
-    return ht
+    return ht[0] + '/', ht[1]
 
 def openhardlinks():
     '''return true if it is safe to hold open file handles to hardlinks'''
@@ -352,12 +364,18 @@ def findexe(command):
 def setsignalhandler():
     pass
 
+_wantedkinds = set([stat.S_IFREG, stat.S_IFLNK])
+
 def statfiles(files):
-    'Stat each file in files and yield stat or None if file does not exist.'
+    '''Stat each file in files. Yield each stat, or None if a file does not
+    exist or has a type we don't care about.'''
     lstat = os.lstat
+    getkind = stat.S_IFMT
     for nf in files:
         try:
             st = lstat(nf)
+            if getkind(st.st_mode) not in _wantedkinds:
+                st = None
         except OSError, err:
             if err.errno not in (errno.ENOENT, errno.ENOTDIR):
                 raise
@@ -437,9 +455,13 @@ def termwidth():
 def makedir(path, notindexed):
     os.mkdir(path)
 
-def unlinkpath(f):
+def unlinkpath(f, ignoremissing=False):
     """unlink and remove the directory if it is empty"""
-    os.unlink(f)
+    try:
+        os.unlink(f)
+    except OSError, e:
+        if not (ignoremissing and e.errno == errno.ENOENT):
+            raise
     # try removing directories that might now be empty
     try:
         os.removedirs(os.path.dirname(f))
@@ -477,3 +499,43 @@ class cachestat(object):
 
 def executablepath():
     return None # available on Windows only
+
+class unixdomainserver(socket.socket):
+    def __init__(self, join, subsystem):
+        '''Create a unix domain socket with the given prefix.'''
+        super(unixdomainserver, self).__init__(socket.AF_UNIX)
+        sockname = subsystem + '.sock'
+        self.realpath = self.path = join(sockname)
+        if os.path.islink(self.path):
+            if os.path.exists(self.path):
+                self.realpath = os.readlink(self.path)
+            else:
+                os.unlink(self.path)
+        try:
+            self.bind(self.realpath)
+        except socket.error, err:
+            if err.args[0] == 'AF_UNIX path too long':
+                tmpdir = tempfile.mkdtemp(prefix='hg-%s-' % subsystem)
+                self.realpath = os.path.join(tmpdir, sockname)
+                try:
+                    self.bind(self.realpath)
+                    os.symlink(self.realpath, self.path)
+                except (OSError, socket.error):
+                    self.cleanup()
+                    raise
+            else:
+                raise
+        self.listen(5)
+
+    def cleanup(self):
+        def okayifmissing(f, path):
+            try:
+                f(path)
+            except OSError, err:
+                if err.errno != errno.ENOENT:
+                    raise
+
+        okayifmissing(os.unlink, self.path)
+        if self.realpath != self.path:
+            okayifmissing(os.unlink, self.realpath)
+            okayifmissing(os.rmdir, os.path.dirname(self.realpath))

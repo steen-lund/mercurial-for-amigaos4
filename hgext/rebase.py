@@ -184,8 +184,6 @@ def rebase(ui, repo, **opts):
                 rebaseset = repo.revs(
                     '(children(ancestor(%ld, %d)) and ::(%ld))::',
                     base, dest, base)
-            # temporary top level filtering of extinct revisions
-            rebaseset = repo.revs('%ld - hidden()', rebaseset)
             if rebaseset:
                 root = min(rebaseset)
             else:
@@ -194,8 +192,9 @@ def rebase(ui, repo, **opts):
             if not rebaseset:
                 repo.ui.debug('base is ancestor of destination\n')
                 result = None
-            elif not keepf and repo.revs('first(children(%ld) - %ld)-hidden()',
-                                         rebaseset, rebaseset):
+            elif (not (keepf or obsolete._enabled)
+                  and repo.revs('first(children(%ld) - %ld)',
+                                rebaseset, rebaseset)):
                 raise util.Abort(
                     _("can't remove original changesets with"
                       " unrebased descendants"),
@@ -214,8 +213,8 @@ def rebase(ui, repo, **opts):
             else:
                 originalwd, target, state = result
                 if collapsef:
-                    targetancestors = set(repo.changelog.ancestors([target]))
-                    targetancestors.add(target)
+                    targetancestors = repo.changelog.ancestors([target],
+                                                               inclusive=True)
                     external = checkexternal(repo, state, targetancestors)
 
         if keepbranchesf:
@@ -233,8 +232,7 @@ def rebase(ui, repo, **opts):
 
         # Rebase
         if not targetancestors:
-            targetancestors = set(repo.changelog.ancestors([target]))
-            targetancestors.add(target)
+            targetancestors = repo.changelog.ancestors([target], inclusive=True)
 
         # Keep track of the current bookmarks in order to reset them later
         currentbookmarks = repo._bookmarks.copy()
@@ -479,13 +477,14 @@ def updatemq(repo, state, skipped, **opts):
 
 def updatebookmarks(repo, nstate, originalbookmarks, **opts):
     'Move bookmarks to their correct changesets'
+    marks = repo._bookmarks
     for k, v in originalbookmarks.iteritems():
         if v in nstate:
             if nstate[v] != nullmerge:
                 # update the bookmarks for revs that have moved
-                repo._bookmarks[k] = nstate[v]
+                marks[k] = nstate[v]
 
-    bookmarks.write(repo)
+    marks.write()
 
 def storestatus(repo, originalwd, target, state, collapse, keep, keepbranches,
                                                                 external):
@@ -655,9 +654,12 @@ def buildstate(repo, dest, rebaseset, collapse):
     #
     # The actual abort is handled by `defineparents`
     if len(root.parents()) <= 1:
-        # (strict) ancestors of <root> not ancestors of <dest>
-        detachset = repo.revs('::%d - ::%d - %d', root, commonbase, root)
+        # ancestors of <root> not ancestors of <dest>
+        detachset = repo.changelog.findmissingrevs([commonbase.rev()],
+                                                   [root.rev()])
         state.update(dict.fromkeys(detachset, nullmerge))
+        # detachset can have root, and we definitely want to rebase that
+        state[root.rev()] = nullrev
     return repo['.'].rev(), dest.rev(), state
 
 def clearrebased(ui, repo, state, collapsedas=None):

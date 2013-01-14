@@ -11,7 +11,7 @@
   >    hg ci -m "add $1"
   > }
   $ getid() {
-  >    hg id --debug -ir "desc('$1')"
+  >    hg id --debug --hidden -ir "desc('$1')"
   > }
 
   $ cat > debugkeys.py <<EOF
@@ -128,9 +128,67 @@ Check that graphlog detect that a changeset is obsolete:
      summary:     add a
   
 
+check that heads does not report them
+
+  $ hg heads
+  changeset:   5:5601fb93a350
+  tag:         tip
+  parent:      1:7c3bad9141dc
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     add new_3_c
+  
+  $ hg heads --hidden
+  changeset:   5:5601fb93a350
+  tag:         tip
+  parent:      1:7c3bad9141dc
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     add new_3_c
+  
+  changeset:   4:ca819180edb9
+  parent:      1:7c3bad9141dc
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     add new_2_c
+  
+  changeset:   3:cdbce2fbb163
+  parent:      1:7c3bad9141dc
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     add new_c
+  
+  changeset:   2:245bde4270cd
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     add original_c
+  
+
+
+check that summary does not report them
+
+  $ hg init ../sink
+  $ echo '[paths]' >> .hg/hgrc
+  $ echo 'default=../sink' >> .hg/hgrc
+  $ hg summary --remote
+  parent: 5:5601fb93a350 tip
+   add new_3_c
+  branch: default
+  commit: (clean)
+  update: (current)
+  remote: 3 outgoing
+
+  $ hg summary --remote --hidden
+  parent: 5:5601fb93a350 tip
+   add new_3_c
+  branch: default
+  commit: (clean)
+  update: 3 new changesets, 4 branch heads (merge)
+  remote: 3 outgoing
+
 Check that public changeset are not accounted as obsolete:
 
-  $ hg phase --public 2
+  $ hg --hidden phase --public 2
   $ hg --config 'extensions.graphlog=' glog
   @  changeset:   5:5601fb93a350
   |  tag:         tip
@@ -173,6 +231,14 @@ the public changeset
 
 And that we can't push bumped changeset
 
+  $ hg push ../tmpa -r 0 --force #(make repo related)
+  pushing to ../tmpa
+  searching for changes
+  warning: repository is unrelated
+  adding changesets
+  adding manifests
+  adding file changes
+  added 1 changesets with 1 changes to 1 files (+1 heads)
   $ hg push ../tmpa
   pushing to ../tmpa
   searching for changes

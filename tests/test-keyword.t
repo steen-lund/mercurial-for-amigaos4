@@ -576,9 +576,9 @@ Copy and show added kwfiles
 Commit and show expansion in original and copy
 
   $ hg --debug commit -ma2c -d '1 0' -u 'User Name <user@example.com>'
+  invalid branchheads cache (unserved): tip differs
   c
    c: copy a:0045e12f6c5791aac80ca6cbfd97709a88307292
-  removing unknown node 40a904bbbe4c from 1-phase boundary
   overwriting c expanding keywords
   committed changeset 2:25736cf2f5cbe41f6be4e6784ef6ecf9f3bbcc7d
   $ cat a c
@@ -747,9 +747,23 @@ Interrupted commit should not change state
 
 Commit with multi-line message and custom expansion
 
+|Note:
+|
+| After the last rollback, the "unserved" branchheads cache became invalid, but
+| all changesets in the repo were public. For filtering this means:
+|   "mutable" == "unserved" == ø.
+|
+| As the "unserved" cache is invalid, we fall back to the "mutable" cache. But
+| no update is needed between "mutable" and "unserved" and the "unserved" cache
+| is not updated on disk. The on-disk version therefore stays invalid for some
+| time. This explains why the "unserved" branchheads cache is detected as
+| invalid here.
+
   $ hg --debug commit -l log -d '2 0' -u 'User Name <user@example.com>'
+  invalid branchheads cache (unserved): tip differs
   a
-  removing unknown node 40a904bbbe4c from 1-phase boundary
+  invalid branchheads cache: tip differs
+  invalid branchheads cache (unserved): tip differs
   overwriting a expanding keywords
   committed changeset 2:bb948857c743469b22bbf51f7ec8112279ca5d83
   $ rm log
@@ -791,6 +805,7 @@ remove with status checks
   $ hg debugrebuildstate
   $ hg remove a
   $ hg --debug commit -m rma
+  invalid branchheads cache: tip differs
   committed changeset 3:d14c712653769de926994cf7fbb06c8fbd68f012
   $ hg status
   ? c
@@ -903,6 +918,7 @@ kwexpand x/a should abort
   $ hg --debug commit -m xa -d '3 0' -u 'User Name <user@example.com>'
   x/a
    x/a: copy a:779c764182ce5d43e2b1eb66ce06d7b47bfe342e
+  invalid branchheads cache: tip differs
   overwriting x/a expanding keywords
   committed changeset 3:b4560182a3f9a358179fd2d835c15e9da379c1e4
   $ cat a
