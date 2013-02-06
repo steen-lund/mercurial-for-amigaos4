@@ -733,29 +733,33 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
     rejected = []
     m.bad = lambda x, y: rejected.append(x)
 
-    for abs in repo.walk(m):
-        target = repo.wjoin(abs)
+    ctx = repo[None]
+    walkresults = repo.dirstate.walk(m, sorted(ctx.substate), True, False)
+    for abs in sorted(walkresults):
         good = True
         try:
             audit_path(abs)
         except (OSError, util.Abort):
             good = False
-        rel = m.rel(abs)
-        exact = m.exact(abs)
-        if good and abs not in repo.dirstate:
+
+        st = walkresults[abs]
+        dstate = repo.dirstate[abs]
+        if good and dstate == '?':
             unknown.append(abs)
-            if repo.ui.verbose or not exact:
+            if repo.ui.verbose or not m.exact(abs):
+                rel = m.rel(abs)
                 repo.ui.status(_('adding %s\n') % ((pats and rel) or abs))
-        elif (repo.dirstate[abs] != 'r' and
-              (not good or not os.path.lexists(target) or
-               (os.path.isdir(target) and not os.path.islink(target)))):
+        elif (dstate != 'r' and
+              (not good or not st or
+               (stat.S_ISDIR(st.st_mode) and not stat.S_ISLNK(st.st_mode)))):
             deleted.append(abs)
-            if repo.ui.verbose or not exact:
+            if repo.ui.verbose or not m.exact(abs):
+                rel = m.rel(abs)
                 repo.ui.status(_('removing %s\n') % ((pats and rel) or abs))
         # for finding renames
-        elif repo.dirstate[abs] == 'r':
+        elif dstate == 'r':
             removed.append(abs)
-        elif repo.dirstate[abs] == 'a':
+        elif dstate == 'a':
             added.append(abs)
     copies = {}
     if similarity > 0:
