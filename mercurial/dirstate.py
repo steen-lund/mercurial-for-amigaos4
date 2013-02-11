@@ -9,10 +9,8 @@ import errno
 from node import nullid
 from i18n import _
 import scmutil, util, ignore, osutil, parsers, encoding
-import struct, os, stat, errno
-import cStringIO
+import os, stat, errno, gc
 
-_format = ">cllll"
 propertycache = util.propertycache
 filecache = scmutil.filecache
 _rangemask = 0x7fffffff
@@ -287,7 +285,23 @@ class dirstate(object):
         if not st:
             return
 
-        p = parsers.parse_dirstate(self._map, self._copymap, st)
+        # Python's garbage collector triggers a GC each time a certain number
+        # of container objects (the number being defined by
+        # gc.get_threshold()) are allocated. parse_dirstate creates a tuple
+        # for each file in the dirstate. The C version then immediately marks
+        # them as not to be tracked by the collector. However, this has no
+        # effect on when GCs are triggered, only on what objects the GC looks
+        # into. This means that O(number of files) GCs are unavoidable.
+        # Depending on when in the process's lifetime the dirstate is parsed,
+        # this can get very expensive. As a workaround, disable GC while
+        # parsing the dirstate.
+        gcenabled = gc.isenabled()
+        gc.disable()
+        try:
+            p = parsers.parse_dirstate(self._map, self._copymap, st)
+        finally:
+            if gcenabled:
+                gc.enable()
         if not self._dirtypl:
             self._pl = p
 
@@ -508,38 +522,7 @@ class dirstate(object):
         # use the modification time of the newly created temporary file as the
         # filesystem's notion of 'now'
         now = util.fstat(st).st_mtime
-        copymap = self._copymap
-        try:
-            finish(parsers.pack_dirstate(self._map, copymap, self._pl, now))
-            return
-        except AttributeError:
-            pass
-
-        now = int(now)
-        cs = cStringIO.StringIO()
-        pack = struct.pack
-        write = cs.write
-        write("".join(self._pl))
-        for f, e in self._map.iteritems():
-            if e[0] == 'n' and e[3] == now:
-                # The file was last modified "simultaneously" with the current
-                # write to dirstate (i.e. within the same second for file-
-                # systems with a granularity of 1 sec). This commonly happens
-                # for at least a couple of files on 'update'.
-                # The user could change the file without changing its size
-                # within the same second. Invalidate the file's stat data in
-                # dirstate, forcing future 'status' calls to compare the
-                # contents of the file. This prevents mistakenly treating such
-                # files as clean.
-                e = (e[0], 0, -1, -1)   # mark entry as 'unset'
-                self._map[f] = e
-
-            if f in copymap:
-                f = "%s\0%s" % (f, copymap[f])
-            e = pack(_format, e[0], e[1], e[2], e[3], len(f))
-            write(e)
-            write(f)
-        finish(cs.getvalue())
+        finish(parsers.pack_dirstate(self._map, self._copymap, self._pl, now))
 
     def _dirignore(self, f):
         if f == '.':
@@ -710,9 +693,26 @@ class dirstate(object):
         # step 3: report unseen items in the dmap hash
         if not skipstep3 and not exact:
             visit = sorted([f for f in dmap if f not in results and matchfn(f)])
-            nf = iter(visit).next
-            for st in util.statfiles([join(i) for i in visit]):
-                results[nf()] = st
+            if unknown:
+                # unknown == True means we walked the full directory tree above.
+                # So if a file is not seen it was either a) not matching matchfn
+                # b) ignored, c) missing, or d) under a symlink directory.
+                audit_path = scmutil.pathauditor(self._root)
+
+                for nf in iter(visit):
+                    # Report ignored items in the dmap as long as they are not
+                    # under a symlink directory.
+                    if ignore(nf) and audit_path.check(nf):
+                        results[nf] = util.statfiles([join(nf)])[0]
+                    else:
+                        # It's either missing or under a symlink directory
+                        results[nf] = None
+            else:
+                # We may not have walked the full directory tree above,
+                # so stat everything we missed.
+                nf = iter(visit).next
+                for st in util.statfiles([join(i) for i in visit]):
+                    results[nf()] = st
         for s in subrepos:
             del results[s]
         del results['.hg']

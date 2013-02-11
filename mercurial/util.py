@@ -211,6 +211,31 @@ except AttributeError:
                     del self[i]
                     break
 
+class lrucachedict(object):
+    '''cache most recent gets from or sets to this dictionary'''
+    def __init__(self, maxsize):
+        self._cache = {}
+        self._maxsize = maxsize
+        self._order = deque()
+
+    def __getitem__(self, key):
+        value = self._cache[key]
+        self._order.remove(key)
+        self._order.append(key)
+        return value
+
+    def __setitem__(self, key, value):
+        if key not in self._cache:
+            if len(self._cache) >= self._maxsize:
+                del self._cache[self._order.popleft()]
+        else:
+            self._order.remove(key)
+        self._cache[key] = value
+        self._order.append(key)
+
+    def __contains__(self, key):
+        return key in self._cache
+
 def lrucachefunc(func):
     '''cache most recent results of function calls'''
     cache = {}
@@ -1027,6 +1052,20 @@ def parsedate(date, formats=None, bias={}):
 
     The date may be a "unixtime offset" string or in one of the specified
     formats. If the date already is a (unixtime, offset) tuple, it is returned.
+
+    >>> parsedate(' today ') == parsedate(\
+                                  datetime.date.today().strftime('%b %d'))
+    True
+    >>> parsedate( 'yesterday ') == parsedate((datetime.date.today() -\
+                                               datetime.timedelta(days=1)\
+                                              ).strftime('%b %d'))
+    True
+    >>> now, tz = makedate()
+    >>> strnow, strtz = parsedate('now')
+    >>> (strnow - now) < 1
+    True
+    >>> tz == strtz
+    True
     """
     if not date:
         return 0, 0
@@ -1035,6 +1074,15 @@ def parsedate(date, formats=None, bias={}):
     if not formats:
         formats = defaultdateformats
     date = date.strip()
+
+    if date == _('now'):
+        return makedate()
+    if date == _('today'):
+        date = datetime.date.today().strftime('%b %d')
+    elif date == _('yesterday'):
+        date = (datetime.date.today() -
+                datetime.timedelta(days=1)).strftime('%b %d')
+
     try:
         when, offset = map(int, date.split(' '))
     except ValueError:
