@@ -38,6 +38,11 @@ def checknewlabel(repo, lbl, kind):
     for c in (':', '\0', '\n', '\r'):
         if c in lbl:
             raise util.Abort(_("%r cannot be used in a name") % c)
+    try:
+        int(lbl)
+        raise util.Abort(_("a %s cannot have an integer as its name") % kind)
+    except ValueError:
+        pass
 
 def checkfilename(f):
     '''Check that the filename f is an acceptable filename for a tracked file'''
@@ -179,6 +184,13 @@ class pathauditor(object):
         # want to add "foo/bar/baz" before checking if there's a "foo/.hg"
         self.auditeddir.update(prefixes)
 
+    def check(self, path):
+        try:
+            self(path)
+            return True
+        except (OSError, util.Abort):
+            return False
+
 class abstractvfs(object):
     """Abstract base class; cannot be instantiated"""
 
@@ -294,8 +306,7 @@ class vfs(abstractvfs):
             # to a directory. Let the posixfile() call below raise IOError.
             if basename:
                 if atomictemp:
-                    if not os.path.isdir(dirname):
-                        util.makedirs(dirname, self.createmode)
+                    util.ensuredirs(dirname, self.createmode)
                     return util.atomictempfile(f, mode, self.createmode)
                 try:
                     if 'w' in mode:
@@ -313,8 +324,7 @@ class vfs(abstractvfs):
                     if e.errno != errno.ENOENT:
                         raise
                     nlink = 0
-                    if not os.path.isdir(dirname):
-                        util.makedirs(dirname, self.createmode)
+                    util.ensuredirs(dirname, self.createmode)
                 if nlink > 0:
                     if self._trustnlink is None:
                         self._trustnlink = nlink > 1 or util.checknlink(f)
@@ -333,9 +343,7 @@ class vfs(abstractvfs):
         except OSError:
             pass
 
-        dirname = os.path.dirname(linkname)
-        if not os.path.exists(dirname):
-            util.makedirs(dirname, self.createmode)
+        util.ensuredirs(os.path.dirname(linkname), self.createmode)
 
         if self._cansymlink:
             try:
@@ -737,29 +745,26 @@ def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
     rejected = []
     m.bad = lambda x, y: rejected.append(x)
 
-    for abs in repo.walk(m):
-        target = repo.wjoin(abs)
-        good = True
-        try:
-            audit_path(abs)
-        except (OSError, util.Abort):
-            good = False
-        rel = m.rel(abs)
-        exact = m.exact(abs)
-        if good and abs not in repo.dirstate:
+    ctx = repo[None]
+    walkresults = repo.dirstate.walk(m, sorted(ctx.substate), True, False)
+    for abs in sorted(walkresults):
+        st = walkresults[abs]
+        dstate = repo.dirstate[abs]
+        if dstate == '?' and audit_path.check(abs):
             unknown.append(abs)
-            if repo.ui.verbose or not exact:
+            if repo.ui.verbose or not m.exact(abs):
+                rel = m.rel(abs)
                 repo.ui.status(_('adding %s\n') % ((pats and rel) or abs))
-        elif (repo.dirstate[abs] != 'r' and
-              (not good or not os.path.lexists(target) or
-               (os.path.isdir(target) and not os.path.islink(target)))):
+        elif (dstate != 'r' and (not st or
+               (stat.S_ISDIR(st.st_mode) and not stat.S_ISLNK(st.st_mode)))):
             deleted.append(abs)
-            if repo.ui.verbose or not exact:
+            if repo.ui.verbose or not m.exact(abs):
+                rel = m.rel(abs)
                 repo.ui.status(_('removing %s\n') % ((pats and rel) or abs))
         # for finding renames
-        elif repo.dirstate[abs] == 'r':
+        elif dstate == 'r':
             removed.append(abs)
-        elif repo.dirstate[abs] == 'a':
+        elif dstate == 'a':
             added.append(abs)
     copies = {}
     if similarity > 0:

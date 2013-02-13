@@ -3814,7 +3814,6 @@ def import_(ui, repo, patch1=None, *patches, **opts):
 
     def checkexact(repo, n, nodeid):
         if opts.get('exact') and hex(n) != nodeid:
-            repo.rollback()
             raise util.Abort(_('patch is damaged or loses information'))
 
     def tryone(ui, hunk, parents):
@@ -5577,12 +5576,11 @@ def summary(ui, repo, **opts):
         # i18n: column positioning for "hg summary"
         ui.write(_('bookmarks:'), label='log.bookmark')
         if current is not None:
-            try:
-                marks.remove(current)
+            if current in marks:
                 ui.write(' *' + current, label='bookmarks.current')
-            except ValueError:
-                # current bookmark not in parent ctx marks
-                pass
+                marks.remove(current)
+            else:
+                ui.write(' [%s]' % current, label='bookmarks.current')
         for m in marks:
             ui.write(' ' + m, label='log.bookmark')
         ui.write('\n', label='log.bookmark')
