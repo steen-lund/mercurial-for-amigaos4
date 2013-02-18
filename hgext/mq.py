@@ -282,7 +282,7 @@ def newcommit(repo, phase, *args, **kwargs):
     if phase is not None:
         backup = repo.ui.backupconfig('phases', 'new-commit')
     # Marking the repository as committing an mq patch can be used
-    # to optimize operations like _branchtags().
+    # to optimize operations like branchtags().
     repo._committingpatch = True
     try:
         if phase is not None:
@@ -1571,7 +1571,7 @@ class queue(object):
             r = list(dd)
             a = list(aa)
 
-            # create 'match' that includes the files to be recommited.
+            # create 'match' that includes the files to be recommitted.
             # apply matchfn via repo.status to ensure correct case handling.
             cm, ca, cr, cd = repo.status(patchparent, match=matchfn)[:4]
             allmatches = set(cm + ca + cr + cd)
@@ -3452,6 +3452,12 @@ def reposetup(ui, repo):
             except error.LookupError:
                 self.ui.warn(_('mq status file refers to unknown node %s\n')
                              % short(mqtags[-1][0]))
+                return result
+
+            # do not add fake tags for filtered revisions
+            included = self.changelog.hasnode
+            mqtags = [mqt for mqt in mqtags if included(mqt[0])]
+            if not mqtags:
                 return result
 
             mqtags.append((mqtags[-1][0], 'qtip'))
