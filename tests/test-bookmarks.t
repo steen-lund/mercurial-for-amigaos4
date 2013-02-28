@@ -257,6 +257,12 @@ bookmark with name of branch
   abort: a bookmark cannot have the name of an existing branch
   [255]
 
+bookmark with integer name
+
+  $ hg bookmark 10
+  abort: a bookmark cannot have an integer as its name
+  [255]
+
 incompatible options
 
   $ hg bookmark -m Y -d Z
@@ -461,6 +467,13 @@ create bundle with two heads
 
 update to current bookmark if it's not the parent
 
+  $ hg summary
+  parent: 2:db815d6d32e6 
+   2
+  branch: default
+  bookmarks: [Z] Y x  y
+  commit: 1 added, 1 unknown (new branch head)
+  update: 2 new changesets (update)
   $ hg update
   updating to active bookmark Z
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved

@@ -80,6 +80,7 @@ testpats = [
     (r'^diff.*-\w*N', "don't use 'diff -N'"),
     (r'\$PWD|\${PWD}', "don't use $PWD, use `pwd`"),
     (r'^([^"\'\n]|("[^"\n]*")|(\'[^\'\n]*\'))*\^', "^ must be quoted"),
+    (r'kill (`|\$\()', "don't use kill, use killdaemons.py")
   ]
 ]
 
@@ -104,7 +105,10 @@ utestpats = [
      "use (glob) to match Windows paths too"),
   ],
   # warnings
-  []
+  [
+    (r'^  [^*?/\n]* \(glob\)$',
+     "warning: glob match with no glob character (?*/)"),
+  ]
 ]
 
 for i in [0, 1]:
