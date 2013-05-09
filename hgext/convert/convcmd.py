@@ -15,7 +15,7 @@ from monotone import monotone_source
 from gnuarch import gnuarch_source
 from bzr import bzr_source
 from p4 import p4_source
-import filemap, common
+import filemap
 
 import os, shutil
 from mercurial import hg, util, encoding
@@ -118,8 +118,56 @@ class converter(object):
             self.readauthormap(opts.get('authormap'))
             self.authorfile = self.dest.authorfile()
 
-        self.splicemap = common.parsesplicemap(opts.get('splicemap'))
+        self.splicemap = self.parsesplicemap(opts.get('splicemap'))
         self.branchmap = mapfile(ui, opts.get('branchmap'))
+
+    def parsesplicemap(self, path):
+        """ check and validate the splicemap format and
+            return a child/parents dictionary.
+            Format checking has two parts.
+            1. generic format which is same across all source types
+            2. specific format checking which may be different for
+               different source type.  This logic is implemented in
+               checkrevformat function in source files like
+               hg.py, subversion.py etc.
+        """
+
+        if not path:
+            return {}
+        m = {}
+        try:
+            fp = open(path, 'r')
+            for i, line in enumerate(fp):
+                line = line.splitlines()[0].rstrip()
+                if not line:
+                    # Ignore blank lines
+                    continue
+                try:
+                    child, parents = line.split(' ', 1)
+                    self.source.checkrevformat(child)
+                    parents = parents.replace(',', ' ').split()
+                    # check if number of parents are upto 2 max
+                    if (len(parents) > 2):
+                        raise util.Abort(_('syntax error in %s(%d): child '\
+                                            'parent1[,parent2] expected') \
+                                            % (path, i + 1))
+                    for parent in parents:
+                        self.source.checkrevformat(parent)
+                except ValueError:
+                    raise util.Abort(_('syntax error in %s(%d): child '\
+                                        'parent1[,parent2] expected') \
+                                        % (path, i + 1))
+                pp = []
+                for p in parents:
+                    if p not in pp:
+                        pp.append(p)
+                m[child] = pp
+         # if file does not exist or error reading, exit
+        except IOError:
+            raise util.Abort(_('splicemap file not found or error reading %s:')
+                               % path)
+        return m
+
 
     def walktree(self, heads):
         '''Return a mapping that identifies the uncommitted parents of every
