@@ -8049,15 +8049,15 @@ msgstr ""
 
 # PROMPT
 msgid "are you sure you want to send (yn)?"
-msgstr "вы уверены, что хотите отправить письмо (yn)?"
+msgstr "вы уверены, что хотите отправить письмо? (Y — да, N — нет)"
 
 # PROMPT
 msgid "&No"
-msgstr ""
+msgstr "Нет (&N)"
 
 # PROMPT
 msgid "&Yes"
-msgstr ""
+msgstr "Да (&Y)"
 
 msgid "patchbomb canceled"
 msgstr "отправка отменена"
@@ -14195,10 +14195,10 @@ msgid "show only added files"
 msgstr "показать только добавленные файлы"
 
 msgid "show only removed files"
-msgstr "показать только отдалённые файлы"
+msgstr "показать только удалённые файлы"
 
 msgid "show only deleted (but tracked) files"
-msgstr "показать только отдалённые (но отслеживаемые) файлы"
+msgstr "показать только удалённые (но отслеживаемые) файлы"
 
 msgid "show only files without changes"
 msgstr "показать только неизмененные файлы"
