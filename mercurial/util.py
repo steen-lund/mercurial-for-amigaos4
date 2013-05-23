@@ -1924,3 +1924,41 @@ def timed(func):
                              (' ' * _timenesting[0], func.__name__,
                               timecount(elapsed)))
     return wrapper
+
+_sizeunits = (('m', 2**20), ('k', 2**10), ('g', 2**30),
+              ('kb', 2**10), ('mb', 2**20), ('gb', 2**30), ('b', 1))
+
+def sizetoint(s):
+    '''Convert a space specifier to a byte count.
+
+    >>> sizetoint('30')
+    30
+    >>> sizetoint('2.2kb')
+    2252
+    >>> sizetoint('6M')
+    6291456
+    '''
+    t = s.strip().lower()
+    try:
+        for k, u in _sizeunits:
+            if t.endswith(k):
+                return int(float(t[:-len(k)]) * u)
+        return int(t)
+    except ValueError:
+        raise error.ParseError(_("couldn't parse size: %s") % s)
+
+class hooks(object):
+    '''A collection of hook functions that can be used to extend a
+    function's behaviour. Hooks are called in lexicographic order,
+    based on the names of their sources.'''
+
+    def __init__(self):
+        self._hooks = []
+
+    def add(self, source, hook):
+        self._hooks.append((source, hook))
+
+    def __call__(self, *args):
+        self._hooks.sort(key=lambda x: x[0])
+        for source, hook in self._hooks:
+            hook(*args)
