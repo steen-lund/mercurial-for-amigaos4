@@ -39,6 +39,8 @@ class unfilteredpropertycache(propertycache):
     """propertycache that apply to unfiltered repo only"""
 
     def __get__(self, repo, type=None):
+        if hasunfilteredcache(repo, self.name):
+            return getattr(repo.unfiltered(), self.name)
         return super(unfilteredpropertycache, self).__get__(repo.unfiltered())
 
 class filteredpropertycache(propertycache):
@@ -1457,14 +1459,8 @@ class localrepository(object):
                     del mf[fn]
             return mf
 
-        if isinstance(node1, context.changectx):
-            ctx1 = node1
-        else:
-            ctx1 = self[node1]
-        if isinstance(node2, context.changectx):
-            ctx2 = node2
-        else:
-            ctx2 = self[node2]
+        ctx1 = self[node1]
+        ctx2 = self[node2]
 
         working = ctx2.rev() is None
         parentworking = working and ctx1 == self['.']

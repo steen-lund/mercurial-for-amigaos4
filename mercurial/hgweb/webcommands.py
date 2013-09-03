@@ -110,8 +110,10 @@ def file(web, req, tmpl):
 
 def _search(web, req, tmpl):
 
-    def changelist(**map):
-        count = 0
+    def revsearch(ctx):
+        yield ctx
+
+    def keywordsearch(query):
         lower = encoding.lower
         qw = lower(query).split()
 
@@ -137,6 +139,25 @@ def _search(web, req, tmpl):
             if miss:
                 continue
 
+            yield ctx
+
+    searchfuncs = {
+        'rev': revsearch,
+        'keyword': keywordsearch,
+    }
+
+    def getsearchmode(query):
+        try:
+            ctx = web.repo[query]
+        except (error.RepoError, error.LookupError):
+            return 'keyword', query
+        else:
+            return 'rev', ctx
+
+    def changelist(**map):
+        count = 0
+
+        for ctx in searchfunc(funcarg):
             count += 1
             n = ctx.node()
             showtags = webutil.showtag(web.repo, tmpl, 'changelogtag', n)
@@ -176,6 +197,9 @@ def _search(web, req, tmpl):
     morevars['revcount'] = revcount * 2
     morevars['rev'] = query
 
+    mode, funcarg = getsearchmode(query)
+    searchfunc = searchfuncs[mode]
+
     tip = web.repo['tip']
     parity = paritygen(web.stripecount)
 
@@ -188,16 +212,10 @@ def changelog(web, req, tmpl, shortlog=False):
     query = ''
     if 'node' in req.form:
         ctx = webutil.changectx(web.repo, req)
+    elif 'rev' in req.form:
+        return _search(web, req, tmpl)
     else:
-        if 'rev' in req.form:
-            query = req.form['rev'][0]
-            hi = query
-        else:
-            hi = 'tip'
-        try:
-            ctx = web.repo[hi]
-        except (error.RepoError, error.LookupError):
-            return _search(web, req, tmpl) # XXX redirect to 404 page?
+        ctx = web.repo['tip']
 
     def changelist(latestonly, **map):
         revs = []

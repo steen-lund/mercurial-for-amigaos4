@@ -66,6 +66,7 @@ from mercurial import commands, cmdutil, hg, scmutil, util, revset
 from mercurial import repair, extensions, error, phases
 from mercurial import patch as patchmod
 from mercurial import localrepo
+from mercurial import subrepo
 import os, re, errno, shutil
 
 commands.norepo += " qclone"
@@ -800,6 +801,14 @@ class queue(object):
                 p1, p2 = repo.dirstate.parents()
                 repo.setparents(p1, merge)
 
+            if all_files and '.hgsubstate' in all_files:
+                wctx = repo['.']
+                mctx = actx = repo[None]
+                overwrite = False
+                mergedsubstate = subrepo.submerge(repo, wctx, mctx, actx,
+                    overwrite)
+                files += mergedsubstate.keys()
+
             match = scmutil.matchfiles(repo, files or [])
             oldtip = repo['tip']
             n = newcommit(repo, None, message, ph.user, ph.date, match=match,
@@ -975,11 +984,20 @@ class queue(object):
         else:
             raise util.Abort(_("local changes found"))
 
+    def localchangedsubreposfound(self, refresh=True):
+        if refresh:
+            raise util.Abort(_("local changed subrepos found, refresh first"))
+        else:
+            raise util.Abort(_("local changed subrepos found"))
+
     def checklocalchanges(self, repo, force=False, refresh=True):
         cmdutil.checkunfinished(repo)
         m, a, r, d = repo.status()[:4]
-        if (m or a or r or d) and not force:
-            self.localchangesfound(refresh)
+        if not force:
+            if (m or a or r or d):
+                self.localchangesfound(refresh)
+            if self.checksubstate(repo):
+                self.localchangedsubreposfound(refresh)
         return m, a, r, d
 
     _reserved = ('series', 'status', 'guards', '.', '..')
@@ -1450,6 +1468,8 @@ class queue(object):
                 self.ui.status(_("popping %s\n") % patch.name)
             del self.applied[start:end]
             self.strip(repo, [rev], update=False, backup='strip')
+            for s, state in repo['.'].substate.items():
+                repo['.'].sub(s).get(state)
             if self.applied:
                 self.ui.write(_("now at: %s\n") % self.applied[-1].name)
             else:
