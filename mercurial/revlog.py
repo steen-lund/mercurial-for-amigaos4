@@ -14,7 +14,7 @@ and O(changes) merge between branches.
 # import stuff from node for others to import from revlog
 from node import bin, hex, nullid, nullrev
 from i18n import _
-import ancestor, mdiff, parsers, error, util
+import ancestor, mdiff, parsers, error, util, templatefilters
 import struct, zlib, errno
 
 _pack = struct.pack
@@ -943,10 +943,16 @@ class revlog(object):
 
     def _checkhash(self, text, node, rev):
         p1, p2 = self.parents(node)
-        if node != hash(text, p1, p2):
-            raise RevlogError(_("integrity check failed on %s:%d")
-                              % (self.indexfile, rev))
+        self.checkhash(text, p1, p2, node, rev)
         return text
+
+    def checkhash(self, text, p1, p2, node, rev=None):
+        if node != hash(text, p1, p2):
+            revornode = rev
+            if revornode is None:
+                revornode = templatefilters.short(hex(node))
+            raise RevlogError(_("integrity check failed on %s:%s")
+                % (self.indexfile, revornode))
 
     def checkinlinesize(self, tr, fp=None):
         if not self._inline or (self.start(-2) + self.length(-2)) < _maxinline:
@@ -987,7 +993,8 @@ class revlog(object):
         tr.replace(self.indexfile, trindex * self._io.size)
         self._chunkclear()
 
-    def addrevision(self, text, transaction, link, p1, p2, cachedelta=None):
+    def addrevision(self, text, transaction, link, p1, p2, cachedelta=None,
+                    node=None):
         """add a revision to the log
 
         text - the revision data to add
@@ -995,11 +1002,14 @@ class revlog(object):
         link - the linkrev data to add
         p1, p2 - the parent nodeids of the revision
         cachedelta - an optional precomputed delta
+        node - nodeid of revision; typically node is not specified, and it is
+            computed by default as hash(text, p1, p2), however subclasses might
+            use different hashing method (and override checkhash() in such case)
         """
         if link == nullrev:
             raise RevlogError(_("attempted to add linkrev -1 to %s")
                               % self.indexfile)
-        node = hash(text, p1, p2)
+        node = node or hash(text, p1, p2)
         if node in self.nodemap:
             return node
 
@@ -1063,9 +1073,7 @@ class revlog(object):
             ifh.flush()
             basetext = self.revision(self.node(cachedelta[0]))
             btext[0] = mdiff.patch(basetext, cachedelta[1])
-            chk = hash(btext[0], p1, p2)
-            if chk != node:
-                raise RevlogError(_("consistency error in delta"))
+            self.checkhash(btext[0], p1, p2, node)
             return btext[0]
 
         def builddelta(rev):
