@@ -9,7 +9,7 @@ import os, mimetypes, re, cgi, copy
 import webutil
 from mercurial import error, encoding, archival, templater, templatefilters
 from mercurial.node import short, hex, nullid
-from mercurial.util import binary
+from mercurial import util
 from common import paritygen, staticfile, get_contact, ErrorResponse
 from common import HTTP_OK, HTTP_FORBIDDEN, HTTP_NOT_FOUND
 from mercurial import graphmod, patch
@@ -57,7 +57,7 @@ def rawfile(web, req, tmpl):
     if guessmime:
         mt = mimetypes.guess_type(path)[0]
         if mt is None:
-            mt = binary(text) and 'application/binary' or 'text/plain'
+            mt = util.binary(text) and 'application/binary' or 'text/plain'
     if mt.startswith('text/'):
         mt += '; charset="%s"' % encoding.encoding
 
@@ -69,7 +69,7 @@ def _filerevision(web, tmpl, fctx):
     text = fctx.data()
     parity = paritygen(web.stripecount)
 
-    if binary(text):
+    if util.binary(text):
         mt = mimetypes.guess_type(f)[0] or 'application/octet-stream'
         text = '(binary:%s)' % mt
 
@@ -109,9 +109,13 @@ def file(web, req, tmpl):
             raise inst
 
 def _search(web, req, tmpl):
+    MODE_REVISION = 'rev'
+    MODE_KEYWORD = 'keyword'
 
-    def changelist(**map):
-        count = 0
+    def revsearch(ctx):
+        yield ctx
+
+    def keywordsearch(query):
         lower = encoding.lower
         qw = lower(query).split()
 
@@ -137,6 +141,25 @@ def _search(web, req, tmpl):
             if miss:
                 continue
 
+            yield ctx
+
+    searchfuncs = {
+        MODE_REVISION: revsearch,
+        MODE_KEYWORD: keywordsearch,
+    }
+
+    def getsearchmode(query):
+        try:
+            ctx = web.repo[query]
+        except (error.RepoError, error.LookupError):
+            return MODE_KEYWORD, query
+        else:
+            return MODE_REVISION, ctx
+
+    def changelist(**map):
+        count = 0
+
+        for ctx in searchfunc(funcarg):
             count += 1
             n = ctx.node()
             showtags = webutil.showtag(web.repo, tmpl, 'changelogtag', n)
@@ -176,6 +199,9 @@ def _search(web, req, tmpl):
     morevars['revcount'] = revcount * 2
     morevars['rev'] = query
 
+    mode, funcarg = getsearchmode(query)
+    searchfunc = searchfuncs[mode]
+
     tip = web.repo['tip']
     parity = paritygen(web.stripecount)
 
@@ -188,16 +214,10 @@ def changelog(web, req, tmpl, shortlog=False):
     query = ''
     if 'node' in req.form:
         ctx = webutil.changectx(web.repo, req)
+    elif 'rev' in req.form:
+        return _search(web, req, tmpl)
     else:
-        if 'rev' in req.form:
-            query = req.form['rev'][0]
-            hi = query
-        else:
-            hi = 'tip'
-        try:
-            ctx = web.repo[hi]
-        except (error.RepoError, error.LookupError):
-            return _search(web, req, tmpl) # XXX redirect to 404 page?
+        ctx = web.repo['tip']
 
     def changelist(latestonly, **map):
         revs = []
@@ -617,7 +637,7 @@ def comparison(web, req, tmpl):
         context = parsecontext(web.config('web', 'comparisoncontext', '5'))
 
     def filelines(f):
-        if binary(f.data()):
+        if util.binary(f.data()):
             mt = mimetypes.guess_type(f.path())[0]
             if not mt:
                 mt = 'application/octet-stream'
@@ -675,7 +695,7 @@ def annotate(web, req, tmpl):
 
     def annotate(**map):
         last = None
-        if binary(fctx.data()):
+        if util.binary(fctx.data()):
             mt = (mimetypes.guess_type(fctx.path())[0]
                   or 'application/octet-stream')
             lines = enumerate([((fctx.filectx(fctx.filerev()), 1),
