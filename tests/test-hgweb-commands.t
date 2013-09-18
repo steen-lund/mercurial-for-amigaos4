@@ -305,6 +305,18 @@ Logs and changes
   | rev 3: <a href="/shortlog/2ef0ac749a14">(0)</a> <a href="/shortlog/tip">tip</a> 
   </div>
   
+  <script type="text/javascript">
+      ajaxScrollInit(
+              '/shortlog/%hash%',
+              '', <!-- NEXTHASH
+              /'(\w+)', <!-- NEXTHASH/,
+              '.bigtable > tbody:nth-of-type(2)',
+              '<tr class="%class%">\
+              <td colspan="3" style="text-align: center;">%text%</td>\
+              </tr>'
+      );
+  </script>
+  
   </div>
   </div>
   
@@ -537,6 +549,153 @@ Logs and changes
   </body>
   </html>
   
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=stable&style=raw' | grep 'revision:'
+  revision:    2
+
+Search with revset syntax
+
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=tip^&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "tip^"
+  
+  changeset:   1d22e65f027e5a0609357e7d8e7508cd2ba5d2fe
+  revision:    2
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     branch
+  branch:      stable
+  
+  
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=last(all(),2)^&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "last(all(),2)^"
+  
+  changeset:   1d22e65f027e5a0609357e7d8e7508cd2ba5d2fe
+  revision:    2
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     branch
+  branch:      stable
+  
+  changeset:   a4f92ed23982be056b9852de5dfe873eaac7f0de
+  revision:    1
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     Added tag 1.0 for changeset 2ef0ac749a14
+  branch:      default
+  
+  
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=last(all(,2)^&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "last(all(,2)^"
+  
+  
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=last(al(),2)^&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "last(al(),2)^"
+  
+  
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=bookmark(anotherthing)&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "bookmark(anotherthing)"
+  
+  changeset:   2ef0ac749a14e4f57a5a822464a0902c6f7f448f
+  revision:    0
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     base
+  tag:         1.0
+  bookmark:    anotherthing
+  
+  
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=bookmark(abc)&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "bookmark(abc)"
+  
+  
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=deadbeef:&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "deadbeef:"
+  
+  
+
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=user("test")&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "user("test")"
+  
+  changeset:   cad8025a2e87f88c06259790adfa15acb4080123
+  revision:    3
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     branch commit with null character: \x00 (esc)
+  branch:      unstable
+  tag:         tip
+  bookmark:    something
+  
+  changeset:   1d22e65f027e5a0609357e7d8e7508cd2ba5d2fe
+  revision:    2
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     branch
+  branch:      stable
+  
+  changeset:   a4f92ed23982be056b9852de5dfe873eaac7f0de
+  revision:    1
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     Added tag 1.0 for changeset 2ef0ac749a14
+  branch:      default
+  
+  changeset:   2ef0ac749a14e4f57a5a822464a0902c6f7f448f
+  revision:    0
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     base
+  tag:         1.0
+  bookmark:    anotherthing
+  
+  
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'log?rev=user("re:test")&style=raw'
+  200 Script output follows
+  
+  
+  # HG changesets search
+  # Node ID cad8025a2e87f88c06259790adfa15acb4080123
+  # Query "user("re:test")"
+  
+  
 
 File-related
 
@@ -637,7 +796,6 @@ File-related
    <th class="author">children</th>
    <td class="author"><a href="/file/1d22e65f027e/foo">1d22e65f027e</a> </td>
   </tr>
-  
   </table>
   
   <div class="overflow">
@@ -1256,8 +1414,10 @@ commit message with Japanese Kanji 'Noh', which ends with '\x5c'
 
 Graph json escape of multibyte character
 
-  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'graph/' \
-  >     | grep -a '^var data ='
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'graph/' > out
+  >>> for line in open("out"):
+  ...     if line.startswith("var data ="):
+  ...         print line,
   var data = [["061dd13ba3c3", [0, 1], [[0, 0, 1, -1, ""]], "\\u80fd", "test", "1970-01-01", ["unstable", true], ["tip"], ["something"]], ["cad8025a2e87", [0, 1], [[0, 0, 1, 3, "FF0000"]], "branch commit with null character: \x00", "test", "1970-01-01", ["unstable", false], [], []], ["1d22e65f027e", [0, 1], [[0, 0, 1, 3, ""]], "branch", "test", "1970-01-01", ["stable", true], [], []], ["a4f92ed23982", [0, 1], [[0, 0, 1, 3, ""]], "Added tag 1.0 for changeset 2ef0ac749a14", "test", "1970-01-01", ["default", true], [], []], ["2ef0ac749a14", [0, 1], [], "base", "test", "1970-01-01", ["default", false], ["1.0"], ["anotherthing"]]]; (esc)
 
 capabilities
