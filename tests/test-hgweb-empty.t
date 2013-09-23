@@ -90,6 +90,21 @@ Some tests for hgweb in an empty repository
   | rev -1: 
   </div>
   
+  <script type="text/javascript">
+      ajaxScrollInit(
+              '/shortlog/%next%',
+              '', <!-- NEXTHASH
+              function (htmlText, previousVal) {
+                  var m = htmlText.match(/'(\w+)', <!-- NEXTHASH/);
+                  return m ? m[1] : null;
+              },
+              '.bigtable > tbody:nth-of-type(2)',
+              '<tr class="%class%">\
+              <td colspan="3" style="text-align: center;">%text%</td>\
+              </tr>'
+      );
+  </script>
+  
   </div>
   </div>
   
@@ -184,6 +199,21 @@ Some tests for hgweb in an empty repository
   <a href="/shortlog/-1?revcount=20">more</a>
   | rev -1: 
   </div>
+  
+  <script type="text/javascript">
+      ajaxScrollInit(
+              '/shortlog/%next%',
+              '', <!-- NEXTHASH
+              function (htmlText, previousVal) {
+                  var m = htmlText.match(/'(\w+)', <!-- NEXTHASH/);
+                  return m ? m[1] : null;
+              },
+              '.bigtable > tbody:nth-of-type(2)',
+              '<tr class="%class%">\
+              <td colspan="3" style="text-align: center;">%text%</td>\
+              </tr>'
+      );
+  </script>
   
   </div>
   </div>
@@ -328,6 +358,17 @@ Some tests for hgweb in an empty repository
   <a href="/graph/-1?revcount=120">more</a>
   | rev -1: 
   </div>
+  
+  <script type="text/javascript">
+      ajaxScrollInit(
+              '/graph/-1?revcount=%next%',
+              60+60,
+              function (htmlText, previousVal) { return previousVal + 60; },
+              '#wrapper',
+              '<div class="%class%" style="text-align: center;">%text%</div>',
+              'graph'
+      );
+  </script>
   
   </div>
   </div>
