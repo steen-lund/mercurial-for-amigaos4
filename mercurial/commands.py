@@ -12,7 +12,8 @@ import os, re, difflib, time, tempfile, errno
 import hg, scmutil, util, revlog, copies, error, bookmarks
 import patch, help, encoding, templatekw, discovery
 import archival, changegroup, cmdutil, hbisect
-import sshserver, hgweb, hgweb.server, commandserver
+import sshserver, hgweb, commandserver
+from hgweb import server as hgweb_server
 import merge as mergemod
 import minirst, revset, fileset
 import dagparser, context, simplemerge, graphmod
@@ -1923,6 +1924,7 @@ def debugfsinfo(ui, path = "."):
     util.writefile('.debugfsinfo', '')
     ui.write(('exec: %s\n') % (util.checkexec(path) and 'yes' or 'no'))
     ui.write(('symlink: %s\n') % (util.checklink(path) and 'yes' or 'no'))
+    ui.write(('hardlink: %s\n') % (util.checknlink(path) and 'yes' or 'no'))
     ui.write(('case-sensitive: %s\n') % (util.checkcase('.debugfsinfo')
                                 and 'yes' or 'no'))
     os.unlink('.debugfsinfo')
@@ -4525,6 +4527,8 @@ def postincoming(ui, repo, modheads, optupdate, checkout):
             ret = hg.update(repo, checkout)
         except util.Abort, inst:
             ui.warn(_("not updating: %s\n") % str(inst))
+            if inst.hint:
+                ui.warn(_("(%s)\n") % inst.hint)
             return 0
         if not ret and not checkout:
             if bookmarks.update(repo, [movemarkfrom], repo['.'].node()):
@@ -5182,7 +5186,7 @@ def serve(ui, repo, **opts):
     class service(object):
         def init(self):
             util.setsignalhandler()
-            self.httpd = hgweb.server.create_server(ui, app)
+            self.httpd = hgweb_server.create_server(ui, app)
 
             if opts['port'] and not ui.verbose:
                 return
@@ -5846,7 +5850,7 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
     if check:
         c = repo[None]
         if c.dirty(merge=False, branch=False, missing=True):
-            raise util.Abort(_("uncommitted local changes"))
+            raise util.Abort(_("uncommitted changes"))
         if rev is None:
             rev = repo[repo[None].branch()].rev()
         mergemod._checkunknown(repo, repo[None], repo[rev])

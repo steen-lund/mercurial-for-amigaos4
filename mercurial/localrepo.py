@@ -39,6 +39,8 @@ class unfilteredpropertycache(propertycache):
     """propertycache that apply to unfiltered repo only"""
 
     def __get__(self, repo, type=None):
+        if hasunfilteredcache(repo, self.name):
+            return getattr(repo.unfiltered(), self.name)
         return super(unfilteredpropertycache, self).__get__(repo.unfiltered())
 
 class filteredpropertycache(propertycache):
@@ -144,11 +146,13 @@ class locallegacypeer(localpeer):
 class localrepository(object):
 
     supportedformats = set(('revlogv1', 'generaldelta'))
-    supported = supportedformats | set(('store', 'fncache', 'shared',
-                                        'dotencode'))
+    _basesupported = supportedformats | set(('store', 'fncache', 'shared',
+                                             'dotencode'))
     openerreqs = set(('revlogv1', 'generaldelta'))
     requirements = ['revlogv1']
     filtername = None
+
+    featuresetupfuncs = set()
 
     def _baserequirements(self, create):
         return self.requirements[:]
@@ -173,6 +177,13 @@ class localrepository(object):
             extensions.loadall(self.ui)
         except IOError:
             pass
+
+        if self.featuresetupfuncs:
+            self.supported = set(self._basesupported) # use private copy
+            for setupfunc in self.featuresetupfuncs:
+                setupfunc(self.ui, self.supported)
+        else:
+            self.supported = self._basesupported
 
         if not self.vfs.isdir():
             if create:
@@ -1457,14 +1468,8 @@ class localrepository(object):
                     del mf[fn]
             return mf
 
-        if isinstance(node1, context.changectx):
-            ctx1 = node1
-        else:
-            ctx1 = self[node1]
-        if isinstance(node2, context.changectx):
-            ctx2 = node2
-        else:
-            ctx2 = self[node2]
+        ctx1 = self[node1]
+        ctx2 = self[node2]
 
         working = ctx2.rev() is None
         parentworking = working and ctx1 == self['.']
@@ -1561,7 +1566,7 @@ class localrepository(object):
             for f in modified:
                 if ctx2.flags(f) == 'l':
                     d = ctx2[f].data()
-                    if len(d) >= 1024 or '\n' in d or util.binary(d):
+                    if d == '' or len(d) >= 1024 or '\n' in d or util.binary(d):
                         self.ui.debug('ignoring suspect symlink placeholder'
                                       ' "%s"\n' % f)
                         continue
@@ -1653,6 +1658,14 @@ class localrepository(object):
         return r
 
     def pull(self, remote, heads=None, force=False):
+        if remote.local():
+            missing = set(remote.requirements) - self.supported
+            if missing:
+                msg = _("required features are not"
+                        " supported in the destination:"
+                        " %s") % (', '.join(sorted(missing)))
+                raise util.Abort(msg)
+
         # don't open transaction for nothing or you break future useful
         # rollback call
         tr = None
@@ -1753,6 +1766,14 @@ class localrepository(object):
             we have outgoing changesets but refused to push
           - other values as described by addchangegroup()
         '''
+        if remote.local():
+            missing = set(self.requirements) - remote.local().supported
+            if missing:
+                msg = _("required features are not"
+                        " supported in the destination:"
+                        " %s") % (', '.join(sorted(missing)))
+                raise util.Abort(msg)
+
         # there are two ways to push to remote repo:
         #
         # addchangegroup assumes local user can lock remote
