@@ -38,8 +38,8 @@
   query 2; still undecided: 1, sample size is: 1
   2 total queries
   listing keys for "bookmarks"
-  new remote heads on branch 'default'
-  new remote head 1e108cc5548c
+  new remote heads on branch 'default':
+   1e108cc5548c
   abort: push creates new remote head 1e108cc5548c!
   (pull and merge or see "hg help push" for details about pushing new heads)
   [255]
@@ -129,9 +129,9 @@
   $ hg push -v -r 3 -r 4 ../c
   pushing to ../c
   searching for changes
-  new remote heads on branch 'default'
-  new remote head a5dda829a167
-  new remote head ee8fbc7a0295
+  new remote heads on branch 'default':
+   a5dda829a167
+   ee8fbc7a0295
   abort: push creates new remote head a5dda829a167!
   (merge or see "hg help push" for details about pushing new heads)
   [255]
@@ -367,7 +367,7 @@ Pushing muliple headed new branch:
   $ hg push --branch f --new-branch ../f
   pushing to ../f
   searching for changes
-  abort: push creates multiple headed new branch 'f'
+  abort: push creates new branch 'f' with multiple heads
   (merge or see "hg help push" for details about pushing new heads)
   [255]
   $ hg push --branch f --new-branch --force ../f
