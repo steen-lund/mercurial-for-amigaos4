@@ -401,7 +401,29 @@ class revlog(object):
         heads = [self.rev(n) for n in heads]
 
         # we want the ancestors, but inclusive
-        has = set(self.ancestors(common))
+        class lazyset(object):
+            def __init__(self, lazyvalues):
+                self.addedvalues = set()
+                self.lazyvalues = lazyvalues
+
+            def __contains__(self, value):
+                return value in self.addedvalues or value in self.lazyvalues
+
+            def __iter__(self):
+                added = self.addedvalues
+                for r in added:
+                    yield r
+                for r in self.lazyvalues:
+                    if not r in added:
+                        yield r
+
+            def add(self, value):
+                self.addedvalues.add(value)
+
+            def update(self, values):
+                self.addedvalues.update(values)
+
+        has = lazyset(self.ancestors(common))
         has.add(nullrev)
         has.update(common)
 
@@ -1263,6 +1285,46 @@ class revlog(object):
 
         return content
 
+    def getstrippoint(self, minlink):
+        """find the minimum rev that must be stripped to strip the linkrev
+
+        Returns a tuple containing the minimum rev and a set of all revs that
+        have linkrevs that will be broken by this strip.
+        """
+        brokenrevs = set()
+        strippoint = len(self)
+
+        heads = {}
+        futurelargelinkrevs = set()
+        for head in self.headrevs():
+            headlinkrev = self.linkrev(head)
+            heads[head] = headlinkrev
+            if headlinkrev >= minlink:
+                futurelargelinkrevs.add(headlinkrev)
+
+        # This algorithm involves walking down the rev graph, starting at the
+        # heads. Since the revs are topologically sorted according to linkrev,
+        # once all head linkrevs are below the minlink, we know there are
+        # no more revs that could have a linkrev greater than minlink.
+        # So we can stop walking.
+        while futurelargelinkrevs:
+            strippoint -= 1
+            linkrev = heads.pop(strippoint)
+
+            if linkrev < minlink:
+                brokenrevs.add(strippoint)
+            else:
+                futurelargelinkrevs.remove(linkrev)
+
+            for p in self.parentrevs(strippoint):
+                if p != nullrev:
+                    plinkrev = self.linkrev(p)
+                    heads[p] = plinkrev
+                    if plinkrev >= minlink:
+                        futurelargelinkrevs.add(plinkrev)
+
+        return strippoint, brokenrevs
+
     def strip(self, minlink, transaction):
         """truncate the revlog on the first revision with a linkrev >= minlink
 
@@ -1280,10 +1342,8 @@ class revlog(object):
         if len(self) == 0:
             return
 
-        for rev in self:
-            if self.index[rev][4] >= minlink:
-                break
-        else:
+        rev, _ = self.getstrippoint(minlink)
+        if rev == len(self):
             return
 
         # first truncate the files on disk
