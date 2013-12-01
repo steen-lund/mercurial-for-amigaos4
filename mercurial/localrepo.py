@@ -8,14 +8,15 @@ from node import hex, nullid, short
 from i18n import _
 import peer, changegroup, subrepo, discovery, pushkey, obsolete, repoview
 import changelog, dirstate, filelog, manifest, context, bookmarks, phases
-import lock, transaction, store, encoding
+import lock as lockmod
+import transaction, store, encoding
 import scmutil, util, extensions, hook, error, revset
 import match as matchmod
 import merge as mergemod
 import tags as tagsmod
 from lock import release
 import weakref, errno, os, time, inspect
-import branchmap
+import branchmap, pathutil
 propertycache = util.propertycache
 filecache = scmutil.filecache
 
@@ -166,11 +167,12 @@ class localrepository(object):
         self.root = self.wvfs.base
         self.path = self.wvfs.join(".hg")
         self.origroot = path
-        self.auditor = scmutil.pathauditor(self.root, self._checknested)
+        self.auditor = pathutil.pathauditor(self.root, self._checknested)
         self.vfs = scmutil.vfs(self.path)
         self.opener = self.vfs
         self.baseui = baseui
         self.ui = baseui.copy()
+        self.ui.copy = baseui.copy # prevent copying repo configuration
         # A list of callback to shape the phase if no data were found.
         # Callback are in the form: func(repo, roots) --> processed root.
         # This list it to be filled by extension during repo setup
@@ -832,7 +834,7 @@ class localrepository(object):
         renames = [(vfs, x, undoname(x)) for vfs, x in self._journalfiles()]
         rp = report and report or self.ui.warn
         tr = transaction.transaction(rp, self.sopener,
-                                     self.sjoin("journal"),
+                                     "journal",
                                      aftertrans(renames),
                                      self.store.createmode)
         self._transref = weakref.ref(tr)
@@ -866,7 +868,7 @@ class localrepository(object):
         try:
             if self.svfs.exists("journal"):
                 self.ui.status(_("rolling back interrupted transaction\n"))
-                transaction.rollback(self.sopener, self.sjoin("journal"),
+                transaction.rollback(self.sopener, "journal",
                                      self.ui.warn)
                 self.invalidate()
                 return True
@@ -922,7 +924,7 @@ class localrepository(object):
 
         parents = self.dirstate.parents()
         self.destroying()
-        transaction.rollback(self.sopener, self.sjoin('undo'), ui.warn)
+        transaction.rollback(self.sopener, 'undo', ui.warn)
         if self.vfs.exists('undo.bookmarks'):
             self.vfs.rename('undo.bookmarks', 'bookmarks')
         if self.svfs.exists('undo.phaseroots'):
@@ -998,17 +1000,18 @@ class localrepository(object):
                 pass
         self.invalidatecaches()
 
-    def _lock(self, lockname, wait, releasefn, acquirefn, desc):
+    def _lock(self, vfs, lockname, wait, releasefn, acquirefn, desc):
         try:
-            l = lock.lock(lockname, 0, releasefn, desc=desc)
+            l = lockmod.lock(vfs, lockname, 0, releasefn, desc=desc)
         except error.LockHeld, inst:
             if not wait:
                 raise
             self.ui.warn(_("waiting for lock on %s held by %r\n") %
                          (desc, inst.locker))
             # default to 600 seconds timeout
-            l = lock.lock(lockname, int(self.ui.config("ui", "timeout", "600")),
-                          releasefn, desc=desc)
+            l = lockmod.lock(vfs, lockname,
+                             int(self.ui.config("ui", "timeout", "600")),
+                             releasefn, desc=desc)
         if acquirefn:
             acquirefn()
         return l
@@ -1041,7 +1044,7 @@ class localrepository(object):
                     continue
                 ce.refresh()
 
-        l = self._lock(self.sjoin("lock"), wait, unlock,
+        l = self._lock(self.svfs, "lock", wait, unlock,
                        self.invalidate, _('repository %s') % self.origroot)
         self._lockref = weakref.ref(l)
         return l
@@ -1059,7 +1062,7 @@ class localrepository(object):
             self.dirstate.write()
             self._filecache['dirstate'].refresh()
 
-        l = self._lock(self.join("wlock"), wait, unlock,
+        l = self._lock(self.vfs, "wlock", wait, unlock,
                        self.invalidatedirstate, _('working directory of %s') %
                        self.origroot)
         self._wlockref = weakref.ref(l)
@@ -1976,27 +1979,7 @@ class localrepository(object):
             if locallock is not None:
                 locallock.release()
 
-        self.ui.debug("checking for updated bookmarks\n")
-        rb = remote.listkeys('bookmarks')
-        revnums = map(unfi.changelog.rev, revs or [])
-        ancestors = [
-            a for a in unfi.changelog.ancestors(revnums, inclusive=True)]
-        for k in rb.keys():
-            if k in unfi._bookmarks:
-                nr, nl = rb[k], hex(self._bookmarks[k])
-                if nr in unfi:
-                    cr = unfi[nr]
-                    cl = unfi[nl]
-                    if bookmarks.validdest(unfi, cr, cl):
-                        if ancestors and cl.rev() not in ancestors:
-                            continue
-                        r = remote.pushkey('bookmarks', k, nr, nl)
-                        if r:
-                            self.ui.status(_("updating bookmark %s\n") % k)
-                        else:
-                            self.ui.warn(_('updating bookmark %s'
-                                           ' failed!\n') % k)
-
+        bookmarks.updateremote(self.ui, unfi, remote, revs)
         return ret
 
     def changegroupinfo(self, nodes, source):
