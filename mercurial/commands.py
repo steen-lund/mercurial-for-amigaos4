@@ -17,7 +17,8 @@ from hgweb import server as hgweb_server
 import merge as mergemod
 import minirst, revset, fileset
 import dagparser, context, simplemerge, graphmod
-import random, setdiscovery, treediscovery, dagutil, pvec, localrepo
+import random
+import setdiscovery, treediscovery, dagutil, pvec, localrepo
 import phases, obsolete
 
 table = {}
@@ -700,7 +701,7 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
                 ui.status(_('changeset %d:%s: %s\n') % (ctx, ctx, transition))
                 check_state(state, interactive=False)
                 # bisect
-                nodes, changesets, good = hbisect.bisect(repo.changelog, state)
+                nodes, changesets, bgood = hbisect.bisect(repo.changelog, state)
                 # update to next check
                 node = nodes[0]
                 if not noupdate:
@@ -709,7 +710,7 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
         finally:
             state['current'] = [node]
             hbisect.save_state(repo, state)
-        print_result(nodes, good)
+        print_result(nodes, bgood)
         return
 
     # update state
@@ -866,7 +867,7 @@ def bookmark(ui, repo, *names, **opts):
             if mark not in marks:
                 raise util.Abort(_("bookmark '%s' does not exist") % mark)
             if mark == repo._bookmarkcurrent:
-                bookmarks.setcurrent(repo, None)
+                bookmarks.unsetcurrent(repo)
             del marks[mark]
         marks.write()
 
@@ -892,7 +893,7 @@ def bookmark(ui, repo, *names, **opts):
             if newact is None:
                 newact = mark
             if inactive and mark == repo._bookmarkcurrent:
-                bookmarks.setcurrent(repo, None)
+                bookmarks.unsetcurrent(repo)
                 return
             tgt = cur
             if rev:
@@ -902,7 +903,7 @@ def bookmark(ui, repo, *names, **opts):
         if not inactive and cur == marks[newact] and not rev:
             bookmarks.setcurrent(repo, newact)
         elif cur != tgt and newact == repo._bookmarkcurrent:
-            bookmarks.setcurrent(repo, None)
+            bookmarks.unsetcurrent(repo)
         marks.write()
 
     # Same message whether trying to deactivate the current bookmark (-i
@@ -914,7 +915,7 @@ def bookmark(ui, repo, *names, **opts):
         if not repo._bookmarkcurrent:
             ui.status(_("no active bookmark\n"))
         else:
-            bookmarks.setcurrent(repo, None)
+            bookmarks.unsetcurrent(repo)
 
     else: # show bookmarks
         for bmark, n in sorted(marks.iteritems()):
@@ -2244,7 +2245,7 @@ def debugpathcomplete(ui, repo, *specs, **opts):
                     continue
                 s = f.find(os.sep, speclen)
                 if s >= 0:
-                    adddir(f[:s + 1])
+                    adddir(f[:s])
                 else:
                     addfile(f)
         return files, dirs
@@ -2265,10 +2266,6 @@ def debugpathcomplete(ui, repo, *specs, **opts):
         f, d = complete(spec, acceptable or 'nmar')
         files.update(f)
         dirs.update(d)
-    if not files and len(dirs) == 1:
-        # force the shell to consider a completion that matches one
-        # directory and zero files to be ambiguous
-        dirs.add(iter(dirs).next() + '.')
     files.update(dirs)
     ui.write('\n'.join(repo.pathto(p, cwd) for p in sorted(files)))
     ui.write('\n')
@@ -3762,12 +3759,12 @@ def import_(ui, repo, patch1=None, *patches, **opts):
                                         files, eolmode=None)
                     except patch.PatchError, e:
                         raise util.Abort(str(e))
-                    memctx = patch.makememctx(repo, (p1.node(), p2.node()),
-                                              message,
-                                              opts.get('user') or user,
-                                              opts.get('date') or date,
-                                              branch, files, store,
-                                              editor=cmdutil.commiteditor)
+                    memctx = context.makememctx(repo, (p1.node(), p2.node()),
+                                                message,
+                                                opts.get('user') or user,
+                                                opts.get('date') or date,
+                                                branch, files, store,
+                                                editor=cmdutil.commiteditor)
                     repo.savecommitmessage(memctx.description())
                     n = memctx.commit()
                 finally:
@@ -4713,25 +4710,11 @@ def push(ui, repo, dest=None, **opts):
     result = not result
 
     if opts.get('bookmark'):
-        rb = other.listkeys('bookmarks')
-        for b in opts['bookmark']:
-            # explicit push overrides remote bookmark if any
-            if b in repo._bookmarks:
-                ui.status(_("exporting bookmark %s\n") % b)
-                new = repo[b].hex()
-            elif b in rb:
-                ui.status(_("deleting remote bookmark %s\n") % b)
-                new = '' # delete
-            else:
-                ui.warn(_('bookmark %s does not exist on the local '
-                          'or remote repository!\n') % b)
-                return 2
-            old = rb.get(b, '')
-            r = other.pushkey('bookmarks', b, old, new)
-            if not r:
-                ui.warn(_('updating bookmark %s failed!\n') % b)
-                if not result:
-                    result = 2
+        bresult = bookmarks.pushtoremote(ui, repo, other, opts['bookmark'])
+        if bresult == 2:
+            return 2
+        if not result and bresult:
+            result = 2
 
     return result
 
