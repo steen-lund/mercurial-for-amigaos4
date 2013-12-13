@@ -103,6 +103,7 @@ if 'java' in sys.platform:
 
 requiredtools = [os.path.basename(sys.executable), "diff", "grep", "unzip",
                  "gunzip", "bunzip2", "sed"]
+createdfiles = []
 
 defaults = {
     'jobs': ('HGTEST_JOBS', 1),
@@ -420,6 +421,11 @@ def cleanup(options):
     if not options.keep_tmpdir:
         vlog("# Cleaning up HGTMP", HGTMP)
         shutil.rmtree(HGTMP, True)
+        for f in createdfiles:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
 def usecorrectpython():
     # some tests run python interpreter. they must use same
@@ -439,6 +445,7 @@ def usecorrectpython():
         if findprogram(pyexename) != sys.executable:
             try:
                 os.symlink(sys.executable, mypython)
+                createdfiles.append(mypython)
             except OSError, err:
                 # child processes may race, which is harmless
                 if err.errno != errno.EEXIST:
@@ -497,18 +504,6 @@ def installhg(options):
     os.chdir(TESTDIR)
 
     usecorrectpython()
-
-    vlog("# Installing dummy diffstat")
-    f = open(os.path.join(BINDIR, 'diffstat'), 'w')
-    f.write('#!' + sys.executable + '\n'
-            'import sys\n'
-            'files = 0\n'
-            'for line in sys.stdin:\n'
-            '    if line.startswith("diff "):\n'
-            '        files += 1\n'
-            'sys.stdout.write("files patched: %d\\n" % files)\n')
-    f.close()
-    os.chmod(os.path.join(BINDIR, 'diffstat'), 0700)
 
     if options.py3k_warnings and not options.anycoverage:
         vlog("# Updating hg command to enable Py3k Warnings switch")
@@ -1139,6 +1134,8 @@ def runtests(options, tests):
         _checkhglib("Tested")
         print "# Ran %d tests, %d skipped, %d failed." % (
             tested, skipped + ignored, failed)
+        if results['!']:
+            print 'python hash seed:', os.environ['PYTHONHASHSEED']
         if options.time:
             outputtimes(options)
 
@@ -1190,7 +1187,6 @@ def main():
         # use a random python hash seed all the time
         # we do the randomness ourself to know what seed is used
         os.environ['PYTHONHASHSEED'] = str(random.getrandbits(32))
-        print 'python hash seed:', os.environ['PYTHONHASHSEED']
 
     global TESTDIR, HGTMP, INST, BINDIR, PYTHONDIR, COVERAGE_FILE
     TESTDIR = os.environ["TESTDIR"] = os.getcwd()

@@ -196,6 +196,14 @@ class marker(object):
         self._data = data
         self._decodedmeta = None
 
+    def __hash__(self):
+        return hash(self._data)
+
+    def __eq__(self, other):
+        if type(other) != type(self):
+            return False
+        return self._data == other._data
+
     def precnode(self):
         """Precursor changeset node identifier"""
         return self._data[0]
@@ -268,7 +276,11 @@ class obsstore(object):
         if not _enabled:
             raise util.Abort('obsolete feature is not enabled on this repo')
         known = set(self._all)
-        new = [m for m in markers if m not in known]
+        new = []
+        for m in markers:
+            if m not in known:
+                known.add(m)
+                new.append(m)
         if new:
             f = self.sopener('obsstore', 'ab')
             try:
