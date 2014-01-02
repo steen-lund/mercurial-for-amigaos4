@@ -84,6 +84,7 @@ The header is followed by the markers. Each marker is made of:
 """
 import struct
 import util, base85, node
+import phases
 from i18n import _
 
 _pack = struct.pack
@@ -196,6 +197,14 @@ class marker(object):
         self._data = data
         self._decodedmeta = None
 
+    def __hash__(self):
+        return hash(self._data)
+
+    def __eq__(self, other):
+        if type(other) != type(self):
+            return False
+        return self._data == other._data
+
     def precnode(self):
         """Precursor changeset node identifier"""
         return self._data[0]
@@ -268,7 +277,11 @@ class obsstore(object):
         if not _enabled:
             raise util.Abort('obsolete feature is not enabled on this repo')
         known = set(self._all)
-        new = [m for m in markers if m not in known]
+        new = []
+        for m in markers:
+            if m not in known:
+                known.add(m)
+                new.append(m)
         if new:
             f = self.sopener('obsstore', 'ab')
             try:
@@ -428,20 +441,43 @@ def allsuccessors(obsstore, nodes, ignoreflags=0):
 
     Some successors may be unknown locally.
 
-    This is a linear yield unsuited to detecting split changesets."""
+    This is a linear yield unsuited to detecting split changesets. It includes
+    initial nodes too."""
     remaining = set(nodes)
     seen = set(remaining)
     while remaining:
         current = remaining.pop()
         yield current
         for mark in obsstore.successors.get(current, ()):
-            # ignore marker flagged with with specified flag
+            # ignore marker flagged with specified flag
             if mark[2] & ignoreflags:
                 continue
             for suc in mark[1]:
                 if suc not in seen:
                     seen.add(suc)
                     remaining.add(suc)
+
+def allprecursors(obsstore, nodes, ignoreflags=0):
+    """Yield node for every precursors of <nodes>.
+
+    Some precursors may be unknown locally.
+
+    This is a linear yield unsuited to detecting folded changesets. It includes
+    initial nodes too."""
+
+    remaining = set(nodes)
+    seen = set(remaining)
+    while remaining:
+        current = remaining.pop()
+        yield current
+        for mark in obsstore.precursors.get(current, ()):
+            # ignore marker flagged with specified flag
+            if mark[2] & ignoreflags:
+                continue
+            suc = mark[0]
+            if suc not in seen:
+                seen.add(suc)
+                remaining.add(suc)
 
 def foreground(repo, nodes):
     """return all nodes in the "foreground" of other node
@@ -751,14 +787,26 @@ def _computeextinctset(repo):
 @cachefor('bumped')
 def _computebumpedset(repo):
     """the set of revs trying to obsolete public revisions"""
-    # get all possible bumped changesets
-    tonode = repo.changelog.node
-    publicnodes = (tonode(r) for r in repo.revs('public()'))
-    successors = allsuccessors(repo.obsstore, publicnodes,
-                               ignoreflags=bumpedfix)
-    # revision public or already obsolete don't count as bumped
-    query = '%ld - obsolete() - public()'
-    return set(repo.revs(query, _knownrevs(repo, successors)))
+    bumped = set()
+    # utils function (avoid attribut lookup in the loop)
+    phase = repo._phasecache.phase # would be faster to grab the full list
+    public = phases.public
+    cl = repo.changelog
+    torev = cl.nodemap.get
+    obs = getrevs(repo, 'obsolete')
+    for rev in repo:
+        # We only evaluate mutable, non-obsolete revision
+        if (public < phase(repo, rev)) and (rev not in obs):
+            node = cl.node(rev)
+            # (future) A cache of precursors may worth if split is very common
+            for pnode in allprecursors(repo.obsstore, [node],
+                                       ignoreflags=bumpedfix):
+                prev = torev(pnode) # unfiltered! but so is phasecache
+                if (prev is not None) and (phase(repo, prev) <= public):
+                    # we have a public precursors
+                    bumped.add(rev)
+                    break # Next draft!
+    return bumped
 
 @cachefor('divergent')
 def _computedivergentset(repo):

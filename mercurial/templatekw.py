@@ -220,11 +220,12 @@ def showdiffstat(repo, ctx, templ, **args):
     return '%s: +%s/-%s' % (len(stats), adds, removes)
 
 def showextras(**args):
-    templ = args['templ']
-    for key, value in sorted(args['ctx'].extra().items()):
-        args = args.copy()
-        args.update(dict(key=key, value=value))
-        yield templ('extra', **args)
+    """:extras: List of dicts with key, value entries of the 'extras'
+    field of this changeset."""
+    extras = args['ctx'].extra()
+    c = [{'key': x[0], 'value': x[1]} for x in sorted(extras.items())]
+    f = _showlist('extra', c, plural='extras', **args)
+    return _hybrid(f, c, lambda x: '%s=%s' % (x['key'], x['value']))
 
 def showfileadds(**args):
     """:file_adds: List of strings. Files added by this changeset."""
@@ -392,6 +393,7 @@ dockeywords = {
     'parents': _showparents,
 }
 dockeywords.update(keywords)
+del dockeywords['branches']
 
 # tell hggettext to extract docstrings from these functions:
 i18nfunctions = dockeywords.values()

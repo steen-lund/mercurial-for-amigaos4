@@ -219,7 +219,8 @@ def _oldheadssummary(repo, remoteheads, outgoing, inc=False):
     unsynced = inc and set([None]) or set()
     return {None: (oldheads, newheads, unsynced)}
 
-def checkheads(repo, remote, outgoing, remoteheads, newbranch=False, inc=False):
+def checkheads(repo, remote, outgoing, remoteheads, newbranch=False, inc=False,
+               newbookmarks=[]):
     """Check that a push won't add any outgoing head
 
     raise Abort error and display ui message as needed.
@@ -259,6 +260,9 @@ def checkheads(repo, remote, outgoing, remoteheads, newbranch=False, inc=False):
             lctx, rctx = repo[bm], repo[rnode]
             if bookmarks.validdest(repo, rctx, lctx):
                 bookmarkedheads.add(lctx.node())
+        else:
+            if bm in newbookmarks:
+                bookmarkedheads.add(repo[bm].node())
 
     # 3. Check for new heads.
     # If there are more heads after the push than before, a suitable
@@ -313,8 +317,8 @@ def checkheads(repo, remote, outgoing, remoteheads, newbranch=False, inc=False):
             if 1 < len(newhs):
                 dhs = list(newhs)
                 if error is None:
-                    error = (_("push creates multiple headed new branch '%s'")
-                             % (branch))
+                    error = (_("push creates new branch '%s' "
+                               "with multiple heads") % (branch))
                     hint = _("merge or"
                              " see \"hg help push\" for details about"
                              " pushing new heads")
@@ -337,10 +341,12 @@ def checkheads(repo, remote, outgoing, remoteheads, newbranch=False, inc=False):
                     hint = _("merge or"
                              " see \"hg help push\" for details about"
                              " pushing new heads")
-            if branch is not None:
-                repo.ui.note(_("new remote heads on branch '%s'\n") % branch)
+            if branch is None:
+                repo.ui.note(_("new remote heads:\n"))
+            else:
+                repo.ui.note(_("new remote heads on branch '%s':\n") % branch)
             for h in dhs:
-                repo.ui.note(_("new remote head %s\n") % short(h))
+                repo.ui.note((" %s\n") % short(h))
     if error:
         raise util.Abort(error, hint=hint)
 
