@@ -245,6 +245,31 @@ def fill(context, mapping, args):
 
     return templatefilters.fill(text, width, initindent, hangindent)
 
+def pad(context, mapping, args):
+    """usage: pad(text, width, fillchar=' ', right=False)
+    """
+    if not (2 <= len(args) <= 4):
+        raise error.ParseError(_("pad() expects two to four arguments"))
+
+    width = int(args[1][1])
+
+    text = stringify(args[0][0](context, mapping, args[0][1]))
+    if args[0][0] == runstring:
+        text = stringify(runtemplate(context, mapping,
+            compiletemplate(text, context)))
+
+    right = False
+    fillchar = ' '
+    if len(args) > 2:
+        fillchar = stringify(args[2][0](context, mapping, args[2][1]))
+    if len(args) > 3:
+        right = util.parsebool(args[3][1])
+
+    if right:
+        return text.rjust(width, fillchar)
+    else:
+        return text.ljust(width, fillchar)
+
 def get(context, mapping, args):
     if len(args) != 2:
         # i18n: "get" is a keyword
@@ -328,6 +353,52 @@ def rstdoc(context, mapping, args):
 
     return minirst.format(text, style=style, keep=['verbose'])
 
+def shortest(context, mapping, args):
+    """usage: shortest(node, minlength=4)
+    """
+    if not (1 <= len(args) <= 2):
+        raise error.ParseError(_("shortest() expects one or two arguments"))
+
+    node = stringify(args[0][0](context, mapping, args[0][1]))
+
+    minlength = 4
+    if len(args) > 1:
+        minlength = int(args[1][1])
+
+    cl = mapping['ctx']._repo.changelog
+    def isvalid(test):
+        try:
+            try:
+                cl.index.partialmatch(test)
+            except AttributeError:
+                # Pure mercurial doesn't support partialmatch on the index.
+                # Fallback to the slow way.
+                if cl._partialmatch(test) is None:
+                    return False
+
+            try:
+                int(test)
+                return False
+            except ValueError:
+                return True
+        except error.RevlogError:
+            return False
+
+    shortest = node
+    startlength = max(6, minlength)
+    length = startlength
+    while True:
+        test = node[:length]
+        if isvalid(test):
+            shortest = test
+            if length == minlength or length > startlength:
+                return shortest
+            length -= 1
+        else:
+            length += 1
+            if len(shortest) <= length:
+                return shortest
+
 def strip(context, mapping, args):
     if not (1 <= len(args) <= 2):
         raise error.ParseError(_("strip expects one or two arguments"))
@@ -368,7 +439,9 @@ funcs = {
     "ifeq": ifeq,
     "join": join,
     "label": label,
+    "pad": pad,
     "rstdoc": rstdoc,
+    "shortest": shortest,
     "strip": strip,
     "sub": sub,
 }

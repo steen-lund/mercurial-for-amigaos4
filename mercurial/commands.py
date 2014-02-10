@@ -1943,7 +1943,7 @@ def debugfileset(ui, repo, expr, **opts):
         tree = fileset.parse(expr)[0]
         ui.note(tree, "\n")
 
-    for f in fileset.getfileset(ctx, expr):
+    for f in ctx.getfileset(expr):
         ui.write("%s\n" % f)
 
 @command('debugfsinfo', [], _('[PATH]'))
@@ -2107,10 +2107,21 @@ def debuginstall(ui):
     import templater
     p = templater.templatepath()
     ui.status(_("checking templates (%s)...\n") % ' '.join(p))
-    try:
-        templater.templater(templater.templatepath("map-cmdline.default"))
-    except Exception, inst:
-        ui.write(" %s\n" % inst)
+    if p:
+        m = templater.templatepath("map-cmdline.default")
+        if m:
+            # template found, check if it is working
+            try:
+                templater.templater(m)
+            except Exception, inst:
+                ui.write(" %s\n" % inst)
+                p = None
+        else:
+            ui.write(_(" template 'default' not found\n"))
+            p = None
+    else:
+        ui.write(_(" no template directories found\n"))
+    if not p:
         ui.write(_(" (templates seem to have been installed incorrectly)\n"))
         problems += 1
 
@@ -2558,7 +2569,7 @@ def debugrevspec(ui, repo, expr):
         if newtree != tree:
             ui.note(revset.prettyformat(newtree), "\n")
     func = revset.match(ui, expr)
-    for c in func(repo, range(len(repo))):
+    for c in func(repo, revset.baseset(range(len(repo)))):
         ui.write("%s\n" % c)
 
 @command('debugsetparents', [], _('REV1 [REV2]'))

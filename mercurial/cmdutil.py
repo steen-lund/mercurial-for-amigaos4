@@ -10,7 +10,7 @@ from i18n import _
 import os, sys, errno, re, tempfile
 import util, scmutil, templater, patch, error, templatekw, revlog, copies
 import match as matchmod
-import subrepo, context, repair, graphmod, revset, phases, obsolete, pathutil
+import context, repair, graphmod, revset, phases, obsolete, pathutil
 import changelog
 import bookmarks
 import lock as lockmod
@@ -629,7 +629,7 @@ def diffordiffstat(ui, repo, diffopts, node1, node2, match,
     if listsubrepos:
         ctx1 = repo[node1]
         ctx2 = repo[node2]
-        for subpath, sub in subrepo.itersubrepos(ctx1, ctx2):
+        for subpath, sub in scmutil.itersubrepos(ctx1, ctx2):
             tempnode2 = node2
             try:
                 if node2 is not None:
@@ -1132,7 +1132,7 @@ def walkchangerevs(repo, match, opts, prepare):
     elif follow:
         revs = repo.revs('reverse(:.)')
     else:
-        revs = list(repo)
+        revs = revset.baseset(repo)
         revs.reverse()
     if not revs:
         return []
@@ -1140,6 +1140,7 @@ def walkchangerevs(repo, match, opts, prepare):
     slowpath = match.anypats() or (match.files() and opts.get('removed'))
     fncache = {}
     change = repo.changectx
+    revs = revset.baseset(revs)
 
     # First step is to fill wanted, the set of revisions that we want to yield.
     # When it does not induce extra cost, we also fill fncache for revisions in
@@ -1471,10 +1472,11 @@ def getgraphlogrevs(repo, pats, opts):
         if follow and len(repo) > 0:
             revs = repo.revs('reverse(:.)')
         else:
-            revs = list(repo.changelog)
+            revs = revset.baseset(repo.changelog)
             revs.reverse()
     if not revs:
         return [], None, None
+    revs = revset.baseset(revs)
     expr, filematcher = _makegraphlogrevset(repo, pats, opts, revs)
     if possiblyunsorted:
         revs.sort(reverse=True)
