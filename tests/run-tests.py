@@ -776,9 +776,9 @@ def tsttest(test, wd, options, replacements, env):
 
     # Merge the script output back into a unified test
 
+    warnonly = True
     pos = -1
     postout = []
-    ret = 0
     for l in output:
         lout, lcmd = l, None
         if salt in l:
@@ -797,11 +797,10 @@ def tsttest(test, wd, options, replacements, env):
             if isinstance(r, str):
                 if r == '+glob':
                     lout = el[:-1] + ' (glob)\n'
-                    r = False
+                    r = 0 # warn only
                 elif r == '-glob':
-                    log('\ninfo, unnecessary glob in %s (after line %d):'
-                        ' %s (glob)\n' % (test, pos, el[-1]))
-                    r = True # pass on unnecessary glob
+                    lout = ''.join(el.rsplit(' (glob)', 1))
+                    r = 0 # warn only
                 else:
                     log('\ninfo, unknown linematch result: %r\n' % r)
                     r = False
@@ -811,6 +810,8 @@ def tsttest(test, wd, options, replacements, env):
                 if needescape(lout):
                     lout = stringescape(lout.rstrip('\n')) + " (esc)\n"
                 postout.append("  " + lout) # let diff deal with it
+                if r != 0: # != warn only
+                    warnonly = False
 
         if lcmd:
             # add on last return code
@@ -825,6 +826,8 @@ def tsttest(test, wd, options, replacements, env):
     if pos in after:
         postout += after.pop(pos)
 
+    if warnonly and exitcode == 0:
+        exitcode = False
     return exitcode, postout
 
 wifexited = getattr(os, "WIFEXITED", lambda x: False)
@@ -882,8 +885,9 @@ def runone(options, test, count):
         return 's', test, msg
 
     def fail(msg, ret):
+        warned = ret is False
         if not options.nodiff:
-            log("\nERROR: %s %s" % (testpath, msg))
+            log("\n%s: %s %s" % (warned and 'Warning' or 'ERROR', test, msg))
         if (not ret and options.interactive
             and os.path.exists(testpath + ".err")):
             iolock.acquire()
@@ -896,7 +900,7 @@ def runone(options, test, count):
                 else:
                     rename(testpath + ".err", testpath + ".out")
                 return '.', test, ''
-        return '!', test, msg
+        return warned and '~' or '!', test, msg
 
     def success():
         return '.', test, ''
@@ -1075,7 +1079,7 @@ def _checkhglib(verb):
                          '         (expected %s)\n'
                          % (verb, actualhg, expecthg))
 
-results = {'.':[], '!':[], 's':[], 'i':[]}
+results = {'.':[], '!':[], '~': [], 's':[], 'i':[]}
 times = []
 iolock = threading.Lock()
 abort = False
@@ -1139,7 +1143,8 @@ def runtests(options, tests):
         scheduletests(options, tests)
 
         failed = len(results['!'])
-        tested = len(results['.']) + failed
+        warned = len(results['~'])
+        tested = len(results['.']) + failed + warned
         skipped = len(results['s'])
         ignored = len(results['i'])
 
@@ -1147,11 +1152,13 @@ def runtests(options, tests):
         if not options.noskips:
             for s in results['s']:
                 print "Skipped %s: %s" % s
+        for s in results['~']:
+            print "Warned %s: %s" % s
         for s in results['!']:
             print "Failed %s: %s" % s
         _checkhglib("Tested")
-        print "# Ran %d tests, %d skipped, %d failed." % (
-            tested, skipped + ignored, failed)
+        print "# Ran %d tests, %d skipped, %d warned, %d failed." % (
+            tested, skipped + ignored, warned, failed)
         if results['!']:
             print 'python hash seed:', os.environ['PYTHONHASHSEED']
         if options.time:
@@ -1164,7 +1171,9 @@ def runtests(options, tests):
         print "\ninterrupted!"
 
     if failed:
-        sys.exit(1)
+        return 1
+    if warned:
+        return 80
 
 testtypes = [('.py', pytest, '.out'),
              ('.t', tsttest, '')]
@@ -1255,8 +1264,9 @@ def main():
 
     # Include TESTDIR in PYTHONPATH so that out-of-tree extensions
     # can run .../tests/run-tests.py test-foo where test-foo
-    # adds an extension to HGRC
-    pypath = [PYTHONDIR, TESTDIR]
+    # adds an extension to HGRC. Also include run-test.py directory to import
+    # modules like heredoctest.
+    pypath = [PYTHONDIR, TESTDIR, os.path.abspath(os.path.dirname(__file__))]
     # We have to augment PYTHONPATH, rather than simply replacing
     # it, in case external libraries are only available via current
     # PYTHONPATH.  (In particular, the Subversion bindings on OS X
@@ -1274,7 +1284,7 @@ def main():
     vlog("# Using", IMPL_PATH, os.environ[IMPL_PATH])
 
     try:
-        runtests(options, tests)
+        sys.exit(runtests(options, tests) or 0)
     finally:
         time.sleep(.1)
         cleanup(options)
