@@ -1943,7 +1943,7 @@ def debugfileset(ui, repo, expr, **opts):
         tree = fileset.parse(expr)[0]
         ui.note(tree, "\n")
 
-    for f in fileset.getfileset(ctx, expr):
+    for f in ctx.getfileset(expr):
         ui.write("%s\n" % f)
 
 @command('debugfsinfo', [], _('[PATH]'))
@@ -2107,10 +2107,21 @@ def debuginstall(ui):
     import templater
     p = templater.templatepath()
     ui.status(_("checking templates (%s)...\n") % ' '.join(p))
-    try:
-        templater.templater(templater.templatepath("map-cmdline.default"))
-    except Exception, inst:
-        ui.write(" %s\n" % inst)
+    if p:
+        m = templater.templatepath("map-cmdline.default")
+        if m:
+            # template found, check if it is working
+            try:
+                templater.templater(m)
+            except Exception, inst:
+                ui.write(" %s\n" % inst)
+                p = None
+        else:
+            ui.write(_(" template 'default' not found\n"))
+            p = None
+    else:
+        ui.write(_(" no template directories found\n"))
+    if not p:
         ui.write(_(" (templates seem to have been installed incorrectly)\n"))
         problems += 1
 
@@ -2216,14 +2227,7 @@ def debugobsolete(ui, repo, precursor=None, *successors, **opts):
             l.release()
     else:
         for m in obsolete.allmarkers(repo):
-            ui.write(hex(m.precnode()))
-            for repl in m.succnodes():
-                ui.write(' ')
-                ui.write(hex(repl))
-            ui.write(' %X ' % m._data[2])
-            ui.write('{%s}' % (', '.join('%r: %r' % t for t in
-                                         sorted(m.metadata().items()))))
-            ui.write('\n')
+            cmdutil.showmarker(ui, m)
 
 @command('debugpathcomplete',
          [('f', 'full', None, _('complete an entire path')),
@@ -2544,8 +2548,10 @@ def debugrevlog(ui, repo, file_=None, **opts):
             ui.write(('deltas against other : ') + fmt % pcfmt(numother,
                                                              numdeltas))
 
-@command('debugrevspec', [], ('REVSPEC'))
-def debugrevspec(ui, repo, expr):
+@command('debugrevspec',
+    [('', 'optimize', None, _('print parsed tree after optimizing'))],
+    ('REVSPEC'))
+def debugrevspec(ui, repo, expr, **opts):
     """parse and apply a revision specification
 
     Use --verbose to print the parsed tree before and after aliases
@@ -2557,8 +2563,11 @@ def debugrevspec(ui, repo, expr):
         newtree = revset.findaliases(ui, tree)
         if newtree != tree:
             ui.note(revset.prettyformat(newtree), "\n")
+        if opts["optimize"]:
+            weight, optimizedtree = revset.optimize(newtree, True)
+            ui.note("* optimized:\n", revset.prettyformat(optimizedtree), "\n")
     func = revset.match(ui, expr)
-    for c in func(repo, range(len(repo))):
+    for c in func(repo, revset.spanset(repo)):
         ui.write("%s\n" % c)
 
 @command('debugsetparents', [], _('REV1 [REV2]'))
@@ -3669,10 +3678,6 @@ def import_(ui, repo, patch1=None, *patches, **opts):
     if date:
         opts['date'] = util.parsedate(date)
 
-    editor = cmdutil.commiteditor
-    if opts.get('edit'):
-        editor = cmdutil.commitforceeditor
-
     update = not opts.get('bypass')
     if not update and opts.get('no_commit'):
         raise util.Abort(_('cannot use --no-commit with --bypass'))
@@ -3691,112 +3696,9 @@ def import_(ui, repo, patch1=None, *patches, **opts):
         cmdutil.bailifchanged(repo)
 
     base = opts["base"]
-    strip = opts["strip"]
     wlock = lock = tr = None
     msgs = []
 
-    def tryone(ui, hunk, parents):
-        tmpname, message, user, date, branch, nodeid, p1, p2 = \
-            patch.extract(ui, hunk)
-
-        if not tmpname:
-            return (None, None)
-        msg = _('applied to working directory')
-
-        try:
-            cmdline_message = cmdutil.logmessage(ui, opts)
-            if cmdline_message:
-                # pickup the cmdline msg
-                message = cmdline_message
-            elif message:
-                # pickup the patch msg
-                message = message.strip()
-            else:
-                # launch the editor
-                message = None
-            ui.debug('message:\n%s\n' % message)
-
-            if len(parents) == 1:
-                parents.append(repo[nullid])
-            if opts.get('exact'):
-                if not nodeid or not p1:
-                    raise util.Abort(_('not a Mercurial patch'))
-                p1 = repo[p1]
-                p2 = repo[p2 or nullid]
-            elif p2:
-                try:
-                    p1 = repo[p1]
-                    p2 = repo[p2]
-                    # Without any options, consider p2 only if the
-                    # patch is being applied on top of the recorded
-                    # first parent.
-                    if p1 != parents[0]:
-                        p1 = parents[0]
-                        p2 = repo[nullid]
-                except error.RepoError:
-                    p1, p2 = parents
-            else:
-                p1, p2 = parents
-
-            n = None
-            if update:
-                if p1 != parents[0]:
-                    hg.clean(repo, p1.node())
-                if p2 != parents[1]:
-                    repo.setparents(p1.node(), p2.node())
-
-                if opts.get('exact') or opts.get('import_branch'):
-                    repo.dirstate.setbranch(branch or 'default')
-
-                files = set()
-                patch.patch(ui, repo, tmpname, strip=strip, files=files,
-                            eolmode=None, similarity=sim / 100.0)
-                files = list(files)
-                if opts.get('no_commit'):
-                    if message:
-                        msgs.append(message)
-                else:
-                    if opts.get('exact') or p2:
-                        # If you got here, you either use --force and know what
-                        # you are doing or used --exact or a merge patch while
-                        # being updated to its first parent.
-                        m = None
-                    else:
-                        m = scmutil.matchfiles(repo, files or [])
-                    n = repo.commit(message, opts.get('user') or user,
-                                    opts.get('date') or date, match=m,
-                                    editor=editor)
-            else:
-                if opts.get('exact') or opts.get('import_branch'):
-                    branch = branch or 'default'
-                else:
-                    branch = p1.branch()
-                store = patch.filestore()
-                try:
-                    files = set()
-                    try:
-                        patch.patchrepo(ui, repo, p1, store, tmpname, strip,
-                                        files, eolmode=None)
-                    except patch.PatchError, e:
-                        raise util.Abort(str(e))
-                    memctx = context.makememctx(repo, (p1.node(), p2.node()),
-                                                message,
-                                                opts.get('user') or user,
-                                                opts.get('date') or date,
-                                                branch, files, store,
-                                                editor=cmdutil.commiteditor)
-                    repo.savecommitmessage(memctx.description())
-                    n = memctx.commit()
-                finally:
-                    store.close()
-            if opts.get('exact') and hex(n) != nodeid:
-                raise util.Abort(_('patch is damaged or loses information'))
-            if n:
-                # i18n: refers to a short changeset id
-                msg = _('created %s') % short(n)
-            return (msg, n)
-        finally:
-            os.unlink(tmpname)
 
     try:
         try:
@@ -3817,7 +3719,8 @@ def import_(ui, repo, patch1=None, *patches, **opts):
 
                 haspatch = False
                 for hunk in patch.split(patchfile):
-                    (msg, node) = tryone(ui, hunk, parents)
+                    (msg, node) = cmdutil.tryimportone(ui, repo, hunk, parents,
+                                                       opts, msgs, hg.clean)
                     if msg:
                         haspatch = True
                         ui.note(msg + '\n')
@@ -4001,6 +3904,12 @@ def log(ui, repo, *pats, **opts):
     tags, non-trivial parents, user, date and time, and a summary for
     each commit. When the -v/--verbose switch is used, the list of
     changed files and full commit message are shown.
+
+    With --graph the revisions are shown as an ASCII art DAG with the most
+    recent changeset at the top.
+    'o' is a changeset, '@' is a working directory parent, 'x' is obsolete,
+    and '+' represents a fork where the changeset from the lines below is a
+    parent of the 'o' merge on the same same line.
 
     .. note::
 
@@ -4711,7 +4620,15 @@ def push(ui, repo, dest=None, **opts):
     dest, branches = hg.parseurl(dest, opts.get('branch'))
     ui.status(_('pushing to %s\n') % util.hidepassword(dest))
     revs, checkout = hg.addbranchrevs(repo, repo, branches, opts.get('rev'))
-    other = hg.peer(repo, opts, dest)
+    try:
+        other = hg.peer(repo, opts, dest)
+    except error.RepoError:
+        if dest == "default-push":
+            raise util.Abort(_("default repository not configured!"),
+                    hint=_('see the "path" section in "hg help config"'))
+        else:
+            raise
+
     if revs:
         revs = [repo.lookup(r) for r in scmutil.revrange(repo, revs)]
 
