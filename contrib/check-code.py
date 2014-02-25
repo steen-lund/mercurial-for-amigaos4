@@ -150,6 +150,9 @@ utestpats = [
      "explicit exit code checks unnecessary"),
     (uprefix + r'set -e', "don't use set -e"),
     (uprefix + r'(\s|fi\b|done\b)', "use > for continued lines"),
+    (uprefix + r'.*:\.\S*/', "x:.y in a path does not work on msys, rewrite "
+     "as x://.y, or see `hg log -k msys` for alternatives", r'-\S+:\.|' #-Rxxx
+     'hg pull -q file:../test'), # in test-pull.t which is skipped on windows
     (r'^  saved backup bundle to \$TESTTMP.*\.hg$', winglobmsg),
     (r'^  changeset .* references (corrupted|missing) \$TESTTMP/.*[^)]$',
      winglobmsg),
@@ -162,6 +165,8 @@ utestpats = [
     (r'^  moving \S+/.*[^)]$', winglobmsg),
     (r'^  no changes made to subrepo since.*/.*[^)]$', winglobmsg),
     (r'^  .*: largefile \S+ not available from file:.*/.*[^)]$', winglobmsg),
+    (r'^  .*file://\$TESTTMP',
+     'write "file:/*/$TESTTMP" + (glob) to match on windows too'),
   ],
   # warnings
   [
@@ -306,6 +311,7 @@ txtfilters = []
 txtpats = [
   [
     ('\s$', 'trailing whitespace'),
+    ('.. note::[ \n][^\n]', 'add two newlines after note::')
   ],
   []
 ]

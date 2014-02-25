@@ -1626,3 +1626,60 @@ Test branches inside if statement:
 
   $ hg log -r 0 --template '{if(branches, "yes", "no")}\n'
   no
+
+Test shortest(node) function:
+
+  $ echo b > b
+  $ hg ci -qAm b
+  $ hg log --template '{shortest(node)}\n'
+  d97c
+  f776
+  $ hg log --template '{shortest(node, 10)}\n'
+  d97c383ae3
+  f7769ec2ab
+
+Test pad function
+
+  $ hg log --template '{pad(rev, 20)} {author|user}\n'
+  1                    test
+  0                    test
+
+  $ hg log --template '{pad(rev, 20, " ", True)} {author|user}\n'
+                     1 test
+                     0 test
+
+  $ hg log --template '{pad(rev, 20, "-", False)} {author|user}\n'
+  1------------------- test
+  0------------------- test
+
+Test ifcontains function
+
+  $ hg log --template '{rev} {ifcontains("a", file_adds, "added a", "did not add a")}\n'
+  1 did not add a
+  0 added a
+
+Test revset function
+
+  $ hg log --template '{rev} {ifcontains(rev, revset("."), "current rev", "not current rev")}\n'
+  1 current rev
+  0 not current rev
+
+  $ hg log --template '{rev} Parents: {revset("parents(%s)", rev)}\n'
+  1 Parents: 0
+  0 Parents: 
+
+  $ hg log --template 'Rev: {rev}\n{revset("::%s", rev) % "Ancestor: {revision}\n"}\n'
+  Rev: 1
+  Ancestor: 0
+  Ancestor: 1
+  
+  Rev: 0
+  Ancestor: 0
+  
+Test current bookmark templating
+
+  $ hg book foo
+  $ hg book bar
+  $ hg log --template "{rev} {bookmarks % '{bookmark}{ifeq(bookmark, current, \"*\")} '}\n"
+  1 bar* foo 
+  0 
