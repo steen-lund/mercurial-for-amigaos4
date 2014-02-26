@@ -703,7 +703,8 @@ def restorestatus(repo):
                 if new != nullrev and new in seen:
                     skipped.add(old)
                 seen.add(new)
-        repo.ui.debug('computed skipped revs: %s\n' % skipped)
+        repo.ui.debug('computed skipped revs: %s\n' %
+                      (' '.join(str(r) for r in sorted(skipped)) or None))
         repo.ui.debug('rebase status resumed\n')
         return (originalwd, target, state, skipped,
                 collapse, keep, keepbranches, external, activebookmark)
@@ -790,7 +791,7 @@ def buildstate(repo, dest, rebaseset, collapse):
                 repo.ui.debug('source is a child of destination\n')
                 return None
 
-        repo.ui.debug('rebase onto %d starting from %s\n' % (dest, roots))
+        repo.ui.debug('rebase onto %d starting from %s\n' % (dest, root))
         state.update(dict.fromkeys(rebaseset, nullrev))
         # Rebase tries to turn <dest> into a parent of <root> while
         # preserving the number of parents of rebased changesets:

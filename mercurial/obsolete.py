@@ -256,6 +256,9 @@ class obsstore(object):
         * ensuring it is hashable
         * check mandatory metadata
         * encode metadata
+
+        If you are a human writing code creating marker you want to use the
+        `createmarkers` function in this module instead.
         """
         if metadata is None:
             metadata = {}
@@ -383,43 +386,6 @@ def pushmarker(repo, key, old, new):
             tr.release()
     finally:
         lock.release()
-
-def syncpush(repo, remote):
-    """utility function to push obsolete markers to a remote
-
-    Exist mostly to allow overriding for experimentation purpose"""
-    if (_enabled and repo.obsstore and
-        'obsolete' in remote.listkeys('namespaces')):
-        rslts = []
-        remotedata = repo.listkeys('obsolete')
-        for key in sorted(remotedata, reverse=True):
-            # reverse sort to ensure we end with dump0
-            data = remotedata[key]
-            rslts.append(remote.pushkey('obsolete', key, '', data))
-        if [r for r in rslts if not r]:
-            msg = _('failed to push some obsolete markers!\n')
-            repo.ui.warn(msg)
-
-def syncpull(repo, remote, gettransaction):
-    """utility function to pull obsolete markers from a remote
-
-    The `gettransaction` is function that return the pull transaction, creating
-    one if necessary. We return the transaction to inform the calling code that
-    a new transaction have been created (when applicable).
-
-    Exists mostly to allow overriding for experimentation purpose"""
-    tr = None
-    if _enabled:
-        repo.ui.debug('fetching remote obsolete markers\n')
-        remoteobs = remote.listkeys('obsolete')
-        if 'dump0' in remoteobs:
-            tr = gettransaction()
-            for key in sorted(remoteobs, reverse=True):
-                if key.startswith('dump'):
-                    data = base85.b85decode(remoteobs[key])
-                    repo.obsstore.mergemarkers(tr, data)
-            repo.invalidatevolatilesets()
-    return tr
 
 def allmarkers(repo):
     """all obsolete markers known in a repository"""
@@ -800,7 +766,7 @@ def _computeextinctset(repo):
 def _computebumpedset(repo):
     """the set of revs trying to obsolete public revisions"""
     bumped = set()
-    # utils function (avoid attribut lookup in the loop)
+    # utils function (avoid attribute lookup in the loop)
     phase = repo._phasecache.phase # would be faster to grab the full list
     public = phases.public
     cl = repo.changelog
@@ -845,8 +811,10 @@ def _computedivergentset(repo):
 def createmarkers(repo, relations, flag=0, metadata=None):
     """Add obsolete markers between changesets in a repo
 
-    <relations> must be an iterable of (<old>, (<new>, ...)) tuple.
-    `old` and `news` are changectx.
+    <relations> must be an iterable of (<old>, (<new>, ...)[,{metadata}])
+    tuple. `old` and `news` are changectx. metadata is an optional dictionnary
+    containing metadata for this marker only. It is merged with the global
+    metadata specified through the `metadata` argument of this function,
 
     Trying to obsolete a public changeset will raise an exception.
 
@@ -865,7 +833,13 @@ def createmarkers(repo, relations, flag=0, metadata=None):
         metadata['user'] = repo.ui.username()
     tr = repo.transaction('add-obsolescence-marker')
     try:
-        for prec, sucs in relations:
+        for rel in relations:
+            prec = rel[0]
+            sucs = rel[1]
+            localmetadata = metadata.copy()
+            if 2 < len(rel):
+                localmetadata.update(rel[2])
+
             if not prec.mutable():
                 raise util.Abort("cannot obsolete immutable changeset: %s"
                                  % prec)
@@ -873,7 +847,7 @@ def createmarkers(repo, relations, flag=0, metadata=None):
             nsucs = tuple(s.node() for s in sucs)
             if nprec in nsucs:
                 raise util.Abort("changeset %s cannot obsolete itself" % prec)
-            repo.obsstore.create(tr, nprec, nsucs, flag, metadata)
+            repo.obsstore.create(tr, nprec, nsucs, flag, localmetadata)
             repo.filteredrevcache.clear()
         tr.close()
     finally:

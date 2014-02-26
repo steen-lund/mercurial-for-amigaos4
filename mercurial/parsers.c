@@ -1208,7 +1208,7 @@ static PyObject *find_gca_candidates(indexObject *self, const int *revs,
 	const bitmask allseen = (1ull << revcount) - 1;
 	const bitmask poison = 1ull << revcount;
 	PyObject *gca = PyList_New(0);
-	int i, v, interesting, left;
+	int i, v, interesting;
 	int maxrev = -1;
 	long sp;
 	bitmask *seen;
@@ -1230,7 +1230,7 @@ static PyObject *find_gca_candidates(indexObject *self, const int *revs,
 	for (i = 0; i < revcount; i++)
 		seen[revs[i]] = 1ull << i;
 
-	interesting = left = revcount;
+	interesting = revcount;
 
 	for (v = maxrev; v >= 0 && interesting; v--) {
 		long sv = seen[v];
@@ -1251,11 +1251,8 @@ static PyObject *find_gca_candidates(indexObject *self, const int *revs,
 				}
 				sv |= poison;
 				for (i = 0; i < revcount; i++) {
-					if (revs[i] == v) {
-						if (--left <= 1)
-							goto done;
-						break;
-					}
+					if (revs[i] == v)
+						goto done;
 				}
 			}
 		}
@@ -1528,10 +1525,6 @@ static PyObject *index_ancestors(indexObject *self, PyObject *args)
 	if (PyList_GET_SIZE(gca) <= 1) {
 		ret = gca;
 		Py_INCREF(gca);
-	}
-	else if (PyList_GET_SIZE(gca) == 1) {
-		ret = PyList_GET_ITEM(gca, 0);
-		Py_INCREF(ret);
 	}
 	else ret = find_deepest(self, gca);
 
