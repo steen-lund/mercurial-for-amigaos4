@@ -10,7 +10,7 @@ from i18n import _
 import os, sys, errno, re, tempfile
 import util, scmutil, templater, patch, error, templatekw, revlog, copies
 import match as matchmod
-import subrepo, context, repair, graphmod, revset, phases, obsolete, pathutil
+import context, repair, graphmod, revset, phases, obsolete, pathutil
 import changelog
 import bookmarks
 import lock as lockmod
@@ -542,6 +542,131 @@ def service(opts, parentfn=None, initfn=None, runfn=None, logfile=None,
     if runfn:
         return runfn()
 
+def tryimportone(ui, repo, hunk, parents, opts, msgs, updatefunc):
+    """Utility function used by commands.import to import a single patch
+
+    This function is explicitly defined here to help the evolve extension to
+    wrap this part of the import logic.
+
+    The API is currently a bit ugly because it a simple code translation from
+    the import command. Feel free to make it better.
+
+    :hunk: a patch (as a binary string)
+    :parents: nodes that will be parent of the created commit
+    :opts: the full dict of option passed to the import command
+    :msgs: list to save commit message to.
+           (used in case we need to save it when failing)
+    :updatefunc: a function that update a repo to a given node
+                 updatefunc(<repo>, <node>)
+    """
+    tmpname, message, user, date, branch, nodeid, p1, p2 = \
+        patch.extract(ui, hunk)
+
+    editor = commiteditor
+    if opts.get('edit'):
+        editor = commitforceeditor
+    update = not opts.get('bypass')
+    strip = opts["strip"]
+    sim = float(opts.get('similarity') or 0)
+    if not tmpname:
+        return (None, None)
+    msg = _('applied to working directory')
+
+    try:
+        cmdline_message = logmessage(ui, opts)
+        if cmdline_message:
+            # pickup the cmdline msg
+            message = cmdline_message
+        elif message:
+            # pickup the patch msg
+            message = message.strip()
+        else:
+            # launch the editor
+            message = None
+        ui.debug('message:\n%s\n' % message)
+
+        if len(parents) == 1:
+            parents.append(repo[nullid])
+        if opts.get('exact'):
+            if not nodeid or not p1:
+                raise util.Abort(_('not a Mercurial patch'))
+            p1 = repo[p1]
+            p2 = repo[p2 or nullid]
+        elif p2:
+            try:
+                p1 = repo[p1]
+                p2 = repo[p2]
+                # Without any options, consider p2 only if the
+                # patch is being applied on top of the recorded
+                # first parent.
+                if p1 != parents[0]:
+                    p1 = parents[0]
+                    p2 = repo[nullid]
+            except error.RepoError:
+                p1, p2 = parents
+        else:
+            p1, p2 = parents
+
+        n = None
+        if update:
+            if p1 != parents[0]:
+                updatefunc(repo, p1.node())
+            if p2 != parents[1]:
+                repo.setparents(p1.node(), p2.node())
+
+            if opts.get('exact') or opts.get('import_branch'):
+                repo.dirstate.setbranch(branch or 'default')
+
+            files = set()
+            patch.patch(ui, repo, tmpname, strip=strip, files=files,
+                        eolmode=None, similarity=sim / 100.0)
+            files = list(files)
+            if opts.get('no_commit'):
+                if message:
+                    msgs.append(message)
+            else:
+                if opts.get('exact') or p2:
+                    # If you got here, you either use --force and know what
+                    # you are doing or used --exact or a merge patch while
+                    # being updated to its first parent.
+                    m = None
+                else:
+                    m = scmutil.matchfiles(repo, files or [])
+                n = repo.commit(message, opts.get('user') or user,
+                                opts.get('date') or date, match=m,
+                                editor=editor)
+        else:
+            if opts.get('exact') or opts.get('import_branch'):
+                branch = branch or 'default'
+            else:
+                branch = p1.branch()
+            store = patch.filestore()
+            try:
+                files = set()
+                try:
+                    patch.patchrepo(ui, repo, p1, store, tmpname, strip,
+                                    files, eolmode=None)
+                except patch.PatchError, e:
+                    raise util.Abort(str(e))
+                memctx = context.makememctx(repo, (p1.node(), p2.node()),
+                                            message,
+                                            opts.get('user') or user,
+                                            opts.get('date') or date,
+                                            branch, files, store,
+                                            editor=commiteditor)
+                repo.savecommitmessage(memctx.description())
+                n = memctx.commit()
+            finally:
+                store.close()
+        if opts.get('exact') and hex(n) != nodeid:
+            raise util.Abort(_('patch is damaged or loses information'))
+        if n:
+            # i18n: refers to a short changeset id
+            msg = _('created %s') % short(n)
+        return (msg, n)
+    finally:
+        os.unlink(tmpname)
+
 def export(repo, revs, template='hg-%h.patch', fp=None, switch_parent=False,
            opts=None):
     '''export changesets as hg patches.'''
@@ -629,7 +754,7 @@ def diffordiffstat(ui, repo, diffopts, node1, node2, match,
     if listsubrepos:
         ctx1 = repo[node1]
         ctx2 = repo[node2]
-        for subpath, sub in subrepo.itersubrepos(ctx1, ctx2):
+        for subpath, sub in scmutil.itersubrepos(ctx1, ctx2):
             tempnode2 = node2
             try:
                 if node2 is not None:
@@ -974,6 +1099,19 @@ def show_changeset(ui, repo, opts, buffered=False):
         t.use_template(tmpl)
     return t
 
+def showmarker(ui, marker):
+    """utility function to display obsolescence marker in a readable way
+
+    To be used by debug function."""
+    ui.write(hex(marker.precnode()))
+    for repl in marker.succnodes():
+        ui.write(' ')
+        ui.write(hex(repl))
+    ui.write(' %X ' % marker._data[2])
+    ui.write('{%s}' % (', '.join('%r: %r' % t for t in
+                                 sorted(marker.metadata().items()))))
+    ui.write('\n')
+
 def finddate(ui, repo, date):
     """Find the tipmost changeset that matches the given date spec"""
 
@@ -995,19 +1133,11 @@ def finddate(ui, repo, date):
 
     raise util.Abort(_("revision matching date not found"))
 
-def increasingwindows(start, end, windowsize=8, sizelimit=512):
-    if start < end:
-        while start < end:
-            yield start, min(windowsize, end - start)
-            start += windowsize
-            if windowsize < sizelimit:
-                windowsize *= 2
-    else:
-        while start > end:
-            yield start, min(windowsize, start - end - 1)
-            start -= windowsize
-            if windowsize < sizelimit:
-                windowsize *= 2
+def increasingwindows(windowsize=8, sizelimit=512):
+    while True:
+        yield windowsize
+        if windowsize < sizelimit:
+            windowsize *= 2
 
 class FileWalkError(Exception):
     pass
@@ -1132,7 +1262,7 @@ def walkchangerevs(repo, match, opts, prepare):
     elif follow:
         revs = repo.revs('reverse(:.)')
     else:
-        revs = list(repo)
+        revs = revset.baseset(repo)
         revs.reverse()
     if not revs:
         return []
@@ -1148,7 +1278,7 @@ def walkchangerevs(repo, match, opts, prepare):
 
     if not slowpath and not match.files():
         # No files, no patterns.  Display all revs.
-        wanted = set(revs)
+        wanted = revs
 
     if not slowpath and match.files():
         # We only have to read through the filelog to find wanted revisions
@@ -1250,14 +1380,7 @@ def walkchangerevs(repo, match, opts, prepare):
         stop = min(revs[0], revs[-1])
         for x in xrange(rev, stop - 1, -1):
             if ff.match(x):
-                wanted.discard(x)
-
-    # Choose a small initial window if we will probably only visit a
-    # few commits.
-    limit = loglimit(opts)
-    windowsize = 8
-    if limit:
-        windowsize = min(limit, windowsize)
+                wanted = wanted - [x]
 
     # Now that wanted is correctly initialized, we can iterate over the
     # revision range, yielding only revisions in wanted.
@@ -1270,8 +1393,18 @@ def walkchangerevs(repo, match, opts, prepare):
             def want(rev):
                 return rev in wanted
 
-        for i, window in increasingwindows(0, len(revs), windowsize):
-            nrevs = [rev for rev in revs[i:i + window] if want(rev)]
+        it = iter(revs)
+        stopiteration = False
+        for windowsize in increasingwindows():
+            nrevs = []
+            for i in xrange(windowsize):
+                try:
+                    rev = it.next()
+                    if want(rev):
+                        nrevs.append(rev)
+                except (StopIteration):
+                    stopiteration = True
+                    break
             for rev in sorted(nrevs):
                 fns = fncache.get(rev)
                 ctx = change(rev)
@@ -1284,6 +1417,10 @@ def walkchangerevs(repo, match, opts, prepare):
                 prepare(ctx, fns)
             for rev in nrevs:
                 yield change(rev)
+
+            if stopiteration:
+                break
+
     return iterate()
 
 def _makegraphfilematcher(repo, pats, followfirst):
@@ -1471,10 +1608,11 @@ def getgraphlogrevs(repo, pats, opts):
         if follow and len(repo) > 0:
             revs = repo.revs('reverse(:.)')
         else:
-            revs = list(repo.changelog)
+            revs = revset.baseset(repo.changelog)
             revs.reverse()
     if not revs:
         return [], None, None
+    revs = revset.baseset(revs)
     expr, filematcher = _makegraphlogrevset(repo, pats, opts, revs)
     if possiblyunsorted:
         revs.sort(reverse=True)
@@ -2057,54 +2195,8 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
                         handle(revert, False)
                 else:
                     handle(remove, False)
-
         if not opts.get('dry_run'):
-            def checkout(f):
-                fc = ctx[f]
-                repo.wwrite(f, fc.data(), fc.flags())
-
-            audit_path = pathutil.pathauditor(repo.root)
-            for f in remove[0]:
-                if repo.dirstate[f] == 'a':
-                    repo.dirstate.drop(f)
-                    continue
-                audit_path(f)
-                try:
-                    util.unlinkpath(repo.wjoin(f))
-                except OSError:
-                    pass
-                repo.dirstate.remove(f)
-
-            normal = None
-            if node == parent:
-                # We're reverting to our parent. If possible, we'd like status
-                # to report the file as clean. We have to use normallookup for
-                # merges to avoid losing information about merged/dirty files.
-                if p2 != nullid:
-                    normal = repo.dirstate.normallookup
-                else:
-                    normal = repo.dirstate.normal
-            for f in revert[0]:
-                checkout(f)
-                if normal:
-                    normal(f)
-
-            for f in add[0]:
-                checkout(f)
-                repo.dirstate.add(f)
-
-            normal = repo.dirstate.normallookup
-            if node == parent and p2 == nullid:
-                normal = repo.dirstate.normal
-            for f in undelete[0]:
-                checkout(f)
-                normal(f)
-
-            copied = copies.pathcopies(repo[parent], ctx)
-
-            for f in add[0] + undelete[0] + revert[0]:
-                if f in copied:
-                    repo.dirstate.copy(copied[f], f)
+            _performrevert(repo, parents, ctx, revert, add, remove, undelete)
 
             if targetsubs:
                 # Revert the subrepos on the revert list
@@ -2112,6 +2204,63 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
                     ctx.sub(sub).revert(ui, ctx.substate[sub], *pats, **opts)
     finally:
         wlock.release()
+
+def _performrevert(repo, parents, ctx, revert, add, remove, undelete):
+    """function that actually perform all the action computed for revert
+
+    This is an independent function to let extension to plug in and react to
+    the imminent revert.
+
+    Make sure you have the working directory locked when caling this function.
+    """
+    parent, p2 = parents
+    node = ctx.node()
+    def checkout(f):
+        fc = ctx[f]
+        repo.wwrite(f, fc.data(), fc.flags())
+
+    audit_path = pathutil.pathauditor(repo.root)
+    for f in remove[0]:
+        if repo.dirstate[f] == 'a':
+            repo.dirstate.drop(f)
+            continue
+        audit_path(f)
+        try:
+            util.unlinkpath(repo.wjoin(f))
+        except OSError:
+            pass
+        repo.dirstate.remove(f)
+
+    normal = None
+    if node == parent:
+        # We're reverting to our parent. If possible, we'd like status
+        # to report the file as clean. We have to use normallookup for
+        # merges to avoid losing information about merged/dirty files.
+        if p2 != nullid:
+            normal = repo.dirstate.normallookup
+        else:
+            normal = repo.dirstate.normal
+    for f in revert[0]:
+        checkout(f)
+        if normal:
+            normal(f)
+
+    for f in add[0]:
+        checkout(f)
+        repo.dirstate.add(f)
+
+    normal = repo.dirstate.normallookup
+    if node == parent and p2 == nullid:
+        normal = repo.dirstate.normal
+    for f in undelete[0]:
+        checkout(f)
+        normal(f)
+
+    copied = copies.pathcopies(repo[parent], ctx)
+
+    for f in add[0] + undelete[0] + revert[0]:
+        if f in copied:
+            repo.dirstate.copy(copied[f], f)
 
 def command(table):
     '''returns a function object bound to table which can be used as
