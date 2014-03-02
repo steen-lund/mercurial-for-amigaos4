@@ -1986,9 +1986,11 @@ class queue(object):
                     raise util.Abort(_('-e is incompatible with import from -'))
                 filename = normname(filename)
                 self.checkreservedname(filename)
-                originpath = self.join(filename)
-                if not os.path.isfile(originpath):
-                    raise util.Abort(_("patch %s does not exist") % filename)
+                if util.url(filename).islocal():
+                    originpath = self.join(filename)
+                    if not os.path.isfile(originpath):
+                        raise util.Abort(
+                            _("patch %s does not exist") % filename)
 
                 if patchname:
                     self.checkpatchname(patchname, force)
@@ -3407,7 +3409,7 @@ def revsetmq(repo, subset, x):
     """
     revset.getargs(x, 0, 0, _("mq takes no arguments"))
     applied = set([repo[r.node].rev() for r in repo.mq.applied])
-    return [r for r in subset if r in applied]
+    return revset.baseset([r for r in subset if r in applied])
 
 # tell hggettext to extract docstrings from these functions:
 i18nfunctions = [revsetmq]

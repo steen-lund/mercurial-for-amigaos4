@@ -367,6 +367,22 @@ ancestor can accept 0 or more arguments
   4
   $ log 'id(5)'
   2
+  $ log 'only(9)'
+  8
+  9
+  $ log 'only(8)'
+  8
+  $ log 'only(9, 5)'
+  2
+  4
+  8
+  9
+  $ log 'only(7 + 9, 5 + 2)'
+  4
+  6
+  7
+  8
+  9
   $ log 'outgoing()'
   8
   9
@@ -414,6 +430,16 @@ ancestor can accept 0 or more arguments
   2
   1
   0
+  $ log '1:: and reverse(all())'
+  9
+  8
+  7
+  6
+  5
+  4
+  3
+  2
+  1
   $ log 'rev(5)'
   5
   $ log 'sort(limit(reverse(all()), 3))'
@@ -433,6 +459,70 @@ ancestor can accept 0 or more arguments
   6
   $ log 'tag(tip)'
   9
+
+check that conversion to _missingancestors works
+  $ try --optimize '::3 - ::1'
+  (minus
+    (dagrangepre
+      ('symbol', '3'))
+    (dagrangepre
+      ('symbol', '1')))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '3')
+      ('symbol', '1')))
+  3
+  $ try --optimize 'ancestors(1) - ancestors(3)'
+  (minus
+    (func
+      ('symbol', 'ancestors')
+      ('symbol', '1'))
+    (func
+      ('symbol', 'ancestors')
+      ('symbol', '3')))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '1')
+      ('symbol', '3')))
+  $ try --optimize 'not ::2 and ::6'
+  (and
+    (not
+      (dagrangepre
+        ('symbol', '2')))
+    (dagrangepre
+      ('symbol', '6')))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '6')
+      ('symbol', '2')))
+  3
+  4
+  5
+  6
+  $ try --optimize 'ancestors(6) and not ancestors(4)'
+  (and
+    (func
+      ('symbol', 'ancestors')
+      ('symbol', '6'))
+    (not
+      (func
+        ('symbol', 'ancestors')
+        ('symbol', '4'))))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '6')
+      ('symbol', '4')))
+  3
+  5
+  6
 
 we can use patterns when searching for tags
 
