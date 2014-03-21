@@ -12,18 +12,21 @@ import extensions, revset, fileset, templatekw, templatefilters, filemerge
 import encoding, util, minirst
 import cmdutil
 
-def listexts(header, exts, indent=1):
+def listexts(header, exts, indent=1, showdeprecated=False):
     '''return a text listing of the given extensions'''
     rst = []
     if exts:
         rst.append('\n%s\n\n' % header)
         for name, desc in sorted(exts.iteritems()):
+            if '(DEPRECATED)' in desc and not showdeprecated:
+                continue
             rst.append('%s:%s: %s\n' % (' ' * indent, name, desc))
     return rst
 
 def extshelp():
     rst = loaddoc('extensions')().splitlines(True)
-    rst.extend(listexts(_('enabled extensions:'), extensions.enabled()))
+    rst.extend(listexts(
+        _('enabled extensions:'), extensions.enabled(), showdeprecated=True))
     rst.extend(listexts(_('disabled extensions:'), extensions.disabled()))
     doc = ''.join(rst)
     return doc
@@ -38,7 +41,7 @@ def optrst(options, verbose):
             shortopt, longopt, default, desc = option
             optlabel = _("VALUE") # default label
 
-        if _("DEPRECATED") in desc and not verbose:
+        if not verbose and ("DEPRECATED" in desc or _("DEPRECATED") in desc):
             continue
 
         so = ''
