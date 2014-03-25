@@ -145,9 +145,6 @@ def unescapearg(escaped):
 
 # client side
 
-def todict(**args):
-    return args
-
 class wirepeer(peer.peerrepository):
 
     def batch(self):
@@ -166,7 +163,7 @@ class wirepeer(peer.peerrepository):
     def lookup(self, key):
         self.requirecap('lookup', _('look up remote revision'))
         f = future()
-        yield todict(key=encoding.fromlocal(key)), f
+        yield {'key': encoding.fromlocal(key)}, f
         d = f.value
         success, data = d[:-1].split(" ", 1)
         if int(success):
@@ -186,7 +183,7 @@ class wirepeer(peer.peerrepository):
     @batchable
     def known(self, nodes):
         f = future()
-        yield todict(nodes=encodelist(nodes)), f
+        yield {'nodes': encodelist(nodes)}, f
         d = f.value
         try:
             yield [bool(int(f)) for f in d]
@@ -236,10 +233,10 @@ class wirepeer(peer.peerrepository):
             yield False, None
         f = future()
         self.ui.debug('preparing pushkey for "%s:%s"\n' % (namespace, key))
-        yield todict(namespace=encoding.fromlocal(namespace),
-                     key=encoding.fromlocal(key),
-                     old=encoding.fromlocal(old),
-                     new=encoding.fromlocal(new)), f
+        yield {'namespace': encoding.fromlocal(namespace),
+               'key': encoding.fromlocal(key),
+               'old': encoding.fromlocal(old),
+               'new': encoding.fromlocal(new)}, f
         d = f.value
         d, output = d.split('\n', 1)
         try:
@@ -257,7 +254,7 @@ class wirepeer(peer.peerrepository):
             yield {}, None
         f = future()
         self.ui.debug('preparing listkeys for "%s"\n' % namespace)
-        yield todict(namespace=encoding.fromlocal(namespace)), f
+        yield {'namespace': encoding.fromlocal(namespace)}, f
         d = f.value
         r = {}
         for l in d.splitlines():
@@ -417,9 +414,22 @@ def branches(repo, proto, nodes):
         r.append(encodelist(b) + "\n")
     return "".join(r)
 
-def capabilities(repo, proto):
-    caps = ('lookup changegroupsubset branchmap pushkey known getbundle '
-            'unbundlehash batch').split()
+
+wireprotocaps = ['lookup', 'changegroupsubset', 'branchmap', 'pushkey',
+                 'known', 'getbundle', 'unbundlehash', 'batch']
+
+def _capabilities(repo, proto):
+    """return a list of capabilities for a repo
+
+    This function exists to allow extensions to easily wrap capabilities
+    computation
+
+    - returns a lists: easy to alter
+    - change done here will be propagated to both `capabilities` and `hello`
+      command without any other effort. without any other action needed.
+    """
+    # copy to prevent modification of the global list
+    caps = list(wireprotocaps)
     if _allowstream(repo.ui):
         if repo.ui.configbool('server', 'preferuncompressed', False):
             caps.append('stream-preferred')
@@ -432,7 +442,12 @@ def capabilities(repo, proto):
             caps.append('streamreqs=%s' % ','.join(requiredformats))
     caps.append('unbundle=%s' % ','.join(changegroupmod.bundlepriority))
     caps.append('httpheader=1024')
-    return ' '.join(caps)
+    return caps
+
+# If you are writting and extension and consider wrapping this function. Wrap
+# `_capabilities` instead.
+def capabilities(repo, proto):
+    return ' '.join(_capabilities(repo, proto))
 
 def changegroup(repo, proto, roots):
     nodes = decodelist(roots)

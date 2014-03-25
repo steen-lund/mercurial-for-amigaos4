@@ -9,7 +9,7 @@
 import copy
 import phases
 import util
-import obsolete, revset
+import obsolete
 
 
 def hideablerevs(repo):
@@ -28,12 +28,16 @@ def computehidden(repo):
         cl = repo.changelog
         firsthideable = min(hideable)
         revs = cl.revs(start=firsthideable)
-        blockers = [r for r in revset._children(repo, revs, hideable)
-                      if r not in hideable]
+        tofilter = repo.revs(
+            '(%ld) and children(%ld)', list(revs), list(hideable))
+        blockers = [r for r in tofilter if r not in hideable]
         for par in repo[None].parents():
             blockers.append(par.rev())
         for bm in repo._bookmarks.values():
             blockers.append(repo[bm].rev())
+        tags = [n for t, n in repo.tags().iteritems()
+                if (repo.tagtype(t) and repo.tagtype(t) != 'global')]
+        blockers.extend(repo[t].rev() for t in tags)
         blocked = cl.ancestors(blockers, inclusive=True)
         return frozenset(r for r in hideable if r not in blocked)
     return frozenset()
@@ -95,7 +99,7 @@ def computeimpactable(repo):
 
 # function to compute filtered set
 #
-# When addding a new filter you MUST update the table at:
+# When adding a new filter you MUST update the table at:
 #     mercurial.branchmap.subsettable
 # Otherwise your filter will have to recompute all its branches cache
 # from scratch (very slow).

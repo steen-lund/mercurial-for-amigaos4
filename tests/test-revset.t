@@ -124,6 +124,7 @@ names that should work without quoting
   [255]
   $ log -a-b-c- # succeeds with fallback
   4
+
   $ try -- -a-b-c--a # complains
   (minus
     (minus
@@ -139,6 +140,13 @@ names that should work without quoting
   $ try é
   ('symbol', '\xc3\xa9')
   9
+
+no quoting needed
+
+  $ log ::a-b-c-
+  0
+  1
+  2
 
 quoting needed
 
@@ -367,6 +375,22 @@ ancestor can accept 0 or more arguments
   4
   $ log 'id(5)'
   2
+  $ log 'only(9)'
+  8
+  9
+  $ log 'only(8)'
+  8
+  $ log 'only(9, 5)'
+  2
+  4
+  8
+  9
+  $ log 'only(7 + 9, 5 + 2)'
+  4
+  6
+  7
+  8
+  9
   $ log 'outgoing()'
   8
   9
@@ -414,6 +438,16 @@ ancestor can accept 0 or more arguments
   2
   1
   0
+  $ log '1:: and reverse(all())'
+  9
+  8
+  7
+  6
+  5
+  4
+  3
+  2
+  1
   $ log 'rev(5)'
   5
   $ log 'sort(limit(reverse(all()), 3))'
@@ -433,6 +467,138 @@ ancestor can accept 0 or more arguments
   6
   $ log 'tag(tip)'
   9
+
+test sort revset
+--------------------------------------------
+
+test when adding two unordered revsets
+
+  $ log 'sort(keyword(issue) or modifies(b))'
+  4
+  6
+
+test when sorting a reversed collection in the same way it is
+
+  $ log 'sort(reverse(all()), -rev)'
+  9
+  8
+  7
+  6
+  5
+  4
+  3
+  2
+  1
+  0
+
+test when sorting a reversed collection
+
+  $ log 'sort(reverse(all()), rev)'
+  0
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+
+
+test sorting two sorted collections in different orders
+
+  $ log 'sort(outgoing() or reverse(removes(a)), rev)'
+  2
+  6
+  8
+  9
+
+test sorting two sorted collections in different orders backwards
+
+  $ log 'sort(outgoing() or reverse(removes(a)), -rev)'
+  9
+  8
+  6
+  2
+
+test substracting something from an addset
+
+  $ log '(outgoing() or removes(a)) - removes(a)'
+  8
+  9
+
+test intersecting something with an addset
+
+  $ log 'parents(outgoing() or removes(a))'
+  1
+  4
+  5
+  8
+
+check that conversion to _missingancestors works
+  $ try --optimize '::3 - ::1'
+  (minus
+    (dagrangepre
+      ('symbol', '3'))
+    (dagrangepre
+      ('symbol', '1')))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '3')
+      ('symbol', '1')))
+  3
+  $ try --optimize 'ancestors(1) - ancestors(3)'
+  (minus
+    (func
+      ('symbol', 'ancestors')
+      ('symbol', '1'))
+    (func
+      ('symbol', 'ancestors')
+      ('symbol', '3')))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '1')
+      ('symbol', '3')))
+  $ try --optimize 'not ::2 and ::6'
+  (and
+    (not
+      (dagrangepre
+        ('symbol', '2')))
+    (dagrangepre
+      ('symbol', '6')))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '6')
+      ('symbol', '2')))
+  3
+  4
+  5
+  6
+  $ try --optimize 'ancestors(6) and not ancestors(4)'
+  (and
+    (func
+      ('symbol', 'ancestors')
+      ('symbol', '6'))
+    (not
+      (func
+        ('symbol', 'ancestors')
+        ('symbol', '4'))))
+  * optimized:
+  (func
+    ('symbol', '_missingancestors')
+    (list
+      ('symbol', '6')
+      ('symbol', '4')))
+  3
+  5
+  6
 
 we can use patterns when searching for tags
 
@@ -567,6 +733,16 @@ parentrevspec
   $ log 'tip^foo'
   hg: parse error: ^ expects a number 0, 1, or 2
   [255]
+
+multiple revspecs
+
+  $ hg log -r 'tip~1:tip' -r 'tip~2:tip~1' --template '{rev}\n'
+  8
+  9
+  4
+  5
+  6
+  7
 
 aliases:
 

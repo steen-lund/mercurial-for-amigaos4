@@ -20,6 +20,16 @@ else:
 systemrcpath = scmplatform.systemrcpath
 userrcpath = scmplatform.userrcpath
 
+def itersubrepos(ctx1, ctx2):
+    """find subrepos in ctx1 or ctx2"""
+    # Create a (subpath, ctx) mapping where we prefer subpaths from
+    # ctx1. The subpaths from ctx2 are important when the .hgsub file
+    # has been modified (in ctx2) but not yet committed (in ctx1).
+    subpaths = dict.fromkeys(ctx2.substate, ctx2)
+    subpaths.update(dict.fromkeys(ctx1.substate, ctx1))
+    for subpath, ctx in sorted(subpaths.iteritems()):
+        yield subpath, ctx.sub(subpath)
+
 def nochangesfound(ui, repo, excluded=None):
     '''Report no changes for push/pull, excluded is None or a list of
     nodes excluded from the push/pull.
@@ -461,9 +471,7 @@ def revpair(repo, revs):
     l = revrange(repo, revs)
 
     if len(l) == 0:
-        if revs:
-            raise util.Abort(_('empty revision range'))
-        return repo.dirstate.p1(), None
+        raise util.Abort(_('empty revision range'))
 
     if len(l) == 1 and len(revs) == 1 and _revrangesep not in revs[0]:
         return repo.lookup(l[0]), None
@@ -480,7 +488,7 @@ def revrange(repo, revs):
             return defval
         return repo[val].rev()
 
-    seen, l = set(), []
+    seen, l = set(), revset.baseset([])
     for spec in revs:
         if l and not seen:
             seen = set(l)
@@ -489,7 +497,7 @@ def revrange(repo, revs):
         try:
             if isinstance(spec, int):
                 seen.add(spec)
-                l.append(spec)
+                l = l + revset.baseset([spec])
                 continue
 
             if _revrangesep in spec:
@@ -501,7 +509,7 @@ def revrange(repo, revs):
                 rangeiter = repo.changelog.revs(start, end)
                 if not seen and not l:
                     # by far the most common case: revs = ["-1:0"]
-                    l = list(rangeiter)
+                    l = revset.baseset(rangeiter)
                     # defer syncing seen until next iteration
                     continue
                 newrevs = set(rangeiter)
@@ -510,23 +518,26 @@ def revrange(repo, revs):
                     seen.update(newrevs)
                 else:
                     seen = newrevs
-                l.extend(sorted(newrevs, reverse=start > end))
+                l = l + revset.baseset(sorted(newrevs, reverse=start > end))
                 continue
             elif spec and spec in repo: # single unquoted rev
                 rev = revfix(repo, spec, None)
                 if rev in seen:
                     continue
                 seen.add(rev)
-                l.append(rev)
+                l = l + revset.baseset([rev])
                 continue
         except error.RepoLookupError:
             pass
 
         # fall through to new-style queries if old-style fails
-        m = revset.match(repo.ui, spec)
-        dl = [r for r in m(repo, list(repo)) if r not in seen]
-        l.extend(dl)
-        seen.update(dl)
+        m = revset.match(repo.ui, spec, repo)
+        if seen or l:
+            dl = [r for r in m(repo, revset.spanset(repo)) if r not in seen]
+            l = l + revset.baseset(dl)
+            seen.update(dl)
+        else:
+            l = m(repo, revset.spanset(repo))
 
     return l
 
@@ -721,8 +732,10 @@ def readrequires(opener, supported):
     missings.sort()
     if missings:
         raise error.RequirementError(
-            _("unknown repository format: requires features '%s' (upgrade "
-              "Mercurial)") % "', '".join(missings))
+            _("repository requires features unknown to this Mercurial: %s")
+            % " ".join(missings),
+            hint=_("see http://mercurial.selenic.com/wiki/MissingRequirement"
+                   " for more information"))
     return requirements
 
 class filecachesubentry(object):
