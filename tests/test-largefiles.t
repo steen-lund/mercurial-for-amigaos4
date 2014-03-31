@@ -900,7 +900,7 @@ redo pull with --lfrev and check it pulls largefiles for the right revs
   adding manifests
   adding file changes
   added 6 changesets with 16 changes to 8 files
-  calling hook changegroup.lfiles: <function checkrequireslfiles at *> (glob)
+  calling hook changegroup.lfiles: hgext.largefiles.reposetup.checkrequireslfiles
   (run 'hg update' to get a working copy)
   pulling largefiles for revision 7
   found 971fb41e78fea4f8e0ba5244784239371cb00591 in store
@@ -1280,7 +1280,7 @@ Update to revision with missing largefile - and make sure it really is missing
   $ rm ${USERCACHE}/7838695e10da2bb75ac1156565f40a2595fa2fa0
   $ hg up -r 6
   getting changed largefiles
-  large3: largefile 7838695e10da2bb75ac1156565f40a2595fa2fa0 not available from file://$TESTTMP/d (glob)
+  large3: largefile 7838695e10da2bb75ac1156565f40a2595fa2fa0 not available from file:/*/$TESTTMP/d (glob)
   1 largefiles updated, 2 removed
   4 files updated, 0 files merged, 2 files removed, 0 files unresolved
   $ rm normal3
@@ -1301,7 +1301,7 @@ Update to revision with missing largefile - and make sure it really is missing
   ! normal3
   $ hg up -Cr.
   getting changed largefiles
-  large3: largefile 7838695e10da2bb75ac1156565f40a2595fa2fa0 not available from file://$TESTTMP/d (glob)
+  large3: largefile 7838695e10da2bb75ac1156565f40a2595fa2fa0 not available from file:/*/$TESTTMP/d (glob)
   0 largefiles updated, 0 removed
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg st
@@ -1323,7 +1323,7 @@ Merge with revision with missing largefile - and make sure it tries to fetch it.
   4 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
   getting changed largefiles
-  large3: largefile 7838695e10da2bb75ac1156565f40a2595fa2fa0 not available from file://$TESTTMP/d (glob)
+  large3: largefile 7838695e10da2bb75ac1156565f40a2595fa2fa0 not available from file:/*/$TESTTMP/d (glob)
   1 largefiles updated, 0 removed
 
   $ hg rollback -q
@@ -2259,7 +2259,8 @@ enabling largefiles extension.
   $ hg -R enabledlocally root
   $TESTTMP/individualenabling/enabledlocally (glob)
   $ hg -R notenabledlocally root
-  abort: unknown repository format: requires features 'largefiles' (upgrade Mercurial)!
+  abort: repository requires features unknown to this Mercurial: largefiles!
+  (see http://mercurial.selenic.com/wiki/MissingRequirement for more information)
   [255]
 
   $ hg init push-dst
@@ -2275,7 +2276,8 @@ enabling largefiles extension.
   [255]
 
   $ hg clone enabledlocally clone-dst
-  abort: unknown repository format: requires features 'largefiles' (upgrade Mercurial)!
+  abort: repository requires features unknown to this Mercurial: largefiles!
+  (see http://mercurial.selenic.com/wiki/MissingRequirement for more information)
   [255]
   $ test -d clone-dst
   [1]
