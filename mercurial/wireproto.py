@@ -11,6 +11,53 @@ from node import bin, hex
 import changegroup as changegroupmod
 import peer, error, encoding, util, store
 
+
+class abstractserverproto(object):
+    """abstract class that summarizes the protocol API
+
+    Used as reference and documentation.
+    """
+
+    def getargs(self, args):
+        """return the value for arguments in <args>
+
+        returns a list of values (same order as <args>)"""
+        raise NotImplementedError()
+
+    def getfile(self, fp):
+        """write the whole content of a file into a file like object
+
+        The file is in the form::
+
+            (<chunk-size>\n<chunk>)+0\n
+
+        chunk size is the ascii version of the int.
+        """
+        raise NotImplementedError()
+
+    def redirect(self):
+        """may setup interception for stdout and stderr
+
+        See also the `restore` method."""
+        raise NotImplementedError()
+
+    # If the `redirect` function does install interception, the `restore`
+    # function MUST be defined. If interception is not used, this function
+    # MUST NOT be defined.
+    #
+    # left commented here on purpose
+    #
+    #def restore(self):
+    #    """reinstall previous stdout and stderr and return intercepted stdout
+    #    """
+    #    raise NotImplementedError()
+
+    def groupchunks(self, cg):
+        """return 4096 chunks from a changegroup object
+
+        Some protocols may have compressed the contents."""
+        raise NotImplementedError()
+
 # abstract batching support
 
 class future(object):
@@ -145,9 +192,6 @@ def unescapearg(escaped):
 
 # client side
 
-def todict(**args):
-    return args
-
 class wirepeer(peer.peerrepository):
 
     def batch(self):
@@ -166,7 +210,7 @@ class wirepeer(peer.peerrepository):
     def lookup(self, key):
         self.requirecap('lookup', _('look up remote revision'))
         f = future()
-        yield todict(key=encoding.fromlocal(key)), f
+        yield {'key': encoding.fromlocal(key)}, f
         d = f.value
         success, data = d[:-1].split(" ", 1)
         if int(success):
@@ -186,7 +230,7 @@ class wirepeer(peer.peerrepository):
     @batchable
     def known(self, nodes):
         f = future()
-        yield todict(nodes=encodelist(nodes)), f
+        yield {'nodes': encodelist(nodes)}, f
         d = f.value
         try:
             yield [bool(int(f)) for f in d]
@@ -236,10 +280,10 @@ class wirepeer(peer.peerrepository):
             yield False, None
         f = future()
         self.ui.debug('preparing pushkey for "%s:%s"\n' % (namespace, key))
-        yield todict(namespace=encoding.fromlocal(namespace),
-                     key=encoding.fromlocal(key),
-                     old=encoding.fromlocal(old),
-                     new=encoding.fromlocal(new)), f
+        yield {'namespace': encoding.fromlocal(namespace),
+               'key': encoding.fromlocal(key),
+               'old': encoding.fromlocal(old),
+               'new': encoding.fromlocal(new)}, f
         d = f.value
         d, output = d.split('\n', 1)
         try:
@@ -257,7 +301,7 @@ class wirepeer(peer.peerrepository):
             yield {}, None
         f = future()
         self.ui.debug('preparing listkeys for "%s"\n' % namespace)
-        yield todict(namespace=encoding.fromlocal(namespace)), f
+        yield {'namespace': encoding.fromlocal(namespace)}, f
         d = f.value
         r = {}
         for l in d.splitlines():
@@ -270,16 +314,16 @@ class wirepeer(peer.peerrepository):
 
     def changegroup(self, nodes, kind):
         n = encodelist(nodes)
-        f = self._callstream("changegroup", roots=n)
-        return changegroupmod.unbundle10(self._decompress(f), 'UN')
+        f = self._callcompressable("changegroup", roots=n)
+        return changegroupmod.unbundle10(f, 'UN')
 
     def changegroupsubset(self, bases, heads, kind):
         self.requirecap('changegroupsubset', _('look up remote changes'))
         bases = encodelist(bases)
         heads = encodelist(heads)
-        f = self._callstream("changegroupsubset",
-                             bases=bases, heads=heads)
-        return changegroupmod.unbundle10(self._decompress(f), 'UN')
+        f = self._callcompressable("changegroupsubset",
+                                   bases=bases, heads=heads)
+        return changegroupmod.unbundle10(f, 'UN')
 
     def getbundle(self, source, heads=None, common=None, bundlecaps=None):
         self.requirecap('getbundle', _('look up remote changes'))
@@ -290,8 +334,8 @@ class wirepeer(peer.peerrepository):
             opts['common'] = encodelist(common)
         if bundlecaps is not None:
             opts['bundlecaps'] = ','.join(bundlecaps)
-        f = self._callstream("getbundle", **opts)
-        return changegroupmod.unbundle10(self._decompress(f), 'UN')
+        f = self._callcompressable("getbundle", **opts)
+        return changegroupmod.unbundle10(f, 'UN')
 
     def unbundle(self, cg, heads, source):
         '''Send cg (a readable file-like object representing the
@@ -328,21 +372,85 @@ class wirepeer(peer.peerrepository):
             opts['four'] = four
         return self._call('debugwireargs', one=one, two=two, **opts)
 
+    def _call(self, cmd, **args):
+        """execute <cmd> on the server
+
+        The command is expected to return a simple string.
+
+        returns the server reply as a string."""
+        raise NotImplementedError()
+
+    def _callstream(self, cmd, **args):
+        """execute <cmd> on the server
+
+        The command is expected to return a stream.
+
+        returns the server reply as a file like object."""
+        raise NotImplementedError()
+
+    def _callcompressable(self, cmd, **args):
+        """execute <cmd> on the server
+
+        The command is expected to return a stream.
+
+        The stream may have been compressed in some implementaitons. This
+        function takes care of the decompression. This is the only difference
+        with _callstream.
+
+        returns the server reply as a file like object.
+        """
+        raise NotImplementedError()
+
+    def _callpush(self, cmd, fp, **args):
+        """execute a <cmd> on server
+
+        The command is expected to be related to a push. Push has a special
+        return method.
+
+        returns the server reply as a (ret, output) tuple. ret is either
+        empty (error) or a stringified int.
+        """
+        raise NotImplementedError()
+
+    def _abort(self, exception):
+        """clearly abort the wire protocol connection and raise the exception
+        """
+        raise NotImplementedError()
+
 # server side
 
+# wire protocol command can either return a string or one of these classes.
 class streamres(object):
+    """wireproto reply: binary stream
+
+    The call was successful and the result is a stream.
+    Iterate on the `self.gen` attribute to retrieve chunks.
+    """
     def __init__(self, gen):
         self.gen = gen
 
 class pushres(object):
+    """wireproto reply: success with simple integer return
+
+    The call was successful and returned an integer contained in `self.res`.
+    """
     def __init__(self, res):
         self.res = res
 
 class pusherr(object):
+    """wireproto reply: failure
+
+    The call failed. The `self.res` attribute contains the error message.
+    """
     def __init__(self, res):
         self.res = res
 
 class ooberror(object):
+    """wireproto reply: failure of a batch of operation
+
+    Something failed during a batch call. The error message is stored in
+    `self.message`.
+    """
     def __init__(self, message):
         self.message = message
 
@@ -363,6 +471,17 @@ def options(cmd, keys, others):
                          % (cmd, ",".join(others)))
     return opts
 
+# list of commands
+commands = {}
+
+def wireprotocommand(name, args=''):
+    """decorator for wireprotocol command"""
+    def register(func):
+        commands[name] = (func, args)
+        return func
+    return register
+
+@wireprotocommand('batch', 'cmds *')
 def batch(repo, proto, cmds, others):
     repo = repo.filtered("served")
     res = []
@@ -394,6 +513,7 @@ def batch(repo, proto, cmds, others):
         res.append(escapearg(result))
     return ';'.join(res)
 
+@wireprotocommand('between', 'pairs')
 def between(repo, proto, pairs):
     pairs = [decodelist(p, '-') for p in pairs.split(" ")]
     r = []
@@ -401,6 +521,7 @@ def between(repo, proto, pairs):
         r.append(encodelist(b) + "\n")
     return "".join(r)
 
+@wireprotocommand('branchmap')
 def branchmap(repo, proto):
     branchmap = repo.branchmap()
     heads = []
@@ -410,6 +531,7 @@ def branchmap(repo, proto):
         heads.append('%s %s' % (branchname, branchnodes))
     return '\n'.join(heads)
 
+@wireprotocommand('branches', 'nodes')
 def branches(repo, proto, nodes):
     nodes = decodelist(nodes)
     r = []
@@ -417,9 +539,22 @@ def branches(repo, proto, nodes):
         r.append(encodelist(b) + "\n")
     return "".join(r)
 
-def capabilities(repo, proto):
-    caps = ('lookup changegroupsubset branchmap pushkey known getbundle '
-            'unbundlehash batch').split()
+
+wireprotocaps = ['lookup', 'changegroupsubset', 'branchmap', 'pushkey',
+                 'known', 'getbundle', 'unbundlehash', 'batch']
+
+def _capabilities(repo, proto):
+    """return a list of capabilities for a repo
+
+    This function exists to allow extensions to easily wrap capabilities
+    computation
+
+    - returns a lists: easy to alter
+    - change done here will be propagated to both `capabilities` and `hello`
+      command without any other effort. without any other action needed.
+    """
+    # copy to prevent modification of the global list
+    caps = list(wireprotocaps)
     if _allowstream(repo.ui):
         if repo.ui.configbool('server', 'preferuncompressed', False):
             caps.append('stream-preferred')
@@ -432,24 +567,34 @@ def capabilities(repo, proto):
             caps.append('streamreqs=%s' % ','.join(requiredformats))
     caps.append('unbundle=%s' % ','.join(changegroupmod.bundlepriority))
     caps.append('httpheader=1024')
-    return ' '.join(caps)
+    return caps
 
+# If you are writting and extension and consider wrapping this function. Wrap
+# `_capabilities` instead.
+@wireprotocommand('capabilities')
+def capabilities(repo, proto):
+    return ' '.join(_capabilities(repo, proto))
+
+@wireprotocommand('changegroup', 'roots')
 def changegroup(repo, proto, roots):
     nodes = decodelist(roots)
-    cg = repo.changegroup(nodes, 'serve')
+    cg = changegroupmod.changegroup(repo, nodes, 'serve')
     return streamres(proto.groupchunks(cg))
 
+@wireprotocommand('changegroupsubset', 'bases heads')
 def changegroupsubset(repo, proto, bases, heads):
     bases = decodelist(bases)
     heads = decodelist(heads)
-    cg = repo.changegroupsubset(bases, heads, 'serve')
+    cg = changegroupmod.changegroupsubset(repo, bases, heads, 'serve')
     return streamres(proto.groupchunks(cg))
 
+@wireprotocommand('debugwireargs', 'one two *')
 def debugwireargs(repo, proto, one, two, others):
     # only accept optional args from the known set
     opts = options('debugwireargs', ['three', 'four'], others)
     return repo.debugwireargs(one, two, **opts)
 
+@wireprotocommand('getbundle', '*')
 def getbundle(repo, proto, others):
     opts = options('getbundle', ['heads', 'common', 'bundlecaps'], others)
     for k, v in opts.iteritems():
@@ -457,13 +602,15 @@ def getbundle(repo, proto, others):
             opts[k] = decodelist(v)
         elif k == 'bundlecaps':
             opts[k] = set(v.split(','))
-    cg = repo.getbundle('serve', **opts)
+    cg = changegroupmod.getbundle(repo, 'serve', **opts)
     return streamres(proto.groupchunks(cg))
 
+@wireprotocommand('heads')
 def heads(repo, proto):
     h = repo.heads()
     return encodelist(h) + "\n"
 
+@wireprotocommand('hello')
 def hello(repo, proto):
     '''the hello command returns a set of lines describing various
     interesting things about the server, in an RFC822-like format.
@@ -474,12 +621,14 @@ def hello(repo, proto):
     '''
     return "capabilities: %s\n" % (capabilities(repo, proto))
 
+@wireprotocommand('listkeys', 'namespace')
 def listkeys(repo, proto, namespace):
     d = repo.listkeys(encoding.tolocal(namespace)).items()
     t = '\n'.join(['%s\t%s' % (encoding.fromlocal(k), encoding.fromlocal(v))
                    for k, v in d])
     return t
 
+@wireprotocommand('lookup', 'key')
 def lookup(repo, proto, key):
     try:
         k = encoding.tolocal(key)
@@ -491,9 +640,11 @@ def lookup(repo, proto, key):
         success = 0
     return "%s %s\n" % (success, r)
 
+@wireprotocommand('known', 'nodes *')
 def known(repo, proto, nodes, others):
     return ''.join(b and "1" or "0" for b in repo.known(decodelist(nodes)))
 
+@wireprotocommand('pushkey', 'namespace key old new')
 def pushkey(repo, proto, namespace, key, old, new):
     # compatibility with pre-1.8 clients which were accidentally
     # sending raw binary nodes rather than utf-8-encoded hex
@@ -532,6 +683,7 @@ def _walkstreamfiles(repo):
     # this is it's own function so extensions can override it
     return repo.store.walk()
 
+@wireprotocommand('stream_out')
 def stream(repo, proto):
     '''If the server supports streaming clone, it advertises the "stream"
     capability with a value representing the version and flags of the repo
@@ -598,6 +750,7 @@ def stream(repo, proto):
 
     return streamres(streamer(repo, entries, total_bytes))
 
+@wireprotocommand('unbundle', 'heads')
 def unbundle(repo, proto, heads):
     their_heads = decodelist(heads)
 
@@ -633,7 +786,8 @@ def unbundle(repo, proto, heads):
             gen = changegroupmod.readbundle(fp, None)
 
             try:
-                r = repo.addchangegroup(gen, 'serve', proto._client())
+                r = changegroupmod.addchangegroup(repo, gen, 'serve',
+                                                  proto._client())
             except util.Abort, inst:
                 sys.stderr.write("abort: %s\n" % inst)
         finally:
@@ -643,23 +797,3 @@ def unbundle(repo, proto, heads):
     finally:
         fp.close()
         os.unlink(tempname)
-
-commands = {
-    'batch': (batch, 'cmds *'),
-    'between': (between, 'pairs'),
-    'branchmap': (branchmap, ''),
-    'branches': (branches, 'nodes'),
-    'capabilities': (capabilities, ''),
-    'changegroup': (changegroup, 'roots'),
-    'changegroupsubset': (changegroupsubset, 'bases heads'),
-    'debugwireargs': (debugwireargs, 'one two *'),
-    'getbundle': (getbundle, '*'),
-    'heads': (heads, ''),
-    'hello': (hello, ''),
-    'known': (known, 'nodes *'),
-    'listkeys': (listkeys, 'namespace'),
-    'lookup': (lookup, 'key'),
-    'pushkey': (pushkey, 'namespace key old new'),
-    'stream_out': (stream, ''),
-    'unbundle': (unbundle, 'heads'),
-}

@@ -14,7 +14,7 @@ import errno
 
 def _bundle(repo, bases, heads, node, suffix, compress=True):
     """create a bundle with the specified revisions as a backup"""
-    cg = repo.changegroupsubset(bases, heads, 'strip')
+    cg = changegroup.changegroupsubset(repo, bases, heads, 'strip')
     backupdir = repo.join("strip-backup")
     if not os.path.isdir(backupdir):
         os.mkdir(backupdir)
@@ -134,6 +134,8 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
             for i in xrange(offset, len(tr.entries)):
                 file, troffset, ignore = tr.entries[i]
                 repo.sopener(file, 'a').truncate(troffset)
+                if troffset == 0:
+                    repo.store.markremoved(file)
             tr.close()
         except: # re-raises
             tr.abort()
@@ -146,7 +148,8 @@ def strip(ui, repo, nodelist, backup="all", topic='backup'):
             if not repo.ui.verbose:
                 # silence internal shuffling chatter
                 repo.ui.pushbuffer()
-            repo.addchangegroup(gen, 'strip', 'bundle:' + chgrpfile, True)
+            changegroup.addchangegroup(repo, gen, 'strip',
+                                       'bundle:' + chgrpfile, True)
             if not repo.ui.verbose:
                 repo.ui.popbuffer()
             f.close()
