@@ -479,7 +479,8 @@ class localrepository(object):
         return hook.hook(self.ui, self, name, throw, **args)
 
     @unfilteredmethod
-    def _tag(self, names, node, message, local, user, date, extra={}):
+    def _tag(self, names, node, message, local, user, date, extra={},
+             editor=False):
         if isinstance(names, str):
             names = (names,)
 
@@ -539,14 +540,15 @@ class localrepository(object):
             self[None].add(['.hgtags'])
 
         m = matchmod.exact(self.root, '', ['.hgtags'])
-        tagnode = self.commit(message, user, date, extra=extra, match=m)
+        tagnode = self.commit(message, user, date, extra=extra, match=m,
+                              editor=editor)
 
         for name in names:
             self.hook('tag', node=hex(node), tag=name, local=local)
 
         return tagnode
 
-    def tag(self, names, node, message, local, user, date):
+    def tag(self, names, node, message, local, user, date, editor=False):
         '''tag a revision with one or more symbolic names.
 
         names is a list of strings or, when adding a single tag, names may be a
@@ -574,7 +576,7 @@ class localrepository(object):
                                        '(please commit .hgtags manually)'))
 
         self.tags() # instantiate the cache
-        self._tag(names, node, message, local, user, date)
+        self._tag(names, node, message, local, user, date, editor=editor)
 
     @filteredpropertycache
     def _tagscache(self):
@@ -855,7 +857,8 @@ class localrepository(object):
         # abort here if the journal already exists
         if self.svfs.exists("journal"):
             raise error.RepoError(
-                _("abandoned transaction found - run hg recover"))
+                _("abandoned transaction found"),
+                hint=_("run 'hg recover' to clean up transaction"))
 
         def onclose():
             self.store.write(tr)
@@ -1508,121 +1511,48 @@ class localrepository(object):
         If node2 is None, compare node1 with working directory.
         """
 
-        def mfmatches(ctx):
-            mf = ctx.manifest().copy()
-            if match.always():
-                return mf
-            for fn in mf.keys():
-                if not match(fn):
-                    del mf[fn]
-            return mf
-
         ctx1 = self[node1]
         ctx2 = self[node2]
 
+        # This next code block is, admittedly, fragile logic that tests for
+        # reversing the contexts and wouldn't need to exist if it weren't for
+        # the fast (and common) code path of comparing the working directory
+        # with its first parent.
+        #
+        # What we're aiming for here is the ability to call:
+        #
+        # workingctx.status(parentctx)
+        #
+        # If we always built the manifest for each context and compared those,
+        # then we'd be done. But the special case of the above call means we
+        # just copy the manifest of the parent.
+        reversed = False
+        if (not isinstance(ctx1, context.changectx)
+            and isinstance(ctx2, context.changectx)):
+            reversed = True
+            ctx1, ctx2 = ctx2, ctx1
+
         working = ctx2.rev() is None
-        parentworking = working and ctx1 == self['.']
-        match = match or matchmod.always(self.root, self.getcwd())
         listignored, listclean, listunknown = ignored, clean, unknown
 
         # load earliest manifest first for caching reasons
         if not working and ctx2.rev() < ctx1.rev():
             ctx2.manifest()
 
-        if not parentworking:
-            def bad(f, msg):
-                # 'f' may be a directory pattern from 'match.files()',
-                # so 'f not in ctx1' is not enough
-                if f not in ctx1 and f not in ctx1.dirs():
-                    self.ui.warn('%s: %s\n' % (self.dirstate.pathto(f), msg))
-            match.bad = bad
+        r = [[], [], [], [], [], [], []]
+        match = ctx2._matchstatus(ctx1, r, match, listignored, listclean,
+                                  listunknown)
+        r = ctx2._prestatus(ctx1, r, match, listignored, listclean, listunknown)
+        r = ctx2._buildstatus(ctx1, r, match, listignored, listclean,
+                              listunknown)
+        r = ctx2._poststatus(ctx1, r, match, listignored, listclean,
+                             listunknown)
 
-        if working: # we need to scan the working dir
-            subrepos = []
-            if '.hgsub' in self.dirstate:
-                subrepos = sorted(ctx2.substate)
-            s = self.dirstate.status(match, subrepos, listignored,
-                                     listclean, listunknown)
-            cmp, modified, added, removed, deleted, unknown, ignored, clean = s
-
-            # check for any possibly clean files
-            if parentworking and cmp:
-                fixup = []
-                # do a full compare of any files that might have changed
-                for f in sorted(cmp):
-                    if (f not in ctx1 or ctx2.flags(f) != ctx1.flags(f)
-                        or ctx1[f].cmp(ctx2[f])):
-                        modified.append(f)
-                    else:
-                        fixup.append(f)
-
-                # update dirstate for files that are actually clean
-                if fixup:
-                    if listclean:
-                        clean += fixup
-
-                    try:
-                        # updating the dirstate is optional
-                        # so we don't wait on the lock
-                        wlock = self.wlock(False)
-                        try:
-                            for f in fixup:
-                                self.dirstate.normal(f)
-                        finally:
-                            wlock.release()
-                    except error.LockError:
-                        pass
-
-        if not parentworking:
-            mf1 = mfmatches(ctx1)
-            if working:
-                # we are comparing working dir against non-parent
-                # generate a pseudo-manifest for the working dir
-                mf2 = mfmatches(self['.'])
-                for f in cmp + modified + added:
-                    mf2[f] = None
-                    mf2.set(f, ctx2.flags(f))
-                for f in removed:
-                    if f in mf2:
-                        del mf2[f]
-            else:
-                # we are comparing two revisions
-                deleted, unknown, ignored = [], [], []
-                mf2 = mfmatches(ctx2)
-
-            modified, added, clean = [], [], []
-            withflags = mf1.withflags() | mf2.withflags()
-            for fn, mf2node in mf2.iteritems():
-                if fn in mf1:
-                    if (fn not in deleted and
-                        ((fn in withflags and mf1.flags(fn) != mf2.flags(fn)) or
-                         (mf1[fn] != mf2node and
-                          (mf2node or ctx1[fn].cmp(ctx2[fn]))))):
-                        modified.append(fn)
-                    elif listclean:
-                        clean.append(fn)
-                    del mf1[fn]
-                elif fn not in deleted:
-                    added.append(fn)
-            removed = mf1.keys()
-
-        if working and modified and not self.dirstate._checklink:
-            # Symlink placeholders may get non-symlink-like contents
-            # via user error or dereferencing by NFS or Samba servers,
-            # so we filter out any placeholders that don't look like a
-            # symlink
-            sane = []
-            for f in modified:
-                if ctx2.flags(f) == 'l':
-                    d = ctx2[f].data()
-                    if d == '' or len(d) >= 1024 or '\n' in d or util.binary(d):
-                        self.ui.debug('ignoring suspect symlink placeholder'
-                                      ' "%s"\n' % f)
-                        continue
-                sane.append(f)
-            modified = sane
-
-        r = modified, added, removed, deleted, unknown, ignored, clean
+        if reversed:
+            # since we are maintaining whether we reversed ctx1 and ctx2 (due
+            # to comparing the workingctx with its parent), we need to switch
+            # back added files (r[1]) and removed files (r[2])
+            r[1], r[2] = r[2], r[1]
 
         if listsubrepos:
             for subpath, sub in scmutil.itersubrepos(ctx1, ctx2):

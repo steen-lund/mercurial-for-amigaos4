@@ -487,13 +487,12 @@ def backout(ui, repo, node=None, rev=None, **opts):
             cmdutil.revert(ui, repo, rctx, repo.dirstate.parents())
 
 
-        e = cmdutil.commiteditor
-        if not opts['message'] and not opts['logfile']:
-            # we don't translate commit messages
-            opts['message'] = "Backed out changeset %s" % short(node)
-            e = cmdutil.commitforceeditor
-
         def commitfunc(ui, repo, message, match, opts):
+            e = cmdutil.getcommiteditor()
+            if not message:
+                # we don't translate commit messages
+                message = "Backed out changeset %s" % short(node)
+                e = cmdutil.getcommiteditor(edit=True)
             return repo.commit(message, opts.get('user'), opts.get('date'),
                                match, editor=e)
         newnode = cmdutil.commit(ui, repo, commitfunc, [], opts)
@@ -1347,8 +1346,6 @@ def commit(ui, repo, *pats, **opts):
 
     Returns 0 on success, 1 if nothing changed.
     """
-    forceeditor = opts.get('edit')
-
     if opts.get('subrepos'):
         if opts.get('amend'):
             raise util.Abort(_('cannot amend with --subrepos'))
@@ -1410,10 +1407,6 @@ def commit(ui, repo, *pats, **opts):
                     bookmarks.setcurrent(repo, bm)
             newmarks.write()
     else:
-        e = cmdutil.commiteditor
-        if forceeditor:
-            e = cmdutil.commitforceeditor
-
         def commitfunc(ui, repo, message, match, opts):
             try:
                 if opts.get('secret'):
@@ -1423,7 +1416,9 @@ def commit(ui, repo, *pats, **opts):
                                           'commit')
 
                 return repo.commit(message, opts.get('user'), opts.get('date'),
-                                   match, editor=e, extra=extra)
+                                   match,
+                                   editor=cmdutil.getcommiteditor(**opts),
+                                   extra=extra)
             finally:
                 ui.setconfig('phases', 'new-commit', oldcommitphase, 'commit')
                 repo.baseui.setconfig('phases', 'new-commit', oldcommitphase,
@@ -3077,9 +3072,7 @@ def graft(ui, repo, *revs, **opts):
     if not opts.get('date') and opts.get('currentdate'):
         opts['date'] = "%d %d" % util.makedate()
 
-    editor = None
-    if opts.get('edit'):
-        editor = cmdutil.commitforceeditor
+    editor = cmdutil.getcommiteditor(**opts)
 
     cont = False
     if opts['continue']:
@@ -3186,7 +3179,8 @@ def graft(ui, repo, *revs, **opts):
                     repo.ui.setconfig('ui', 'forcemerge', opts.get('tool', ''),
                                       'graft')
                     stats = mergemod.update(repo, ctx.node(), True, True, False,
-                                            ctx.p1().node())
+                                            ctx.p1().node(),
+                                            labels=['local', 'graft'])
                 finally:
                     repo.ui.setconfig('ui', 'forcemerge', '', 'graft')
                 # report any conflicts
@@ -3692,6 +3686,8 @@ def identify(ui, repo, source=None, rev=None,
      _("don't commit, just update the working directory")),
     ('', 'bypass', None,
      _("apply patch without touching the working directory")),
+    ('', 'partial', None,
+     _('commit even if some hunks fail')),
     ('', 'exact', None,
      _('apply patch to the nodes from which it was generated')),
     ('', 'import-branch', None,
@@ -3733,6 +3729,16 @@ def import_(ui, repo, patch1=None, *patches, **opts):
     With -s/--similarity, hg will attempt to discover renames and
     copies in the patch in the same way as :hg:`addremove`.
 
+    Use --partial to ensure a changeset will be created from the patch
+    even if some hunks fail to apply. Hunks that fail to apply will be
+    written to a <target-file>.rej file. Conflicts can then be resolved
+    by hand before :hg:`commit --amend` is run to update the created
+    changeset. This flag exists to let people import patches that
+    partially apply without losing the associated metadata (author,
+    date, description, ...), Note that when none of the hunk applies
+    cleanly, :hg:`import --partial` will create an empty changeset,
+    importing only the patch metadata.
+
     To read a patch from standard input, use "-" as the patch name. If
     a URL is specified, the patch will be downloaded from it.
     See :hg:`help dates` for a list of formats valid for -d/--date.
@@ -3758,7 +3764,7 @@ def import_(ui, repo, patch1=None, *patches, **opts):
 
           hg import --exact proposed-fix.patch
 
-    Returns 0 on success.
+    Returns 0 on success, 1 on partial success (see --partial).
     """
 
     if not patch1:
@@ -3790,6 +3796,7 @@ def import_(ui, repo, patch1=None, *patches, **opts):
     base = opts["base"]
     wlock = lock = tr = None
     msgs = []
+    ret = 0
 
 
     try:
@@ -3811,8 +3818,9 @@ def import_(ui, repo, patch1=None, *patches, **opts):
 
                 haspatch = False
                 for hunk in patch.split(patchfile):
-                    (msg, node) = cmdutil.tryimportone(ui, repo, hunk, parents,
-                                                       opts, msgs, hg.clean)
+                    (msg, node, rej) = cmdutil.tryimportone(ui, repo, hunk,
+                                                            parents, opts,
+                                                            msgs, hg.clean)
                     if msg:
                         haspatch = True
                         ui.note(msg + '\n')
@@ -3820,6 +3828,12 @@ def import_(ui, repo, patch1=None, *patches, **opts):
                         parents = repo.parents()
                     else:
                         parents = [repo[node]]
+                    if rej:
+                        ui.write_err(_("patch applied partially\n"))
+                        ui.write_err(("(fix the .rej files and run "
+                                      "`hg commit --amend`)\n"))
+                        ret = 1
+                        break
 
                 if not haspatch:
                     raise util.Abort(_('%s: no diffs found') % patchurl)
@@ -3828,6 +3842,7 @@ def import_(ui, repo, patch1=None, *patches, **opts):
                 tr.close()
             if msgs:
                 repo.savecommitmessage('\n* * *\n'.join(msgs))
+            return ret
         except: # re-raises
             # wlock.release() indirectly calls dirstate.write(): since
             # we're crashing, we do not want to change the working dir
@@ -4928,43 +4943,62 @@ def resolve(ui, repo, *pats, **opts):
                            'use --all to remerge all files'))
 
     ms = mergemod.mergestate(repo)
+
+    if not ms.active() and not show:
+        raise util.Abort(_('resolve command not applicable when not merging'))
+
     m = scmutil.match(repo[None], pats, opts)
     ret = 0
 
+    didwork = False
     for f in ms:
-        if m(f):
-            if show:
-                if nostatus:
-                    ui.write("%s\n" % f)
-                else:
-                    ui.write("%s %s\n" % (ms[f].upper(), f),
-                             label='resolve.' +
-                             {'u': 'unresolved', 'r': 'resolved'}[ms[f]])
-            elif mark:
-                ms.mark(f, "r")
-            elif unmark:
-                ms.mark(f, "u")
+        if not m(f):
+            continue
+
+        didwork = True
+
+        if show:
+            if nostatus:
+                ui.write("%s\n" % f)
             else:
-                wctx = repo[None]
+                ui.write("%s %s\n" % (ms[f].upper(), f),
+                         label='resolve.' +
+                         {'u': 'unresolved', 'r': 'resolved'}[ms[f]])
+        elif mark:
+            ms.mark(f, "r")
+        elif unmark:
+            ms.mark(f, "u")
+        else:
+            wctx = repo[None]
 
-                # backup pre-resolve (merge uses .orig for its own purposes)
-                a = repo.wjoin(f)
-                util.copyfile(a, a + ".resolve")
+            # backup pre-resolve (merge uses .orig for its own purposes)
+            a = repo.wjoin(f)
+            util.copyfile(a, a + ".resolve")
 
-                try:
-                    # resolve file
-                    ui.setconfig('ui', 'forcemerge', opts.get('tool', ''),
-                                 'resolve')
-                    if ms.resolve(f, wctx):
-                        ret = 1
-                finally:
-                    ui.setconfig('ui', 'forcemerge', '', 'resolve')
-                    ms.commit()
+            try:
+                # resolve file
+                ui.setconfig('ui', 'forcemerge', opts.get('tool', ''),
+                             'resolve')
+                if ms.resolve(f, wctx):
+                    ret = 1
+            finally:
+                ui.setconfig('ui', 'forcemerge', '', 'resolve')
+                ms.commit()
 
-                # replace filemerge's .orig file with our resolve file
-                util.rename(a + ".resolve", a + ".orig")
+            # replace filemerge's .orig file with our resolve file
+            util.rename(a + ".resolve", a + ".orig")
 
     ms.commit()
+
+    if not didwork and pats:
+        ui.warn(_("arguments do not match paths that need resolved\n"))
+
+    # Nudge users into finishing an unfinished operation. We don't print
+    # this with the list/show operation because we want list/show to remain
+    # machine readable.
+    if not list(ms.unresolved()) and not show:
+        ui.status(_('no more unresolved files\n'))
+
     return ret
 
 @command('revert',
@@ -5684,16 +5718,15 @@ def tag(ui, repo, name1, *names, **opts):
         if date:
             date = util.parsedate(date)
 
-        if opts.get('edit'):
-            message = ui.edit(message, ui.username())
-            repo.savecommitmessage(message)
+        editor = cmdutil.getcommiteditor(**opts)
 
         # don't allow tagging the null rev
         if (not opts.get('remove') and
             scmutil.revsingle(repo, rev_).rev() == nullrev):
             raise util.Abort(_("cannot tag null revision"))
 
-        repo.tag(names, r, message, opts.get('local'), opts.get('user'), date)
+        repo.tag(names, r, message, opts.get('local'), opts.get('user'), date,
+                 editor=editor)
     finally:
         release(lock, wlock)
 
@@ -5786,9 +5819,11 @@ def unbundle(ui, repo, fname1, *fnames, **opts):
     ('c', 'check', None,
      _('update across branches if no uncommitted changes')),
     ('d', 'date', '', _('tipmost revision matching date'), _('DATE')),
-    ('r', 'rev', '', _('revision'), _('REV'))],
+    ('r', 'rev', '', _('revision'), _('REV'))
+     ] + mergetoolopts,
     _('[-c] [-C] [-d DATE] [[-r] REV]'))
-def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
+def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False,
+           tool=None):
     """update working directory (or switch revisions)
 
     Update the repository's working directory to the specified
@@ -5869,6 +5904,8 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
             rev = repo[repo[None].branch()].rev()
         mergemod._checkunknown(repo, repo[None], repo[rev])
 
+    repo.ui.setconfig('ui', 'forcemerge', tool, 'update')
+
     if clean:
         ret = hg.clean(repo, rev)
     else:
@@ -5879,7 +5916,11 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False):
             ui.status(_("updating bookmark %s\n") % repo._bookmarkcurrent)
     elif brev in repo._bookmarks:
         bookmarks.setcurrent(repo, brev)
+        ui.status(_("(activating bookmark %s)\n") % brev)
     elif brev:
+        if repo._bookmarkcurrent:
+            ui.status(_("(leaving bookmark %s)\n") %
+                      repo._bookmarkcurrent)
         bookmarks.unsetcurrent(repo)
 
     return ret
