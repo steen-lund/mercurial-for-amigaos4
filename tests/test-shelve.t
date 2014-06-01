@@ -210,11 +210,11 @@ ensure that we have a merge with unresolved conflicts
   +++ b/a/a
   @@ -1,2 +1,6 @@
    a
-  +<<<<<<< local
+  +<<<<<<< dest:   *  - shelve: pending changes temporary commit (glob)
    c
   +=======
   +a
-  +>>>>>>> other
+  +>>>>>>> source: 4702e8911fe0 - shelve: changes to '[mq]: second.patch'
   diff --git a/b.rename/b b/b.rename/b
   new file mode 100644
   --- /dev/null
@@ -292,6 +292,7 @@ attempt to continue
 
   $ hg revert -r . a/a
   $ hg resolve -m a/a
+  no more unresolved files
 
   $ hg commit -m 'commit while unshelve in progress'
   abort: unshelve already in progress
@@ -601,11 +602,11 @@ unshelve and conflicts with tracked and untracked files
   M f
   ? f.orig
   $ cat f
-  <<<<<<< local
+  <<<<<<< dest:   5f6b880e719b  - shelve: pending changes temporary commit
   g
   =======
   f
-  >>>>>>> other
+  >>>>>>> source: 23b29cada8ba - shelve: changes to 'commit stuff'
   $ cat f.orig
   g
   $ hg unshelve --abort
@@ -644,11 +645,11 @@ unshelve and conflicts with tracked and untracked files
   M f
   ? f.orig
   $ cat f
-  <<<<<<< local
+  <<<<<<< dest:   *  - test: intermediate other change (glob)
   g
   =======
   f
-  >>>>>>> other
+  >>>>>>> source: 23b29cada8ba - shelve: changes to 'commit stuff'
   $ cat f.orig
   g
   $ hg unshelve --abort
