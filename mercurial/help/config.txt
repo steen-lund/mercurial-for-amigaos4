@@ -807,7 +807,9 @@ Example::
 ---------------
 
 This section configures external merge tools to use for file-level
-merges.
+merges. This section has likely been preconfigured at install time.
+Use :hg:`config merge-tools` to check the existing configuration.
+Also see :hg:`help merge-tools` for more details.
 
 Example ``~/.hgrc``::
 
@@ -818,6 +820,9 @@ Example ``~/.hgrc``::
   kdiff3.args = $base $local $other -o $output
   # Give higher priority
   kdiff3.priority = 1
+
+  # Changing the priority of preconfigured tool
+  vimdiff.priority = 0
 
   # Define new tool
   myHtmlTool.args = -m $local $other $base $output
@@ -838,7 +843,13 @@ Supported arguments:
 ``args``
   The arguments to pass to the tool executable. You can refer to the
   files being merged as well as the output file through these
-  variables: ``$base``, ``$local``, ``$other``, ``$output``.
+  variables: ``$base``, ``$local``, ``$other``, ``$output``. The meaning
+  of ``$local`` and ``$other`` can vary depending on which action is being
+  performed. During and update or merge, ``$local`` represents the original
+  state of the file, while ``$other`` represents the commit you are updating
+  to or the commit you are merging with. During a rebase ``$local``
+  represents the destination of the rebase, and ``$other`` represents the
+  commit being rebased.
   Default: ``$local $base $other``
 
 ``premerge``
@@ -1202,6 +1213,20 @@ User interface controls.
     The conflict resolution program to use during a manual merge.
     For more information on merge tools see :hg:`help merge-tools`.
     For configuring merge tools see the ``[merge-tools]`` section.
+
+``mergemarkers``
+    Sets the merge conflict marker label styling. The default ``detailed``
+    style uses the ``mergemarkertemplate`` setting to style the labels.
+    The ``basic`` style just uses 'local' and 'other' as the marker label.
+    One of ``basic`` or ``detailed``.
+    Default is ``detailed``.
+
+``mergemarkertemplate``
+    The template used to print the commit description next to each conflict
+    marker during merge conflicts. See :hg:`help templates` for the template
+    format.
+    Defaults to showing the hash, tags, branches, bookmarks, author, and
+    the first line of the commit description.
 
 ``portablefilenames``
     Check for portable filenames. Can be ``warn``, ``ignore`` or ``abort``.
