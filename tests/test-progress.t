@@ -1,7 +1,11 @@
 
   $ cat > loop.py <<EOF
-  > from mercurial import commands
+  > from mercurial import cmdutil, commands
   > import time
+  > 
+  > cmdtable = {}
+  > command = cmdutil.command(cmdtable)
+  > 
   > class incrementingtime(object):
   >     def __init__(self):
   >         self._time = 0.0
@@ -10,6 +14,12 @@
   >         return self._time
   > time.time = incrementingtime()
   > 
+  > @command('loop',
+  >     [('', 'total', '', 'override for total'),
+  >     ('', 'nested', False, 'show nested results'),
+  >     ('', 'parallel', False, 'show parallel sets of results')],
+  >     'hg loop LOOPS',
+  >     norepo=True)
   > def loop(ui, loops, **opts):
   >     loops = int(loops)
   >     total = None
@@ -37,15 +47,6 @@
   >               'nested', None, 'nested.done', 'nestnum', nested_steps)
   >     ui.progress('loop', None, 'loop.done', 'loopnum', total)
   > 
-  > commands.norepo += " loop"
-  > 
-  > cmdtable = {
-  >     "loop": (loop, [('', 'total', '', 'override for total'),
-  >                     ('', 'nested', False, 'show nested results'),
-  >                     ('', 'parallel', False, 'show parallel sets of results'),
-  >                    ],
-  >              'hg loop LOOPS'),
-  > }
   > EOF
 
   $ cp $HGRCPATH $HGRCPATH.orig

@@ -2,7 +2,10 @@ Test basic extension support
 
   $ cat > foobar.py <<EOF
   > import os
-  > from mercurial import commands
+  > from mercurial import cmdutil, commands
+  > 
+  > cmdtable = {}
+  > command = cmdutil.command(cmdtable)
   > 
   > def uisetup(ui):
   >     ui.write("uisetup called\\n")
@@ -11,18 +14,14 @@ Test basic extension support
   >     ui.write("reposetup called for %s\\n" % os.path.basename(repo.root))
   >     ui.write("ui %s= repo.ui\\n" % (ui == repo.ui and "=" or "!"))
   > 
+  > @command('foo', [], 'hg foo')
   > def foo(ui, *args, **kwargs):
   >     ui.write("Foo\\n")
   > 
+  > @command('bar', [], 'hg bar', norepo=True)
   > def bar(ui, *args, **kwargs):
   >     ui.write("Bar\\n")
   > 
-  > cmdtable = {
-  >    "foo": (foo, [], "hg foo"),
-  >    "bar": (bar, [], "hg bar"),
-  > }
-  > 
-  > commands.norepo += ' bar'
   > EOF
   $ abspath=`pwd`/foobar.py
 
@@ -288,21 +287,22 @@ hide outer repo
   $ cat > debugextension.py <<EOF
   > '''only debugcommands
   > '''
+  > from mercurial import cmdutil
+  > cmdtable = {}
+  > command = cmdutil.command(cmdtable)
+  > 
+  > @command('debugfoobar', [], 'hg debugfoobar')
   > def debugfoobar(ui, repo, *args, **opts):
   >     "yet another debug command"
   >     pass
   > 
+  > @command('foo', [], 'hg foo')
   > def foo(ui, repo, *args, **opts):
   >     """yet another foo command
   > 
   >     This command has been DEPRECATED since forever.
   >     """
   >     pass
-  > 
-  > cmdtable = {
-  >    "debugfoobar": (debugfoobar, (), "hg debugfoobar"),
-  >    "foo": (foo, (), "hg foo")
-  > }
   > EOF
   $ debugpath=`pwd`/debugextension.py
   $ echo "debugextension = $debugpath" >> $HGRCPATH
@@ -475,16 +475,15 @@ Extension module help vs command help:
 Test help topic with same name as extension
 
   $ cat > multirevs.py <<EOF
-  > from mercurial import commands
+  > from mercurial import cmdutil, commands
+  > cmdtable = {}
+  > command = cmdutil.command(cmdtable)
   > """multirevs extension
   > Big multi-line module docstring."""
+  > @command('multirevs', [], 'ARG', norepo=True)
   > def multirevs(ui, repo, arg, *args, **opts):
   >     """multirevs command"""
   >     pass
-  > cmdtable = {
-  >    "multirevs": (multirevs, [], 'ARG')
-  > }
-  > commands.norepo += ' multirevs'
   > EOF
   $ echo "multirevs = multirevs.py" >> $HGRCPATH
 
@@ -532,14 +531,15 @@ Issue811: Problem loading extensions twice (by site and by user)
   $ cat > debugissue811.py <<EOF
   > '''show all loaded extensions
   > '''
-  > from mercurial import extensions, commands
+  > from mercurial import cmdutil, commands, extensions
+  > cmdtable = {}
+  > command = cmdutil.command(cmdtable)
   > 
+  > @command('debugextensions', [], 'hg debugextensions', norepo=True)
   > def debugextensions(ui):
   >     "yet another debug command"
   >     ui.write("%s\n" % '\n'.join([x for x, y in extensions.extensions()]))
   > 
-  > cmdtable = {"debugextensions": (debugextensions, (), "hg debugextensions")}
-  > commands.norepo += " debugextensions"
   > EOF
   $ echo "debugissue811 = $debugpath" >> $HGRCPATH
   $ echo "mq=" >> $HGRCPATH
@@ -618,8 +618,8 @@ Broken disabled extension and command:
   > EOF
   $ hg --config extensions.path=./path.py help foo > /dev/null
   warning: error finding commands in $TESTTMP/hgext/forest.py (glob)
-  hg: unknown command 'foo'
-  warning: error finding commands in $TESTTMP/hgext/forest.py (glob)
+  abort: no such help topic: foo
+  (try "hg help --keyword foo")
   [255]
 
   $ cat > throw.py <<EOF
@@ -628,11 +628,10 @@ Broken disabled extension and command:
   > command = cmdutil.command(cmdtable)
   > class Bogon(Exception): pass
   > 
-  > @command('throw', [], 'hg throw')
+  > @command('throw', [], 'hg throw', norepo=True)
   > def throw(ui, **opts):
   >     """throws an exception"""
   >     raise Bogon()
-  > commands.norepo += " throw"
   > EOF
 No declared supported version, extension complains:
   $ hg --config extensions.throw=throw.py throw 2>&1 | egrep '^\*\*'
