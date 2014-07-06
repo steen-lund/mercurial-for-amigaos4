@@ -66,6 +66,8 @@ In addition to filters, there are some basic built-in functions:
 
 - shortest(node)
 
+- startswith(string, text)
+
 - strip(text[, chars])
 
 - sub(pat, repl, expr)
@@ -83,6 +85,10 @@ Some sample command line templates:
 - Join the list of files with a ", "::
 
    $ hg log -r 0 --template "files: {join(files, ', ')}\n"
+
+- Modify each line of a commit description::
+
+   $ hg log --template "{splitlines(desc) % '**** {line}\n'}"
 
 - Format date::
 
@@ -120,3 +126,7 @@ Some sample command line templates:
 - Mark the working copy parent with '@'::
 
    $ hg log --template "{ifcontains(rev, revset('.'), '@')}\n"
+
+- Show only commit descriptions that start with "template"::
+
+   $ hg log --template "{startswith(\"template\", firstline(desc))}\n"

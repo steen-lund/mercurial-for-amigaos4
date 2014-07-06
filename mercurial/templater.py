@@ -111,7 +111,7 @@ def compileexp(exp, context):
 def getsymbol(exp):
     if exp[0] == 'symbol':
         return exp[1]
-    raise error.ParseError(_("expected a symbol"))
+    raise error.ParseError(_("expected a symbol, got '%s'") % exp[0])
 
 def getlist(x):
     if not x:
@@ -148,7 +148,7 @@ def runsymbol(context, mapping, key):
             v = context.process(key, mapping)
         except TemplateNotFound:
             v = ''
-    if util.safehasattr(v, '__call__'):
+    if callable(v):
         return v(**mapping)
     if isinstance(v, types.GeneratorType):
         v = list(v)
@@ -185,7 +185,7 @@ def runtemplate(context, mapping, template):
 def runmap(context, mapping, data):
     func, data, ctmpl = data
     d = func(context, mapping, data)
-    if util.safehasattr(d, '__call__'):
+    if callable(d):
         d = d()
 
     lm = mapping.copy()
@@ -335,7 +335,7 @@ def join(context, mapping, args):
         raise error.ParseError(_("join expects one or two arguments"))
 
     joinset = args[0][0](context, mapping, args[0][1])
-    if util.safehasattr(joinset, '__call__'):
+    if callable(joinset):
         jf = joinset.joinfmt
         joinset = [jf(x) for x in joinset()]
 
@@ -466,6 +466,17 @@ def sub(context, mapping, args):
     src = stringify(_evalifliteral(args[2], context, mapping))
     yield re.sub(pat, rpl, src)
 
+def startswith(context, mapping, args):
+    if len(args) != 2:
+        raise error.ParseError(_("startswith expects two arguments"))
+
+    patn = stringify(args[0][0](context, mapping, args[0][1]))
+    text = stringify(args[1][0](context, mapping, args[1][1]))
+    if text.startswith(patn):
+        return text
+    return ''
+
+
 methods = {
     "string": lambda e, c: (runstring, e[1]),
     "rawstring": lambda e, c: (runrawstring, e[1]),
@@ -490,6 +501,7 @@ funcs = {
     "revset": revset,
     "rstdoc": rstdoc,
     "shortest": shortest,
+    "startswith": startswith,
     "strip": strip,
     "sub": sub,
 }
