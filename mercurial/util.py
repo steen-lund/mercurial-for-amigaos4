@@ -223,6 +223,37 @@ except AttributeError:
                     del self[i]
                     break
 
+class sortdict(dict):
+    '''a simple sorted dictionary'''
+    def __init__(self, data=None):
+        self._list = []
+        if data:
+            self.update(data)
+    def copy(self):
+        return sortdict(self)
+    def __setitem__(self, key, val):
+        if key in self:
+            self._list.remove(key)
+        self._list.append(key)
+        dict.__setitem__(self, key, val)
+    def __iter__(self):
+        return self._list.__iter__()
+    def update(self, src):
+        for k in src:
+            self[k] = src[k]
+    def clear(self):
+        dict.clear(self)
+        self._list = []
+    def items(self):
+        return [(k, self[k]) for k in self._list]
+    def __delitem__(self, key):
+        dict.__delitem__(self, key)
+        self._list.remove(key)
+    def keys(self):
+        return self._list
+    def iterkeys(self):
+        return self._list.__iter__()
+
 class lrucachedict(object):
     '''cache most recent gets from or sets to this dictionary'''
     def __init__(self, maxsize):
@@ -1287,23 +1318,9 @@ def email(author):
         r = None
     return author[author.find('<') + 1:r]
 
-def _ellipsis(text, maxlength):
-    if len(text) <= maxlength:
-        return text, False
-    else:
-        return "%s..." % (text[:maxlength - 3]), True
-
 def ellipsis(text, maxlength=400):
-    """Trim string to at most maxlength (default: 400) characters."""
-    try:
-        # use unicode not to split at intermediate multi-byte sequence
-        utext, truncated = _ellipsis(text.decode(encoding.encoding),
-                                     maxlength)
-        if not truncated:
-            return text
-        return utext.encode(encoding.encoding)
-    except (UnicodeDecodeError, UnicodeEncodeError):
-        return _ellipsis(text, maxlength)[0]
+    """Trim string to at most maxlength (default: 400) columns in display."""
+    return encoding.trim(text, maxlength, ellipsis='...')
 
 def unitcountfn(*unittable):
     '''return a function that renders a readable count of some quantity'''
