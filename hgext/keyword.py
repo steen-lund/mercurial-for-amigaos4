@@ -1,6 +1,6 @@
 # keyword.py - $Keyword$ expansion for Mercurial
 #
-# Copyright 2007-2012 Christian Ebert <blacktrash@gmx.net>
+# Copyright 2007-2014 Christian Ebert <blacktrash@gmx.net>
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
@@ -87,7 +87,7 @@ from mercurial import localrepo, match, patch, templatefilters, templater, util
 from mercurial import scmutil, pathutil
 from mercurial.hgweb import webcommands
 from mercurial.i18n import _
-import os, re, shutil, tempfile
+import os, re, tempfile
 
 cmdtable = {}
 command = cmdutil.command(cmdtable)
@@ -450,7 +450,12 @@ def demo(ui, repo, *args, **opts):
     repo.commit(text=msg)
     ui.status(_('\n\tkeywords expanded\n'))
     ui.write(repo.wread(fn))
-    shutil.rmtree(tmpdir, ignore_errors=True)
+    for root, dirs, files in os.walk(tmpdir, topdown=False):
+        for f in files:
+            util.unlink(os.path.join(root, f))
+        for d in dirs:
+            os.rmdir(os.path.join(root, d))
+    os.rmdir(tmpdir)
 
 @command('kwexpand',
     commands.walkopts,

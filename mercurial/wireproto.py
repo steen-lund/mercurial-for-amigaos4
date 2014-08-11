@@ -203,7 +203,8 @@ def unescapearg(escaped):
 gboptsmap = {'heads':  'nodes',
              'common': 'nodes',
              'bundlecaps': 'csv',
-             'listkeys': 'csv'}
+             'listkeys': 'csv',
+             'cg': 'boolean'}
 
 # client side
 
@@ -349,6 +350,8 @@ class wirepeer(peer.peerrepository):
                 value = encodelist(value)
             elif keytype == 'csv':
                 value = ','.join(value)
+            elif keytype == 'boolean':
+                value = bool(value)
             elif keytype != 'plain':
                 raise KeyError('unknown getbundle option type %s'
                                % keytype)
@@ -652,6 +655,8 @@ def getbundle(repo, proto, others):
             opts[k] = decodelist(v)
         elif keytype == 'csv':
             opts[k] = set(v.split(','))
+        elif keytype == 'boolean':
+            opts[k] = '%i' % bool(v)
         elif keytype != 'plain':
             raise KeyError('unknown getbundle option type %s'
                            % keytype)

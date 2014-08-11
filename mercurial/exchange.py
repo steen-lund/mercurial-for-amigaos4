@@ -77,8 +77,57 @@ class pushoperation(object):
         self.remoteheads = None
         # testable as a boolean indicating if any nodes are missing locally.
         self.incoming = None
-        # set of all heads common after changeset bundle push
-        self.commonheads = None
+        # phases changes that must be pushed along side the changesets
+        self.outdatedphases = None
+        # phases changes that must be pushed if changeset push fails
+        self.fallbackoutdatedphases = None
+        # outgoing obsmarkers
+        self.outobsmarkers = set()
+
+    @util.propertycache
+    def futureheads(self):
+        """future remote heads if the changeset push succeeds"""
+        return self.outgoing.missingheads
+
+    @util.propertycache
+    def fallbackheads(self):
+        """future remote heads if the changeset push fails"""
+        if self.revs is None:
+            # not target to push, all common are relevant
+            return self.outgoing.commonheads
+        unfi = self.repo.unfiltered()
+        # I want cheads = heads(::missingheads and ::commonheads)
+        # (missingheads is revs with secret changeset filtered out)
+        #
+        # This can be expressed as:
+        #     cheads = ( (missingheads and ::commonheads)
+        #              + (commonheads and ::missingheads))"
+        #              )
+        #
+        # while trying to push we already computed the following:
+        #     common = (::commonheads)
+        #     missing = ((commonheads::missingheads) - commonheads)
+        #
+        # We can pick:
+        # * missingheads part of common (::commonheads)
+        common = set(self.outgoing.common)
+        nm = self.repo.changelog.nodemap
+        cheads = [node for node in self.revs if nm[node] in common]
+        # and
+        # * commonheads parents on missing
+        revset = unfi.set('%ln and parents(roots(%ln))',
+                         self.outgoing.commonheads,
+                         self.outgoing.missing)
+        cheads.extend(c.node() for c in revset)
+        return cheads
+
+    @property
+    def commonheads(self):
+        """set of all common heads after changeset bundle push"""
+        if self.ret:
+            return self.futureheads
+        else:
+            return self.fallbackheads
 
 def push(repo, remote, force=False, revs=None, newbranch=False):
     '''Push outgoing changesets (limited by revs) from a local
@@ -136,7 +185,6 @@ def push(repo, remote, force=False, revs=None, newbranch=False):
                 and pushop.remote.capable('bundle2-exp')):
                 _pushbundle2(pushop)
             _pushchangeset(pushop)
-            _pushcomputecommonheads(pushop)
             _pushsyncphase(pushop)
             _pushobsolete(pushop)
         finally:
@@ -149,8 +197,39 @@ def push(repo, remote, force=False, revs=None, newbranch=False):
     _pushbookmark(pushop)
     return pushop.ret
 
+# list of steps to perform discovery before push
+pushdiscoveryorder = []
+
+# Mapping between step name and function
+#
+# This exists to help extensions wrap steps if necessary
+pushdiscoverymapping = {}
+
+def pushdiscovery(stepname):
+    """decorator for function performing discovery before push
+
+    The function is added to the step -> function mapping and appended to the
+    list of steps.  Beware that decorated function will be added in order (this
+    may matter).
+
+    You can only use this decorator for a new step, if you want to wrap a step
+    from an extension, change the pushdiscovery dictionary directly."""
+    def dec(func):
+        assert stepname not in pushdiscoverymapping
+        pushdiscoverymapping[stepname] = func
+        pushdiscoveryorder.append(stepname)
+        return func
+    return dec
+
 def _pushdiscovery(pushop):
-    # discovery
+    """Run all discovery steps"""
+    for stepname in pushdiscoveryorder:
+        step = pushdiscoverymapping[stepname]
+        step(pushop)
+
+@pushdiscovery('changeset')
+def _pushdiscoverychangeset(pushop):
+    """discover the changeset that need to be pushed"""
     unfi = pushop.repo.unfiltered()
     fci = discovery.findcommonincoming
     commoninc = fci(unfi, pushop.remote, force=pushop.force)
@@ -161,6 +240,45 @@ def _pushdiscovery(pushop):
     pushop.outgoing = outgoing
     pushop.remoteheads = remoteheads
     pushop.incoming = inc
+
+@pushdiscovery('phase')
+def _pushdiscoveryphase(pushop):
+    """discover the phase that needs to be pushed
+
+    (computed for both success and failure case for changesets push)"""
+    outgoing = pushop.outgoing
+    unfi = pushop.repo.unfiltered()
+    remotephases = pushop.remote.listkeys('phases')
+    publishing = remotephases.get('publishing', False)
+    ana = phases.analyzeremotephases(pushop.repo,
+                                     pushop.fallbackheads,
+                                     remotephases)
+    pheads, droots = ana
+    extracond = ''
+    if not publishing:
+        extracond = ' and public()'
+    revset = 'heads((%%ln::%%ln) %s)' % extracond
+    # Get the list of all revs draft on remote by public here.
+    # XXX Beware that revset break if droots is not strictly
+    # XXX root we may want to ensure it is but it is costly
+    fallback = list(unfi.set(revset, droots, pushop.fallbackheads))
+    if not outgoing.missing:
+        future = fallback
+    else:
+        # adds changeset we are going to push as draft
+        #
+        # should not be necessary for pushblishing server, but because of an
+        # issue fixed in xxxxx we have to do it anyway.
+        fdroots = list(unfi.set('roots(%ln  + %ln::)',
+                       outgoing.missing, droots))
+        fdroots = [f.node() for f in fdroots]
+        future = list(unfi.set(revset, fdroots, pushop.futureheads))
+    pushop.outdatedphases = future
+    pushop.fallbackoutdatedphases = fallback
+
+@pushdiscovery('obsmarker')
+def _pushdiscoveryobsmarkers(pushop):
+    pushop.outobsmarkers = pushop.repo.obsstore
 
 def _pushcheckoutgoing(pushop):
     outgoing = pushop.outgoing
@@ -201,6 +319,31 @@ def _pushcheckoutgoing(pushop):
                              newbm)
     return True
 
+# List of names of steps to perform for an outgoing bundle2, order matters.
+b2partsgenorder = []
+
+# Mapping between step name and function
+#
+# This exists to help extensions wrap steps if necessary
+b2partsgenmapping = {}
+
+def b2partsgenerator(stepname):
+    """decorator for function generating bundle2 part
+
+    The function is added to the step -> function mapping and appended to the
+    list of steps.  Beware that decorated functions will be added in order
+    (this may matter).
+
+    You can only use this decorator for new steps, if you want to wrap a step
+    from an extension, attack the b2partsgenmapping dictionary directly."""
+    def dec(func):
+        assert stepname not in b2partsgenmapping
+        b2partsgenmapping[stepname] = func
+        b2partsgenorder.append(stepname)
+        return func
+    return dec
+
+@b2partsgenerator('changeset')
 def _pushb2ctx(pushop, bundler):
     """handle changegroup push through bundle2
 
@@ -227,8 +370,37 @@ def _pushb2ctx(pushop, bundler):
         pushop.ret = cgreplies['changegroup'][0]['return']
     return handlereply
 
-# list of function that may decide to add parts to an outgoing bundle2
-bundle2partsgenerators = [_pushb2ctx]
+@b2partsgenerator('phase')
+def _pushb2phases(pushop, bundler):
+    """handle phase push through bundle2"""
+    if 'phases' in pushop.stepsdone:
+        return
+    b2caps = bundle2.bundle2caps(pushop.remote)
+    if not 'b2x:pushkey' in b2caps:
+        return
+    pushop.stepsdone.add('phases')
+    part2node = []
+    enc = pushkey.encode
+    for newremotehead in pushop.outdatedphases:
+        part = bundler.newpart('b2x:pushkey')
+        part.addparam('namespace', enc('phases'))
+        part.addparam('key', enc(newremotehead.hex()))
+        part.addparam('old', enc(str(phases.draft)))
+        part.addparam('new', enc(str(phases.public)))
+        part2node.append((part.id, newremotehead))
+    def handlereply(op):
+        for partid, node in part2node:
+            partrep = op.records.getreplies(partid)
+            results = partrep['pushkey']
+            assert len(results) <= 1
+            msg = None
+            if not results:
+                msg = _('server ignored update of %s to public!\n') % node
+            elif not int(results[0]['return']):
+                msg = _('updating %s to public failed!\n') % node
+            if msg is not None:
+                pushop.ui.warn(msg)
+    return handlereply
 
 def _pushbundle2(pushop):
     """push data to the remote using bundle2
@@ -240,7 +412,8 @@ def _pushbundle2(pushop):
     capsblob = bundle2.encodecaps(pushop.repo.bundle2caps)
     bundler.newpart('b2x:replycaps', data=capsblob)
     replyhandlers = []
-    for partgen in bundle2partsgenerators:
+    for partgenname in b2partsgenorder:
+        partgen = b2partsgenmapping[partgenname]
         ret = partgen(pushop, bundler)
         if callable(ret):
             replyhandlers.append(ret)
@@ -307,43 +480,8 @@ def _pushchangeset(pushop):
         # change
         pushop.ret = pushop.remote.addchangegroup(cg, 'push', pushop.repo.url())
 
-def _pushcomputecommonheads(pushop):
-    unfi = pushop.repo.unfiltered()
-    if pushop.ret:
-        # push succeed, synchronize target of the push
-        cheads = pushop.outgoing.missingheads
-    elif pushop.revs is None:
-        # All out push fails. synchronize all common
-        cheads = pushop.outgoing.commonheads
-    else:
-        # I want cheads = heads(::missingheads and ::commonheads)
-        # (missingheads is revs with secret changeset filtered out)
-        #
-        # This can be expressed as:
-        #     cheads = ( (missingheads and ::commonheads)
-        #              + (commonheads and ::missingheads))"
-        #              )
-        #
-        # while trying to push we already computed the following:
-        #     common = (::commonheads)
-        #     missing = ((commonheads::missingheads) - commonheads)
-        #
-        # We can pick:
-        # * missingheads part of common (::commonheads)
-        common = set(pushop.outgoing.common)
-        nm = pushop.repo.changelog.nodemap
-        cheads = [node for node in pushop.revs if nm[node] in common]
-        # and
-        # * commonheads parents on missing
-        revset = unfi.set('%ln and parents(roots(%ln))',
-                         pushop.outgoing.commonheads,
-                         pushop.outgoing.missing)
-        cheads.extend(c.node() for c in revset)
-    pushop.commonheads = cheads
-
 def _pushsyncphase(pushop):
     """synchronise phase information locally and remotely"""
-    unfi = pushop.repo.unfiltered()
     cheads = pushop.commonheads
     # even when we don't push, exchanging phase data is useful
     remotephases = pushop.remote.listkeys('phases')
@@ -376,12 +514,18 @@ def _pushsyncphase(pushop):
             _localphasemove(pushop, cheads, phases.draft)
         ### Apply local phase on remote
 
-        # Get the list of all revs draft on remote by public here.
-        # XXX Beware that revset break if droots is not strictly
-        # XXX root we may want to ensure it is but it is costly
-        outdated = unfi.set('heads((%ln::%ln) and public())',
-                            droots, cheads)
+        if pushop.ret:
+            if 'phases' in pushop.stepsdone:
+                # phases already pushed though bundle2
+                return
+            outdated = pushop.outdatedphases
+        else:
+            outdated = pushop.fallbackoutdatedphases
 
+        pushop.stepsdone.add('phases')
+
+        # filter heads already turned public by the push
+        outdated = [c for c in outdated if c.node() not in pheads]
         b2caps = bundle2.bundle2caps(pushop.remote)
         if 'b2x:pushkey' in b2caps:
             # server supports bundle2, let's do a batched push through it
@@ -431,7 +575,12 @@ def _pushsyncphase(pushop):
 def _localphasemove(pushop, nodes, phase=phases.public):
     """move <nodes> to <phase> in the local source repo"""
     if pushop.locallocked:
-        phases.advanceboundary(pushop.repo, phase, nodes)
+        tr = pushop.repo.transaction('push-phase-sync')
+        try:
+            phases.advanceboundary(pushop.repo, tr, phase, nodes)
+            tr.close()
+        finally:
+            tr.release()
     else:
         # repo is not locked, do not change any phases!
         # Informs the user that phases should have been moved when
@@ -444,13 +593,16 @@ def _localphasemove(pushop, nodes, phase=phases.public):
 
 def _pushobsolete(pushop):
     """utility function to push obsolete markers to a remote"""
+    if 'obsmarkers' in pushop.stepsdone:
+        return
     pushop.ui.debug('try to push obsolete markers to remote\n')
     repo = pushop.repo
     remote = pushop.remote
+    pushop.stepsdone.add('obsmarkers')
     if (obsolete._enabled and repo.obsstore and
         'obsolete' in remote.listkeys('namespaces')):
         rslts = []
-        remotedata = repo.listkeys('obsolete')
+        remotedata = obsolete._pushkeyescape(pushop.outobsmarkers)
         for key in sorted(remotedata, reverse=True):
             # reverse sort to ensure we end with dump0
             data = remotedata[key]
@@ -673,14 +825,29 @@ def _pullapplyphases(pullop, remotephases):
         pheads, _dr = phases.analyzeremotephases(pullop.repo,
                                                  pullop.pulledsubset,
                                                  remotephases)
-        phases.advanceboundary(pullop.repo, phases.public, pheads)
-        phases.advanceboundary(pullop.repo, phases.draft,
-                               pullop.pulledsubset)
+        dheads = pullop.pulledsubset
     else:
         # Remote is old or publishing all common changesets
         # should be seen as public
-        phases.advanceboundary(pullop.repo, phases.public,
-                               pullop.pulledsubset)
+        pheads = pullop.pulledsubset
+        dheads = []
+    unfi = pullop.repo.unfiltered()
+    phase = unfi._phasecache.phase
+    rev = unfi.changelog.nodemap.get
+    public = phases.public
+    draft = phases.draft
+
+    # exclude changesets already public locally and update the others
+    pheads = [pn for pn in pheads if phase(unfi, rev(pn)) > public]
+    if pheads:
+        tr = pullop.gettransaction()
+        phases.advanceboundary(pullop.repo, tr, public, pheads)
+
+    # exclude changesets already draft locally and update the others
+    dheads = [pn for pn in dheads if phase(unfi, rev(pn)) > draft]
+    if dheads:
+        tr = pullop.gettransaction()
+        phases.advanceboundary(pullop.repo, tr, draft, dheads)
 
 def _pullobsolete(pullop):
     """utility function to pull obsolete markers from a remote
@@ -726,9 +893,13 @@ def getbundle(repo, source, heads=None, common=None, bundlecaps=None,
     The implementation is at a very early stage and will get massive rework
     when the API of bundle is refined.
     """
-    # build changegroup bundle here.
-    cg = changegroup.getbundle(repo, source, heads=heads,
-                               common=common, bundlecaps=bundlecaps)
+    cg = None
+    if kwargs.get('cg', True):
+        # build changegroup bundle here.
+        cg = changegroup.getbundle(repo, source, heads=heads,
+                                   common=common, bundlecaps=bundlecaps)
+    elif 'HG2X' not in bundlecaps:
+        raise ValueError(_('request for bundle10 must include changegroup'))
     if bundlecaps is None or 'HG2X' not in bundlecaps:
         if kwargs:
             raise ValueError(_('unsupported getbundle arguments: %s')
