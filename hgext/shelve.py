@@ -73,7 +73,8 @@ class shelvedfile(object):
         try:
             gen = exchange.readbundle(self.repo.ui, fp, self.fname, self.vfs)
             changegroup.addchangegroup(self.repo, gen, 'unshelve',
-                                       'bundle:' + self.vfs.join(self.fname))
+                                       'bundle:' + self.vfs.join(self.fname),
+                                       targetphase=phases.secret)
         finally:
             fp.close()
 
@@ -177,10 +178,14 @@ def createcmd(ui, repo, pats, opts):
         hasmq = util.safehasattr(repo, 'mq')
         if hasmq:
             saved, repo.mq.checkapplied = repo.mq.checkapplied, False
+        backup = repo.ui.backupconfig('phases', 'new-commit')
         try:
+            repo.ui. setconfig('phases', 'new-commit', phases.secret)
+            editor = cmdutil.getcommiteditor(editform='shelve.shelve', **opts)
             return repo.commit(message, user, opts.get('date'), match,
-                               editor=cmdutil.getcommiteditor(**opts))
+                               editor=editor)
         finally:
+            repo.ui.restoreconfig(backup)
             if hasmq:
                 repo.mq.checkapplied = saved
 
@@ -233,8 +238,6 @@ def createcmd(ui, repo, pats, opts):
             else:
                 ui.status(_("nothing changed\n"))
             return 1
-
-        phases.retractboundary(repo, phases.secret, [node])
 
         fp = shelvedfile(repo, name, 'files').opener('wb')
         fp.write('\0'.join(shelvedfiles))
@@ -388,7 +391,7 @@ def unshelveabort(ui, repo, state, opts):
 
         mergefiles(ui, repo, state.wctx, state.pendingctx)
 
-        repair.strip(ui, repo, state.stripnodes, backup='none', topic='shelve')
+        repair.strip(ui, repo, state.stripnodes, backup=False, topic='shelve')
         shelvedstate.clear(repo)
         ui.warn(_("unshelve of '%s' aborted\n") % state.name)
     finally:
@@ -457,7 +460,7 @@ def unshelvecontinue(ui, repo, state, opts):
         mergefiles(ui, repo, state.wctx, shelvectx)
 
         state.stripnodes.append(shelvectx.node())
-        repair.strip(ui, repo, state.stripnodes, backup='none', topic='shelve')
+        repair.strip(ui, repo, state.stripnodes, backup=False, topic='shelve')
         shelvedstate.clear(repo)
         unshelvecleanup(ui, repo, state.name, opts)
         ui.status(_("unshelve of '%s' complete\n") % state.name)
@@ -558,10 +561,13 @@ def unshelve(ui, repo, *shelved, **opts):
                 if hasmq:
                     saved, repo.mq.checkapplied = repo.mq.checkapplied, False
 
+                backup = repo.ui.backupconfig('phases', 'new-commit')
                 try:
+                    repo.ui. setconfig('phases', 'new-commit', phases.secret)
                     return repo.commit(message, 'shelve@localhost',
                                        opts.get('date'), match)
                 finally:
+                    repo.ui.restoreconfig(backup)
                     if hasmq:
                         repo.mq.checkapplied = saved
 
@@ -574,8 +580,6 @@ def unshelve(ui, repo, *shelved, **opts):
 
         ui.quiet = True
         shelvedfile(repo, basename, 'hg').applybundle()
-        nodes = [ctx.node() for ctx in repo.set('%d:', oldtiprev)]
-        phases.retractboundary(repo, phases.secret, nodes)
 
         ui.quiet = oldquiet
 

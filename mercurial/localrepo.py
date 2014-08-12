@@ -182,7 +182,9 @@ class localrepository(object):
 
     bundle2caps = {'HG2X': (),
                    'b2x:listkeys': (),
-                   'b2x:pushkey': ()}
+                   'b2x:pushkey': (),
+                   'b2x:changegroup': (),
+                  }
 
     # a list of (ui, featureset) functions.
     # only functions defined in module of enabled extensions are invoked
@@ -1087,8 +1089,6 @@ class localrepository(object):
             return l
 
         def unlock():
-            if hasunfilteredcache(self, '_phasecache'):
-                self._phasecache.write()
             for k, ce in self._filecache.items():
                 if k == 'dirstate' or k not in self.__dict__:
                     continue
@@ -1440,7 +1440,7 @@ class localrepository(object):
                 # be compliant anyway
                 #
                 # if minimal phase was 0 we don't need to retract anything
-                phases.retractboundary(self, targetphase, [n])
+                phases.retractboundary(self, tr, targetphase, [n])
             tr.close()
             branchmap.updatecache(self.filtered('served'))
             return n

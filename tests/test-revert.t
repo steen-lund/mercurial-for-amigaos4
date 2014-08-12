@@ -14,101 +14,94 @@ nothing changed
   [255]
   $ hg revert --all
 
-  $ echo 123 > b
+Introduce some changes and revert them
+--------------------------------------
 
-should show b unknown
+  $ echo 123 > b
 
   $ hg status
   ? b
   $ echo 12 > c
 
-should show b unknown and c modified
-
   $ hg status
   M c
   ? b
   $ hg add b
-
-should show b added and c modified
 
   $ hg status
   M c
   A b
   $ hg rm a
 
-should show a removed, b added and c modified
-
   $ hg status
   M c
   A b
   R a
+
+revert removal of a file
+
   $ hg revert a
-
-should show b added, copy saved, and c modified
-
   $ hg status
   M c
   A b
+
+revert addition of a file
+
   $ hg revert b
-
-should show b unknown, and c modified
-
   $ hg status
   M c
   ? b
+
+revert modification of a file (--no-backup)
+
   $ hg revert --no-backup c
-
-should show unknown: b
-
   $ hg status
   ? b
-  $ hg add b
 
-should show b added
+revert deletion (! status) of a added file
+------------------------------------------
+
+  $ hg add b
 
   $ hg status b
   A b
   $ rm b
-
-should show b deleted
-
   $ hg status b
   ! b
   $ hg revert -v b
   forgetting b
-
-should not find b
-
   $ hg status b
   b: * (glob)
-
-should show a c e
 
   $ ls
   a
   c
   e
 
-should verbosely save backup to e.orig
+Test creation of backup (.orig) files
+-------------------------------------
 
   $ echo z > e
   $ hg revert --all -v
   saving current version of e as e.orig
   reverting e
 
-should say no changes needed
+revert on clean file (no change)
+--------------------------------
 
   $ hg revert a
   no changes needed to a
 
-should say file not managed
+revert on an untracked file
+---------------------------
 
   $ echo q > q
   $ hg revert q
   file not managed: q
   $ rm q
 
-should say file not found
+revert on file that does not exists
+-----------------------------------
 
   $ hg revert notfound
   notfound: no such file in rev 334a9e57682c
@@ -122,21 +115,26 @@ should say file not found
   A z
   ? e.orig
 
-should add a, remove d, forget z
+revert to another revision (--rev)
+----------------------------------
 
   $ hg revert --all -r0
   adding a
   removing d
   forgetting z
 
-should forget a, undelete d
+revert explicitly to parent (--rev)
+-----------------------------------
 
   $ hg revert --all -rtip
   forgetting a
   undeleting d
   $ rm a *.orig
 
-should silently add a
+revert to another revision (--rev) and exact match
+--------------------------------------------------
+
+exact match are more silent
 
   $ hg revert -r0 a
   $ hg st a
@@ -153,12 +151,14 @@ should silently keep d removed
 
   $ hg update -C
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+
+revert of exec bit
+------------------
+
 #if execbit
   $ chmod +x c
   $ hg revert --all
   reverting c
-
-should print non-executable
 
   $ test -x c || echo non-executable
   non-executable
@@ -170,8 +170,6 @@ should print non-executable
   $ hg revert --all
   reverting c
 
-should print executable
-
   $ test -x c && echo executable
   executable
 #endif
@@ -180,6 +178,7 @@ should print executable
 
 
 Issue241: update and revert produces inconsistent repositories
+--------------------------------------------------------------
 
   $ hg init a
   $ cd a
@@ -193,20 +192,23 @@ Issue241: update and revert produces inconsistent repositories
   $ mkdir b
   $ echo b > b/b
 
-should fail - no arguments
+call `hg revert` with no file specified
+---------------------------------------
 
   $ hg revert -rtip
   abort: no files or directories specified
   (use --all to revert all files, or 'hg update 1' to update)
   [255]
 
-should succeed
+call `hg revert` with --all
+---------------------------
 
   $ hg revert --all -rtip
   reverting a
 
 
 Issue332: confusing message when reverting directory
+----------------------------------------------------
 
   $ hg ci -A -m b
   adding b/b
@@ -224,6 +226,7 @@ Issue332: confusing message when reverting directory
 
 
 reverting a rename target should revert the source
+--------------------------------------------------
 
   $ hg mv a newa
   $ hg revert newa
@@ -258,6 +261,7 @@ reverting a rename target should revert the source
   $ hg rm removed ignoreddir/removed
 
 should revert ignored* and undelete *removed
+--------------------------------------------
 
   $ hg revert -a --no-backup
   reverting ignored
@@ -271,9 +275,13 @@ should revert ignored* and undelete *removed
   $ hg rm removed
 
 should silently revert the named files
+--------------------------------------
 
   $ hg revert --no-backup ignored removed
   $ hg st -mardi
+
+Reverting copy (issue3920)
+--------------------------
 
 someone set up us the copies
 
@@ -300,8 +308,9 @@ copies and renames, you have no chance to survive make your time (issue3920)
   R ignored
 
 Test revert of a file added by one side of the merge
+====================================================
 
-(remove any pending change)
+remove any pending change
 
   $ hg revert --all
   forgetting allyour
@@ -309,7 +318,7 @@ Test revert of a file added by one side of the merge
   undeleting ignored
   $ hg purge --all --config extensions.purge=
 
-(Adds a new commit)
+Adds a new commit
 
   $ echo foo > newadd
   $ hg add newadd
@@ -317,7 +326,7 @@ Test revert of a file added by one side of the merge
   created new head
 
 
-(merge it with the other head)
+merge it with the other head
 
   $ hg merge # merge 1 into 2
   2 files updated, 0 files merged, 1 files removed, 0 files unresolved
@@ -331,7 +340,7 @@ Test revert of a file added by one side of the merge
   commit: 2 modified, 1 removed (merge)
   update: (current)
 
-(clarifies who added what)
+clarifies who added what
 
   $ hg status
   M allyour
@@ -344,7 +353,8 @@ Test revert of a file added by one side of the merge
   A base
   R ignored
 
-(revert file added by p1() to p1() state)
+revert file added by p1() to p1() state
+-----------------------------------------
 
   $ hg revert -r 'p1()' 'glob:newad?'
   $ hg status
@@ -352,7 +362,8 @@ Test revert of a file added by one side of the merge
   M base
   R ignored
 
-(revert file added by p1() to p2() state)
+revert file added by p1() to p2() state
+------------------------------------------
 
   $ hg revert -r 'p2()' 'glob:newad?'
   removing newadd
@@ -362,7 +373,8 @@ Test revert of a file added by one side of the merge
   R ignored
   R newadd
 
-(revert file added by p2() to p2() state)
+revert file added by p2() to p2() state
+------------------------------------------
 
   $ hg revert -r 'p2()' 'glob:allyou?'
   $ hg status
@@ -371,7 +383,8 @@ Test revert of a file added by one side of the merge
   R ignored
   R newadd
 
-(revert file added by p2() to p1() state)
+revert file added by p2() to p1() state
+------------------------------------------
 
   $ hg revert -r 'p1()' 'glob:allyou?'
   removing allyour
@@ -381,4 +394,259 @@ Test revert of a file added by one side of the merge
   R ignored
   R newadd
 
+Systematic behavior validation of most possible cases
+=====================================================
 
+This section tests most of the possible combinations of working directory
+changes and inter-revision changes. The number of possible cases is significant
+but they all have a slighly different handling. So this section commits to
+generating and testing all of them to allow safe refactoring of the revert code.
+
+A python script is used to generate a file history for each combination of
+changes between, on one side the working directory and its parent and on
+the other side, changes between a revert target (--rev) and working directory
+parent. The three states generated are:
+
+- a "base" revision
+- a "parent" revision
+- the working directory (based on "parent")
+
+The file generated have names of the form:
+
+ <changeset-state>_<working-copy-state>
+
+Here, "changeset-state" conveys the state in "base" and "parent" (or the change
+that happen between them), "working-copy-state" is self explanatory.
+
+All known states are not tested yet. See inline documentation for details.
+Special cases from merge and rename are not tested by this section.
+
+There are also multiple cases where the current revert implementation is known to
+slightly misbehave.
+
+Write the python script to disk
+-------------------------------
+
+  $ cat << EOF > gen-revert-cases.py
+  > # generate proper file state to test revert behavior
+  > import sys
+  > 
+  > # content of the file in "base" and "parent"
+  > ctxcontent = {
+  >     # modified: file content change from base to parent
+  >     'modified': ['base', 'parent'],
+  > }
+  > 
+  > # content of file in working copy
+  > wccontent = {
+  >     # clean: wc content is the same as parent
+  >     'clean': lambda cc: cc[1],
+  > }
+  > 
+  > # build the combination of possible states
+  > combination = []
+  > for ctxkey in ctxcontent:
+  >     for wckey in wccontent:
+  >         filename = "%s_%s" % (ctxkey, wckey)
+  >         combination.append((filename, ctxkey, wckey))
+  > 
+  > # make sure we have stable output
+  > combination.sort()
+  > 
+  > # retrieve the state we must generate
+  > target = sys.argv[1]
+  > 
+  > # compute file content
+  > content = []
+  > for filename, ctxkey, wckey in combination:
+  >     cc = ctxcontent[ctxkey]
+  >     if target == 'filelist':
+  >         print filename
+  >     elif target == 'base':
+  >         content.append((filename, cc[0]))
+  >     elif target == 'parent':
+  >         content.append((filename, cc[1]))
+  >     elif target == 'wc':
+  >         content.append((filename, wccontent[wckey](cc)))
+  >     else:
+  >         print >> sys.stderr, "unknown target:", target
+  >         sys.exit(1)
+  > 
+  > # write actual content
+  > for filename, data in content:
+  >     f = open(filename, 'w')
+  >     f.write(data + '\n')
+  >     f.close()
+  > EOF
+
+check list of planned files
+
+  $ python gen-revert-cases.py filelist
+  modified_clean
+
+Script to make a simple text version of the content
+---------------------------------------------------
+
+  $ cat << EOF >> dircontent.py
+  > # generate a simple text view of the directory for easy comparison
+  > import os
+  > files = os.listdir('.')
+  > files.sort()
+  > for filename in files:
+  >     if os.path.isdir(filename):
+  >         continue
+  >     content = open(filename).read()
+  >     print '%-6s %s' % (content.strip(), filename)
+  > EOF
+
+Generate appropriate repo state
+-------------------------------
+
+  $ hg init revert-ref
+  $ cd revert-ref
+
+Generate base changeset
+
+  $ python ../gen-revert-cases.py base
+  $ hg addremove --similarity 0
+  adding modified_clean
+  $ hg status
+  A modified_clean
+  $ hg commit -m 'base'
+
+(create a simple text version of the content)
+
+  $ python ../dircontent.py > ../content-base.txt
+  $ cat ../content-base.txt
+  base   modified_clean
+
+Create parent changeset
+
+  $ python ../gen-revert-cases.py parent
+  $ hg addremove --similarity 0
+  $ hg status
+  M modified_clean
+  $ hg commit -m 'parent'
+
+(create a simple text version of the content)
+
+  $ python ../dircontent.py > ../content-parent.txt
+  $ cat ../content-parent.txt
+  parent modified_clean
+
+Setup working directory
+
+  $ python ../gen-revert-cases.py wc | cat
+  $ hg addremove --similarity 0
+  $ hg status
+
+  $ hg status --rev 'desc("base")'
+  M modified_clean
+
+(create a simple text version of the content)
+
+  $ python ../dircontent.py > ../content-wc.txt
+  $ cat ../content-wc.txt
+  parent modified_clean
+
+  $ cd ..
+
+Test revert --all to parent content
+-----------------------------------
+
+(setup from reference repo)
+
+  $ cp -r revert-ref revert-parent-all
+  $ cd revert-parent-all
+
+check revert output
+
+  $ hg revert --all
+
+Compare resulting directory with revert target.
+
+The diff is filtered to include change only. The only difference should be
+additional `.orig` backup file when applicable.
+
+  $ python ../dircontent.py > ../content-parent-all.txt
+  $ cd ..
+  $ diff -U 0 -- content-parent.txt content-parent-all.txt | grep _
+  [1]
+
+Test revert --all to "base" content
+-----------------------------------
+
+(setup from reference repo)
+
+  $ cp -r revert-ref revert-base-all
+  $ cd revert-base-all
+
+check revert output
+
+  $ hg revert --all --rev 'desc(base)'
+  reverting modified_clean
+
+Compare resulting directory with revert target.
+
+The diff is filtered to include change only. The only difference should be
+additional `.orig` backup file when applicable.
+
+  $ python ../dircontent.py > ../content-base-all.txt
+  $ cd ..
+  $ diff -U 0 -- content-base.txt content-base-all.txt | grep _
+  [1]
+
+Test revert to parent content with explicit file name
+-----------------------------------------------------
+
+(setup from reference repo)
+
+  $ cp -r revert-ref revert-parent-explicit
+  $ cd revert-parent-explicit
+
+revert all files individually and check the output
+(output is expected to be different than in the --all case)
+
+  $ for file in `python ../gen-revert-cases.py filelist`; do
+  >   echo '### revert for:' $file;
+  >   hg revert $file;
+  >   echo
+  > done
+  ### revert for: modified_clean
+  no changes needed to modified_clean
+  
+
+check resulting directory againt the --all run
+(There should be no difference)
+
+  $ python ../dircontent.py > ../content-parent-explicit.txt
+  $ cd ..
+  $ diff -U 0 -- content-parent-all.txt content-parent-explicit.txt | grep _
+  [1]
+
+Test revert to "base" content with explicit file name
+-----------------------------------------------------
+
+(setup from reference repo)
+
+  $ cp -r revert-ref revert-base-explicit
+  $ cd revert-base-explicit
+
+revert all files individually and check the output
+(output is expected to be different than in the --all case)
+
+  $ for file in `python ../gen-revert-cases.py filelist`; do
+  >   echo '### revert for:' $file;
+  >   hg revert $file --rev 'desc(base)';
+  >   echo
+  > done
+  ### revert for: modified_clean
+  
+
+check resulting directory againt the --all run
+(There should be no difference)
+
+  $ python ../dircontent.py > ../content-base-explicit.txt
+  $ cd ..
+  $ diff -U 0 -- content-base-all.txt content-base-explicit.txt | grep _
+  [1]
