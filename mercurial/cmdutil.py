@@ -109,7 +109,8 @@ def logmessage(ui, opts):
                              (logfile, inst.strerror))
     return message
 
-def getcommiteditor(edit=False, finishdesc=None, extramsg=None, **opts):
+def getcommiteditor(edit=False, finishdesc=None, extramsg=None,
+                    editform='', **opts):
     """get appropriate commit message editor according to '--edit' option
 
     'finishdesc' is a function to be called with edited commit message
@@ -122,6 +123,9 @@ def getcommiteditor(edit=False, finishdesc=None, extramsg=None, **opts):
     'Leave message empty to abort commit' line. 'HG: ' prefix and EOL
     is automatically added.
 
+    'editform' is a dot-separated list of names, to distinguish
+    the purpose of commit text editing.
+
     'getcommiteditor' returns 'commitforceeditor' regardless of
     'edit', if one of 'finishdesc' or 'extramsg' is specified, because
     they are specific for usage in MQ.
@@ -129,7 +133,10 @@ def getcommiteditor(edit=False, finishdesc=None, extramsg=None, **opts):
     if edit or finishdesc or extramsg:
         return lambda r, c, s: commitforceeditor(r, c, s,
                                                  finishdesc=finishdesc,
-                                                 extramsg=extramsg)
+                                                 extramsg=extramsg,
+                                                 editform=editform)
+    elif editform:
+        return lambda r, c, s: commiteditor(r, c, s, editform=editform)
     else:
         return commiteditor
 
@@ -586,7 +593,7 @@ def tryimportone(ui, repo, hunk, parents, opts, msgs, updatefunc):
     tmpname, message, user, date, branch, nodeid, p1, p2 = \
         patch.extract(ui, hunk)
 
-    editor = getcommiteditor(**opts)
+    editor = getcommiteditor(editform='import.normal', **opts)
     update = not opts.get('bypass')
     strip = opts["strip"]
     sim = float(opts.get('similarity') or 0)
@@ -680,12 +687,13 @@ def tryimportone(ui, repo, hunk, parents, opts, msgs, updatefunc):
                                     files, eolmode=None)
                 except patch.PatchError, e:
                     raise util.Abort(str(e))
+                editor = getcommiteditor(editform='import.bypass')
                 memctx = context.makememctx(repo, (p1.node(), p2.node()),
                                             message,
                                             opts.get('user') or user,
                                             opts.get('date') or date,
                                             branch, files, store,
-                                            editor=getcommiteditor())
+                                            editor=editor)
                 n = memctx.commit()
             finally:
                 store.close()
@@ -1574,8 +1582,14 @@ def _makelogrevset(repo, pats, opts, revs):
     if not slowpath:
         for f in match.files():
             if follow and f not in pctx:
-                raise util.Abort(_('cannot follow file not in parent '
-                                   'revision: "%s"') % f)
+                # If the file exists, it may be a directory, so let it
+                # take the slow path.
+                if os.path.exists(repo.wjoin(f)):
+                    slowpath = True
+                    continue
+                else:
+                    raise util.Abort(_('cannot follow file not in parent '
+                                       'revision: "%s"') % f)
             filelog = repo.file(f)
             if not filelog:
                 # A zero count may be a directory or deleted file, so
@@ -1599,9 +1613,6 @@ def _makelogrevset(repo, pats, opts, revs):
     if slowpath:
         # See walkchangerevs() slow path.
         #
-        if follow:
-            raise util.Abort(_('can only follow copies/renames for explicit '
-                               'filenames'))
         # pats/include/exclude cannot be represented as separate
         # revset expressions as their filtering logic applies at file
         # level. For instance "-I a -X a" matches a revision touching
@@ -1633,7 +1644,10 @@ def _makelogrevset(repo, pats, opts, revs):
 
     filematcher = None
     if opts.get('patch') or opts.get('stat'):
-        if follow and not match.always():
+        # When following files, track renames via a special matcher.
+        # If we're forced to take the slowpath it means we're following
+        # at least one pattern/directory, so don't bother with rename tracking.
+        if follow and not match.always() and not slowpath:
             # _makelogfilematcher expects its files argument to be relative to
             # the repo root, so use match.files(), not pats.
             filematcher = _makefollowlogfilematcher(repo, match.files(),
@@ -2100,9 +2114,10 @@ def amend(ui, repo, commitfunc, old, extra, pats, opts):
 
                 user = opts.get('user') or old.user()
                 date = opts.get('date') or old.date()
-            editor = getcommiteditor(**opts)
+            editform = 'commit.amend'
+            editor = getcommiteditor(editform=editform, **opts)
             if not message:
-                editor = getcommiteditor(edit=True)
+                editor = getcommiteditor(edit=True, editform=editform)
                 message = old.description()
 
             pureextra = extra.copy()
@@ -2176,17 +2191,24 @@ def amend(ui, repo, commitfunc, old, extra, pats, opts):
         lockmod.release(lock, wlock)
     return newid
 
-def commiteditor(repo, ctx, subs):
+def commiteditor(repo, ctx, subs, editform=''):
     if ctx.description():
         return ctx.description()
-    return commitforceeditor(repo, ctx, subs)
+    return commitforceeditor(repo, ctx, subs, editform=editform)
 
-def commitforceeditor(repo, ctx, subs, finishdesc=None, extramsg=None):
+def commitforceeditor(repo, ctx, subs, finishdesc=None, extramsg=None,
+                      editform=''):
     if not extramsg:
         extramsg = _("Leave message empty to abort commit.")
-    tmpl = repo.ui.config('committemplate', 'changeset', '').strip()
-    if tmpl:
-        committext = buildcommittemplate(repo, ctx, subs, extramsg, tmpl)
+
+    forms = [e for e in editform.split('.') if e]
+    forms.insert(0, 'changeset')
+    while forms:
+        tmpl = repo.ui.config('committemplate', '.'.join(forms))
+        if tmpl:
+            committext = buildcommittemplate(repo, ctx, subs, extramsg, tmpl)
+            break
+        forms.pop()
     else:
         committext = buildcommittext(repo, ctx, subs, extramsg)
 
@@ -2212,6 +2234,10 @@ def buildcommittemplate(repo, ctx, subs, extramsg, tmpl):
         t = changeset_templater(ui, repo, None, {}, tmpl, mapfile, False)
     except SyntaxError, inst:
         raise util.Abort(inst.args[0])
+
+    for k, v in repo.ui.configitems('committemplate'):
+        if k != 'changeset':
+            t.t.cache[k] = v
 
     if not extramsg:
         extramsg = '' # ensure that extramsg is string
@@ -2347,17 +2373,37 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
         # get the list of subrepos that must be reverted
         targetsubs = sorted(s for s in ctx.substate if m(s))
 
-        # Find status of all file in `names`. (Against working directory parent)
+        # Find status of all file in `names`.
         m = scmutil.matchfiles(repo, names)
-        changes = repo.status(node1=parent, match=m)[:4]
-        modified, added, removed, deleted = map(set, changes)
+
+        changes = repo.status(node1=node, match=m, clean=True)
+        modified = set(changes[0])
+        added    = set(changes[1])
+        removed  = set(changes[2])
+        deleted  = set(changes[3])
+
+        # We need to account for the state of file in the dirstate
+        #
+        # Even, when we revert agains something else than parent. this will
+        # slightly alter the behavior of revert (doing back up or not, delete
+        # or just forget etc)
+        if parent == node:
+            dsmodified = modified
+            dsadded = added
+            dsremoved = removed
+            modified, added, removed = set(), set(), set()
+        else:
+            changes = repo.status(node1=parent, match=m)
+            dsmodified = set(changes[0])
+            dsadded    = set(changes[1])
+            dsremoved  = set(changes[2])
 
         # if f is a rename, update `names` to also revert the source
         cwd = repo.getcwd()
-        for f in added:
+        for f in dsadded:
             src = repo.dirstate.copied(f)
             if src and src not in names and repo.dirstate[src] == 'r':
-                removed.add(src)
+                dsremoved.add(src)
                 names[src] = (repo.pathto(src, cwd), True)
 
         ## computation of the action to performs on `names` content.
@@ -2366,6 +2412,18 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
             if repo.dirstate[abs] == 'a':
                 return _('forgetting %s\n')
             return _('removing %s\n')
+
+        # split between files known in target manifest and the others
+        smf = set(mf)
+
+        missingmodified = dsmodified - smf
+        dsmodified -= missingmodified
+        missingadded = dsadded - smf
+        dsadded -= missingadded
+        missingremoved = dsremoved - smf
+        dsremoved -= missingremoved
+        missingdeleted = deleted - smf
+        deleted -= missingdeleted
 
         # action to be actually performed by revert
         # (<list of file>, message>) tuple
@@ -2377,18 +2435,16 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
         disptable = (
             # dispatch table:
             #   file state
-            #   action if in target manifest
-            #   action if not in target manifest
-            #   make backup if in target manifest
-            #   make backup if not in target manifest
-            (modified, (actions['revert'],   True),
-                       (actions['remove'],   True)),
-            (added,    (actions['revert'],   True),
-                       (actions['remove'],   False)),
-            (removed,  (actions['undelete'], True),
-                       (None,                False)),
-            (deleted,  (actions['revert'], False),
-                       (actions['remove'], False)),
+            #   action
+            #   make backup
+            (dsmodified,       (actions['revert'],   True)),
+            (missingmodified,  (actions['remove'],   True)),
+            (dsadded,          (actions['revert'],   True)),
+            (missingadded,     (actions['remove'],   False)),
+            (dsremoved,        (actions['undelete'], True)),
+            (missingremoved,   (None,                False)),
+            (deleted,          (actions['revert'],   False)),
+            (missingdeleted,   (actions['remove'],   False)),
             )
 
         for abs, (rel, exact) in sorted(names.items()):
@@ -2414,14 +2470,15 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
             # search the entry in the dispatch table.
             # if the file is in any of this sets, it was touched in the working
             # directory parent and we are sure it needs to be reverted.
-            for table, hit, miss in disptable:
+            for table, (action, backup) in disptable:
                 if abs not in table:
                     continue
-                # file has changed in dirstate
-                if mfentry:
-                    handle(*hit)
-                elif miss[0] is not None:
-                    handle(*miss)
+                if action is None:
+                    if exact:
+                        ui.warn(_('no changes needed to %s\n') % rel)
+
+                else:
+                    handle(action, backup)
                 break
             else:
                 # Not touched in current dirstate.

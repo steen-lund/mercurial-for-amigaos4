@@ -99,4 +99,72 @@ Test that "hg revert -r REV" updates largefiles from "REV" correctly
   $ cat .hglf/large1
   58e24f733a964da346e2407a2bee99d9001184f5
 
+Test that "hg rollback" restores status of largefiles correctly
+
+  $ hg update -C -q
+  $ hg remove large1
+  $ hg forget large2
+  $ echo largeX > largeX
+  $ hg add --large largeX
+  $ hg commit -m 'will be rollback-ed soon'
+  $ echo largeY > largeY
+  $ hg add --large largeY
+  $ hg status -A large1
+  large1: No such file or directory
+  $ hg status -A large2
+  ? large2
+  $ hg status -A largeX
+  C largeX
+  $ hg status -A largeY
+  A largeY
+  $ hg rollback
+  repository tip rolled back to revision 3 (undo commit)
+  working directory now based on revision 3
+  $ hg status -A large1
+  R large1
+  $ hg status -A large2
+  R large2
+  $ hg status -A largeX
+  A largeX
+  $ hg status -A largeY
+  ? largeY
+
+Test that "hg status" shows status of largefiles correctly just after
+automated commit like rebase/transplant
+
+  $ cat >> .hg/hgrc <<EOF
+  > [extensions]
+  > rebase =
+  > strip =
+  > transplant =
+  > EOF
+  $ hg update -q -C 1
+  $ hg remove large1
+  $ echo largeX > largeX
+  $ hg add --large largeX
+  $ hg commit -m '#4'
+
+  $ hg rebase -s 1 -d 2 --keep
+  $ hg status -A large1
+  large1: No such file or directory
+  $ hg status -A largeX
+  C largeX
+  $ hg strip -q 5
+
+  $ hg update -q -C 2
+  $ hg transplant -q 1 4
+  $ hg status -A large1
+  large1: No such file or directory
+  $ hg status -A largeX
+  C largeX
+  $ hg strip -q 5
+
+  $ hg update -q -C 2
+  $ hg transplant -q --merge 1 --merge 4
+  $ hg status -A large1
+  large1: No such file or directory
+  $ hg status -A largeX
+  C largeX
+  $ hg strip -q 5
+
   $ cd ..
