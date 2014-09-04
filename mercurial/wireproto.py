@@ -202,8 +202,10 @@ def unescapearg(escaped):
 # :plain: string with no transformation needed.
 gboptsmap = {'heads':  'nodes',
              'common': 'nodes',
+             'obsmarkers': 'boolean',
              'bundlecaps': 'csv',
-             'listkeys': 'csv'}
+             'listkeys': 'csv',
+             'cg': 'boolean'}
 
 # client side
 
@@ -248,7 +250,7 @@ class wirepeer(peer.peerrepository):
         yield {'nodes': encodelist(nodes)}, f
         d = f.value
         try:
-            yield [bool(int(f)) for f in d]
+            yield [bool(int(b)) for b in d]
         except ValueError:
             self._abort(error.ResponseError(_("unexpected response:"), d))
 
@@ -349,6 +351,8 @@ class wirepeer(peer.peerrepository):
                 value = encodelist(value)
             elif keytype == 'csv':
                 value = ','.join(value)
+            elif keytype == 'boolean':
+                value = '%i' % bool(value)
             elif keytype != 'plain':
                 raise KeyError('unknown getbundle option type %s'
                                % keytype)
@@ -606,7 +610,7 @@ def _capabilities(repo, proto):
         else:
             caps.append('streamreqs=%s' % ','.join(requiredformats))
     if repo.ui.configbool('experimental', 'bundle2-exp', False):
-        capsblob = bundle2.encodecaps(repo.bundle2caps)
+        capsblob = bundle2.encodecaps(bundle2.getrepocaps(repo))
         caps.append('bundle2-exp=' + urllib.quote(capsblob))
     caps.append('unbundle=%s' % ','.join(changegroupmod.bundlepriority))
     caps.append('httpheader=1024')
@@ -652,6 +656,8 @@ def getbundle(repo, proto, others):
             opts[k] = decodelist(v)
         elif keytype == 'csv':
             opts[k] = set(v.split(','))
+        elif keytype == 'boolean':
+            opts[k] = bool(v)
         elif keytype != 'plain':
             raise KeyError('unknown getbundle option type %s'
                            % keytype)

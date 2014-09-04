@@ -135,7 +135,7 @@ class convert_git(converter_source):
 
     def getfile(self, name, rev):
         if rev == hex(nullid):
-            raise IOError
+            return None, None
         if name == '.hgsub':
             data = '\n'.join([m.hgsub() for m in self.submoditer()])
             mode = ''
@@ -180,7 +180,9 @@ class convert_git(converter_source):
                 continue
             m.node = node.strip()
 
-    def getchanges(self, version):
+    def getchanges(self, version, full):
+        if full:
+            raise util.Abort(_("convert from git do not support --full"))
         self.modecache = {}
         fh = self.gitopen("git diff-tree -z --root -m -r %s" % version)
         changes = []

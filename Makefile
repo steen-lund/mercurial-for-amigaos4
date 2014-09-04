@@ -135,12 +135,13 @@ i18n/hg.pot: $(PYFILES) $(DOCFILES) i18n/posplit i18n/hggettext
 # Packaging targets
 
 osx:
-	@which -s bdist_mpkg || \
+	@which bdist_mpkg >/dev/null || \
 	   (echo "Missing bdist_mpkg (easy_install bdist_mpkg)"; false)
+	rm -rf dist/mercurial-*.mpkg
 	bdist_mpkg setup.py
 	mkdir -p packages/osx
+	N=`cd dist && echo mercurial-*.mpkg | sed 's,\.mpkg$$,,'` && hdiutil create -srcfolder dist/$$N.mpkg/ -scrub -volname "$$N" -ov packages/osx/$$N.dmg
 	rm -rf dist/mercurial-*.mpkg
-	mv dist/mercurial*macosx*.zip packages/osx
 
 fedora:
 	mkdir -p packages/fedora

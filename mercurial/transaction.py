@@ -24,7 +24,7 @@ def active(func):
     return _active
 
 def _playback(journal, report, opener, entries, backupentries, unlink=True):
-    for f, o, ignore in entries:
+    for f, o, _ignore in entries:
         if o or not unlink:
             try:
                 fp = opener(f, 'a')
@@ -41,7 +41,7 @@ def _playback(journal, report, opener, entries, backupentries, unlink=True):
                     raise
 
     backupfiles = []
-    for f, b, ignore in backupentries:
+    for f, b, _ignore in backupentries:
         filepath = opener.join(f)
         backuppath = opener.join(b)
         try:
@@ -96,6 +96,9 @@ class transaction(object):
             opener.chmod(self.journal, createmode & 0666)
             opener.chmod(self.backupjournal, createmode & 0666)
 
+        # hold file generations to be performed on commit
+        self._filegenerators = {}
+
     def __del__(self):
         if self.journal:
             self._abort()
@@ -112,10 +115,10 @@ class transaction(object):
 
         offsets = []
         backups = []
-        for f, o, _ in q[0]:
+        for f, o, _data in q[0]:
             offsets.append((f, o))
 
-        for f, b, _ in q[1]:
+        for f, b, _data in q[1]:
             backups.append((f, b))
 
         d = ''.join(['%s\0%d\n' % (f, o) for f, o in offsets])
@@ -154,7 +157,7 @@ class transaction(object):
 
         if file in self.map or file in self.backupmap:
             return
-        backupfile = "journal.%s" % file
+        backupfile = "%s.backup.%s" % (self.journal, file)
         if self.opener.exists(file):
             filepath = self.opener.join(file)
             backuppath = self.opener.join(backupfile)
@@ -171,6 +174,28 @@ class transaction(object):
         self.backupmap[file] = len(self.backupentries) - 1
         self.backupsfile.write("%s\0%s\0" % (file, backupfile))
         self.backupsfile.flush()
+
+    @active
+    def addfilegenerator(self, genid, filenames, genfunc, order=0):
+        """add a function to generates some files at transaction commit
+
+        The `genfunc` argument is a function capable of generating proper
+        content of each entry in the `filename` tuple.
+
+        At transaction close time, `genfunc` will be called with one file
+        object argument per entries in `filenames`.
+
+        The transaction itself is responsible for the backup, creation and
+        final write of such file.
+
+        The `genid` argument is used to ensure the same set of file is only
+        generated once. Call to `addfilegenerator` for a `genid` already
+        present will overwrite the old entry.
+
+        The `order` argument may be used to control the order in which multiple
+        generator will be executed.
+        """
+        self._filegenerators[genid] = (order, filenames, genfunc)
 
     @active
     def find(self, file):
@@ -213,6 +238,18 @@ class transaction(object):
     @active
     def close(self):
         '''commit the transaction'''
+        # write files registered for generation
+        for order, filenames, genfunc in sorted(self._filegenerators.values()):
+            files = []
+            try:
+                for name in filenames:
+                    self.addbackup(name)
+                    files.append(self.opener(name, 'w', atomictemp=True))
+                genfunc(*files)
+            finally:
+                for f in files:
+                    f.close()
+
         if self.count == 1 and self.onclose is not None:
             self.onclose()
 
@@ -228,7 +265,7 @@ class transaction(object):
             self.opener.unlink(self.journal)
         if self.opener.isfile(self.backupjournal):
             self.opener.unlink(self.backupjournal)
-            for f, b, _ in self.backupentries:
+            for _f, b, _ignore in self.backupentries:
                 self.opener.unlink(b)
         self.backupentries = []
         self.journal = None

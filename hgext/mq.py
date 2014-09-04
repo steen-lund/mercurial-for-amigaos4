@@ -621,7 +621,7 @@ class queue(object):
 
         # apply failed, strip away that rev and merge.
         hg.clean(repo, head)
-        strip(self.ui, repo, [n], update=False, backup='strip')
+        strip(self.ui, repo, [n], update=False, backup=False)
 
         ctx = repo[rev]
         ret = hg.merge(repo, rev)
@@ -930,7 +930,12 @@ class queue(object):
             oldqbase = repo[qfinished[0]]
             tphase = repo.ui.config('phases', 'new-commit', phases.draft)
             if oldqbase.phase() > tphase and oldqbase.p1().phase() <= tphase:
-                phases.advanceboundary(repo, tphase, qfinished)
+                tr = repo.transaction('qfinish')
+                try:
+                    phases.advanceboundary(repo, tr, tphase, qfinished)
+                    tr.close()
+                finally:
+                    tr.release()
 
     def delete(self, repo, patches, opts):
         if not patches and not opts.get('rev'):
@@ -1025,6 +1030,7 @@ class queue(object):
         """
         msg = opts.get('msg')
         edit = opts.get('edit')
+        editform = opts.get('editform', 'mq.qnew')
         user = opts.get('user')
         date = opts.get('date')
         if date:
@@ -1079,7 +1085,7 @@ class queue(object):
                         p.write("# Date %s %s\n\n" % date)
 
                 defaultmsg = "[mq]: %s" % patchfn
-                editor = cmdutil.getcommiteditor()
+                editor = cmdutil.getcommiteditor(editform=editform)
                 if edit:
                     def finishdesc(desc):
                         if desc.rstrip():
@@ -1089,7 +1095,8 @@ class queue(object):
                     # i18n: this message is shown in editor with "HG: " prefix
                     extramsg = _('Leave message empty to use default message.')
                     editor = cmdutil.getcommiteditor(finishdesc=finishdesc,
-                                                     extramsg=extramsg)
+                                                     extramsg=extramsg,
+                                                     editform=editform)
                     commitmsg = msg
                 else:
                     commitmsg = msg or defaultmsg
@@ -1456,7 +1463,7 @@ class queue(object):
             for patch in reversed(self.applied[start:end]):
                 self.ui.status(_("popping %s\n") % patch.name)
             del self.applied[start:end]
-            strip(self.ui, repo, [rev], update=False, backup='strip')
+            strip(self.ui, repo, [rev], update=False, backup=False)
             for s, state in repo['.'].substate.items():
                 repo['.'].sub(s).get(state)
             if self.applied:
@@ -1485,6 +1492,7 @@ class queue(object):
             return 1
         msg = opts.get('msg', '').rstrip()
         edit = opts.get('edit')
+        editform = opts.get('editform', 'mq.qrefresh')
         newuser = opts.get('user')
         newdate = opts.get('date')
         if newdate:
@@ -1645,7 +1653,7 @@ class queue(object):
                 repo.setparents(*cparents)
                 self.applied.pop()
                 self.applieddirty = True
-                strip(self.ui, repo, [top], update=False, backup='strip')
+                strip(self.ui, repo, [top], update=False, backup=False)
             except: # re-raises
                 repo.dirstate.invalidate()
                 raise
@@ -1654,7 +1662,7 @@ class queue(object):
                 # might be nice to attempt to roll back strip after this
 
                 defaultmsg = "[mq]: %s" % patchfn
-                editor = cmdutil.getcommiteditor()
+                editor = cmdutil.getcommiteditor(editform=editform)
                 if edit:
                     def finishdesc(desc):
                         if desc.rstrip():
@@ -1664,7 +1672,8 @@ class queue(object):
                     # i18n: this message is shown in editor with "HG: " prefix
                     extramsg = _('Leave message empty to use default message.')
                     editor = cmdutil.getcommiteditor(finishdesc=finishdesc,
-                                                     extramsg=extramsg)
+                                                     extramsg=extramsg,
+                                                     editform=editform)
                     message = msg or "\n".join(ph.message)
                 elif not msg:
                     if not ph.message:
@@ -1842,7 +1851,7 @@ class queue(object):
                     update = True
                 else:
                     update = False
-                strip(self.ui, repo, [rev], update=update, backup='strip')
+                strip(self.ui, repo, [rev], update=update, backup=False)
         if qpp:
             self.ui.warn(_("saved queue repository parents: %s %s\n") %
                          (short(qpp[0]), short(qpp[1])))
@@ -1966,41 +1975,49 @@ class queue(object):
                 lastparent = None
 
             diffopts = self.diffopts({'git': git})
-            for r in rev:
-                if not repo[r].mutable():
-                    raise util.Abort(_('revision %d is not mutable') % r,
-                                     hint=_('see "hg help phases" for details'))
-                p1, p2 = repo.changelog.parentrevs(r)
-                n = repo.changelog.node(r)
-                if p2 != nullrev:
-                    raise util.Abort(_('cannot import merge revision %d') % r)
-                if lastparent and lastparent != r:
-                    raise util.Abort(_('revision %d is not the parent of %d')
-                                     % (r, lastparent))
-                lastparent = p1
+            tr = repo.transaction('qimport')
+            try:
+                for r in rev:
+                    if not repo[r].mutable():
+                        raise util.Abort(_('revision %d is not mutable') % r,
+                                         hint=_('see "hg help phases" '
+                                                'for details'))
+                    p1, p2 = repo.changelog.parentrevs(r)
+                    n = repo.changelog.node(r)
+                    if p2 != nullrev:
+                        raise util.Abort(_('cannot import merge revision %d')
+                                         % r)
+                    if lastparent and lastparent != r:
+                        raise util.Abort(_('revision %d is not the parent of '
+                                           '%d')
+                                         % (r, lastparent))
+                    lastparent = p1
 
-                if not patchname:
-                    patchname = normname('%d.diff' % r)
-                checkseries(patchname)
-                self.checkpatchname(patchname, force)
-                self.fullseries.insert(0, patchname)
+                    if not patchname:
+                        patchname = normname('%d.diff' % r)
+                    checkseries(patchname)
+                    self.checkpatchname(patchname, force)
+                    self.fullseries.insert(0, patchname)
 
-                patchf = self.opener(patchname, "w")
-                cmdutil.export(repo, [n], fp=patchf, opts=diffopts)
-                patchf.close()
+                    patchf = self.opener(patchname, "w")
+                    cmdutil.export(repo, [n], fp=patchf, opts=diffopts)
+                    patchf.close()
 
-                se = statusentry(n, patchname)
-                self.applied.insert(0, se)
+                    se = statusentry(n, patchname)
+                    self.applied.insert(0, se)
 
-                self.added.append(patchname)
-                imported.append(patchname)
-                patchname = None
-                if rev and repo.ui.configbool('mq', 'secret', False):
-                    # if we added anything with --rev, move the secret root
-                    phases.retractboundary(repo, phases.secret, [n])
-                self.parseseries()
-                self.applieddirty = True
-                self.seriesdirty = True
+                    self.added.append(patchname)
+                    imported.append(patchname)
+                    patchname = None
+                    if rev and repo.ui.configbool('mq', 'secret', False):
+                        # if we added anything with --rev, move the secret root
+                        phases.retractboundary(repo, tr, phases.secret, [n])
+                    self.parseseries()
+                    self.applieddirty = True
+                    self.seriesdirty = True
+                tr.close()
+            finally:
+                tr.release()
 
         for i, filename in enumerate(files):
             if existing:
@@ -2585,7 +2602,8 @@ def fold(ui, repo, *files, **opts):
     diffopts = q.patchopts(q.diffopts(), *patches)
     wlock = repo.wlock()
     try:
-        q.refresh(repo, msg=message, git=diffopts.git, edit=opts.get('edit'))
+        q.refresh(repo, msg=message, git=diffopts.git, edit=opts.get('edit'),
+                  editform='mq.qfold')
         q.delete(repo, patches, opts)
         q.savedirty()
     finally:

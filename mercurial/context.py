@@ -276,7 +276,7 @@ class basectx(object):
     def dirs(self):
         return self._dirs
 
-    def dirty(self):
+    def dirty(self, missing=False, merge=True, branch=True):
         return False
 
     def status(self, other=None, match=None, listignored=False,
@@ -347,7 +347,10 @@ class basectx(object):
 def makememctx(repo, parents, text, user, date, branch, files, store,
                editor=None):
     def getfilectx(repo, memctx, path):
-        data, (islink, isexec), copied = store.getfile(path)
+        data, mode, copied = store.getfile(path)
+        if data is None:
+            return None
+        islink, isexec = mode
         return memfilectx(repo, path, data, islink=islink, isexec=isexec,
                                   copied=copied, memctx=memctx)
     extra = {}
@@ -600,6 +603,9 @@ class changectx(basectx):
                 continue
             match.bad(fn, _('no such file in rev %s') % self)
 
+    def matches(self, match):
+        return self.walk(match)
+
 class basefilectx(object):
     """A filecontext object represents the common logic for its children:
     filectx: read-only access to a filerevision that is already present
@@ -713,6 +719,10 @@ class basefilectx(object):
             return util.binary(self.data())
         except IOError:
             return False
+    def isexec(self):
+        return 'x' in self.flags()
+    def islink(self):
+        return 'l' in self.flags()
 
     def cmp(self, fctx):
         """compare with other file context
@@ -730,9 +740,9 @@ class basefilectx(object):
         return True
 
     def parents(self):
-        p = self._path
+        _path = self._path
         fl = self._filelog
-        pl = [(p, n, fl) for n in self._filelog.parents(self._filenode)]
+        pl = [(_path, n, fl) for n in self._filelog.parents(self._filenode)]
 
         r = self._filelog.renamed(self._filenode)
         if r:
@@ -762,19 +772,16 @@ class basefilectx(object):
         this returns fixed value(False is used) as linenumber,
         if "linenumber" parameter is "False".'''
 
-        def decorate_compat(text, rev):
-            return ([rev] * len(text.splitlines()), text)
-
-        def without_linenumber(text, rev):
-            return ([(rev, False)] * len(text.splitlines()), text)
-
-        def with_linenumber(text, rev):
-            size = len(text.splitlines())
-            return ([(rev, i) for i in xrange(1, size + 1)], text)
-
-        decorate = (((linenumber is None) and decorate_compat) or
-                    (linenumber and with_linenumber) or
-                    without_linenumber)
+        if linenumber is None:
+            def decorate(text, rev):
+                return ([rev] * len(text.splitlines()), text)
+        elif linenumber:
+            def decorate(text, rev):
+                size = len(text.splitlines())
+                return ([(rev, i) for i in xrange(1, size + 1)], text)
+        else:
+            def decorate(text, rev):
+                return ([(rev, False)] * len(text.splitlines()), text)
 
         def pair(parent, child):
             blocks = mdiff.allblocks(parent[1], child[1], opts=diffopts,
@@ -1145,6 +1152,9 @@ class committablectx(basectx):
     def walk(self, match):
         return sorted(self._repo.dirstate.walk(match, sorted(self.substate),
                                                True, False))
+
+    def matches(self, match):
+        return sorted(self._repo.dirstate.matches(match))
 
     def ancestors(self):
         for a in self._repo.changelog.ancestors(
@@ -1548,6 +1558,14 @@ class workingfilectx(committablefilectx):
         # invert comparison to reuse the same code path
         return fctx.cmp(self)
 
+    def remove(self, ignoremissing=False):
+        """wraps unlink for a repo's working directory"""
+        util.unlinkpath(self._repo.wjoin(self._path), ignoremissing)
+
+    def write(self, data, flags):
+        """wraps repo.wwrite"""
+        self._repo.wwrite(self._path, data, flags)
+
 class memctx(committablectx):
     """Use memctx to perform in-memory commits via localrepo.commitctx().
 
@@ -1575,6 +1593,12 @@ class memctx(committablectx):
     supported by util.parsedate() and defaults to current date, extra
     is a dictionary of metadata or is left empty.
     """
+
+    # Mercurial <= 3.1 expects the filectxfn to raise IOError for missing files.
+    # Extensions that need to retain compatibility across Mercurial 3.1 can use
+    # this field to determine what to do in filectxfn.
+    _returnnoneformissingfiles = True
+
     def __init__(self, repo, parents, text, files, filectxfn, user=None,
                  date=None, extra=None, editor=False):
         super(memctx, self).__init__(repo, text, user, date, extra)
@@ -1588,6 +1612,20 @@ class memctx(committablectx):
         self._filectxfn = filectxfn
         self.substate = {}
 
+        # if store is not callable, wrap it in a function
+        if not callable(filectxfn):
+            def getfilectx(repo, memctx, path):
+                fctx = filectxfn[path]
+                # this is weird but apparently we only keep track of one parent
+                # (why not only store that instead of a tuple?)
+                copied = fctx.renamed()
+                if copied:
+                    copied = copied[0]
+                return memfilectx(repo, path, fctx.data(),
+                                  islink=fctx.islink(), isexec=fctx.isexec(),
+                                  copied=copied, memctx=memctx)
+            self._filectxfn = getfilectx
+
         self._extra = extra and extra.copy() or {}
         if self._extra.get('branch', '') == '':
             self._extra['branch'] = 'default'
@@ -1597,7 +1635,9 @@ class memctx(committablectx):
             self._repo.savecommitmessage(self._text)
 
     def filectx(self, path, filelog=None):
-        """get a file context from the working directory"""
+        """get a file context from the working directory
+
+        Returns None if file doesn't exist and should be removed."""
         return self._filectxfn(self._repo, self, path)
 
     def commit(self):
@@ -1615,7 +1655,7 @@ class memctx(committablectx):
         for f, fnode in man.iteritems():
             p1node = nullid
             p2node = nullid
-            p = pctx[f].parents()
+            p = pctx[f].parents() # if file isn't in pctx, check p2?
             if len(p) > 0:
                 p1node = p[0].node()
                 if len(p) > 1:
@@ -1652,9 +1692,14 @@ class memfilectx(committablefilectx):
         return len(self.data())
     def flags(self):
         return self._flags
-    def isexec(self):
-        return 'x' in self._flags
-    def islink(self):
-        return 'l' in self._flags
     def renamed(self):
         return self._copied
+
+    def remove(self, ignoremissing=False):
+        """wraps unlink for a repo's working directory"""
+        # need to figure out what to do here
+        del self._changectx[self._path]
+
+    def write(self, data, flags):
+        """wraps repo.wwrite"""
+        self._data = data

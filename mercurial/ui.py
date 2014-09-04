@@ -626,6 +626,8 @@ class ui(object):
         oldout = sys.stdout
         sys.stdin = self.fin
         sys.stdout = self.fout
+        # prompt ' ' must exist; otherwise readline may delete entire line
+        # - http://bugs.python.org/issue12833
         line = raw_input(' ')
         sys.stdin = oldin
         sys.stdout = oldout
@@ -728,7 +730,7 @@ class ui(object):
         if self.debugflag:
             opts['label'] = opts.get('label', '') + ' ui.debug'
             self.write(*msg, **opts)
-    def edit(self, text, user, extra={}):
+    def edit(self, text, user, extra={}, editform=None):
         (fd, name) = tempfile.mkstemp(prefix="hg-editor-", suffix=".txt",
                                       text=True)
         try:
@@ -743,6 +745,8 @@ class ui(object):
                 if label in extra:
                     environ.update({'HGREVISION': extra[label]})
                     break
+            if editform:
+                environ.update({'HGEDITFORM': editform})
 
             editor = self.geteditor()
 

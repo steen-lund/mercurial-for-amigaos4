@@ -260,6 +260,9 @@ def annotate(ui, repo, *pats, **opts):
 
     Returns 0 on success.
     """
+    if not pats:
+        raise util.Abort(_('at least one filename or pattern is required'))
+
     if opts.get('follow'):
         # --follow is deprecated and now just an alias for -f/--file
         # to mimic the behavior of Mercurial before version 1.5
@@ -267,10 +270,6 @@ def annotate(ui, repo, *pats, **opts):
 
     datefunc = ui.quiet and util.shortdate or util.datestr
     getdate = util.cachefunc(lambda x: datefunc(x[0].date()))
-
-    if not pats:
-        raise util.Abort(_('at least one filename or pattern is required'))
-
     hexfn = ui.debugflag and hex or short
 
     opmap = [('user', ' ', lambda x: ui.shortuser(x[0].user())),
@@ -505,11 +504,12 @@ def backout(ui, repo, node=None, rev=None, **opts):
 
 
         def commitfunc(ui, repo, message, match, opts):
-            e = cmdutil.getcommiteditor(**opts)
+            editform = 'backout'
+            e = cmdutil.getcommiteditor(editform=editform, **opts)
             if not message:
                 # we don't translate commit messages
                 message = "Backed out changeset %s" % short(node)
-                e = cmdutil.getcommiteditor(edit=True)
+                e = cmdutil.getcommiteditor(edit=True, editform=editform)
             return repo.commit(message, opts.get('user'), opts.get('date'),
                                match, editor=e)
         newnode = cmdutil.commit(ui, repo, commitfunc, [], opts)
@@ -1385,9 +1385,6 @@ def commit(ui, repo, *pats, **opts):
         # Let --subrepos on the command line override config setting.
         ui.setconfig('ui', 'commitsubrepos', True, 'commit')
 
-    # Save this for restoring it later
-    oldcommitphase = ui.config('phases', 'new-commit')
-
     cmdutil.checkunfinished(repo, commit=True)
 
     branch = repo[None].branch()
@@ -1441,21 +1438,24 @@ def commit(ui, repo, *pats, **opts):
             newmarks.write()
     else:
         def commitfunc(ui, repo, message, match, opts):
+            backup = ui.backupconfig('phases', 'new-commit')
+            baseui = repo.baseui
+            basebackup = baseui.backupconfig('phases', 'new-commit')
             try:
                 if opts.get('secret'):
                     ui.setconfig('phases', 'new-commit', 'secret', 'commit')
                     # Propagate to subrepos
-                    repo.baseui.setconfig('phases', 'new-commit', 'secret',
-                                          'commit')
+                    baseui.setconfig('phases', 'new-commit', 'secret', 'commit')
 
+                editform = cmdutil.mergeeditform(repo[None], 'commit.normal')
+                editor = cmdutil.getcommiteditor(editform=editform, **opts)
                 return repo.commit(message, opts.get('user'), opts.get('date'),
                                    match,
-                                   editor=cmdutil.getcommiteditor(**opts),
+                                   editor=editor,
                                    extra=extra)
             finally:
-                ui.setconfig('phases', 'new-commit', oldcommitphase, 'commit')
-                repo.baseui.setconfig('phases', 'new-commit', oldcommitphase,
-                                      'commit')
+                ui.restoreconfig(backup)
+                repo.baseui.restoreconfig(basebackup)
 
 
         node = cmdutil.commit(ui, repo, commitfunc, pats, opts)
@@ -1912,8 +1912,8 @@ def debugdag(ui, repo, file_=None, *revs, **opts):
         revs = set((int(r) for r in revs))
         def events():
             for r in rlog:
-                yield 'n', (r, list(set(p for p in rlog.parentrevs(r)
-                                        if p != -1)))
+                yield 'n', (r, list(p for p in rlog.parentrevs(r)
+                                        if p != -1))
                 if r in revs:
                     yield 'l', (r, "r%i" % r)
     elif repo:
@@ -1932,8 +1932,8 @@ def debugdag(ui, repo, file_=None, *revs, **opts):
                     if newb != b:
                         yield 'a', newb
                         b = newb
-                yield 'n', (r, list(set(p for p in cl.parentrevs(r)
-                                        if p != -1)))
+                yield 'n', (r, list(p for p in cl.parentrevs(r)
+                                        if p != -1))
                 if tags:
                     ls = labels.get(r)
                     if ls:
@@ -2315,6 +2315,9 @@ def debuglabelcomplete(ui, repo, *args):
 
 @command('debugobsolete',
         [('', 'flags', 0, _('markers flag')),
+         ('', 'record-parents', False,
+          _('record parent information for the precursor')),
+         ('r', 'rev', [], _('display markers relevant to REV')),
         ] + commitopts2,
          _('[OBSOLETED [REPLACEMENT] [REPL... ]'))
 def debugobsolete(ui, repo, precursor=None, *successors, **opts):
@@ -2336,9 +2339,9 @@ def debugobsolete(ui, repo, precursor=None, *successors, **opts):
                              'node identifiers')
 
     if precursor is not None:
+        if opts['rev']:
+            raise util.Abort('cannot select revision when creating marker')
         metadata = {}
-        if 'date' in opts:
-            metadata['date'] = opts['date']
         metadata['user'] = opts['user'] or ui.username()
         succs = tuple(parsenodeid(succ) for succ in successors)
         l = repo.lock()
@@ -2346,8 +2349,22 @@ def debugobsolete(ui, repo, precursor=None, *successors, **opts):
             tr = repo.transaction('debugobsolete')
             try:
                 try:
-                    repo.obsstore.create(tr, parsenodeid(precursor), succs,
-                                         opts['flags'], metadata)
+                    date = opts.get('date')
+                    if date:
+                        date = util.parsedate(date)
+                    else:
+                        date = None
+                    prec = parsenodeid(precursor)
+                    parents = None
+                    if opts['record_parents']:
+                        if prec not in repo.unfiltered():
+                            raise util.Abort('cannot used --record-parents on '
+                                             'unknown changesets')
+                        parents = repo.unfiltered()[prec].parents()
+                        parents = tuple(p.node() for p in parents)
+                    repo.obsstore.create(tr, prec, succs, opts['flags'],
+                                         parents=parents, date=date,
+                                         metadata=metadata)
                     tr.close()
                 except ValueError, exc:
                     raise util.Abort(_('bad obsmarker input: %s') % exc)
@@ -2356,7 +2373,15 @@ def debugobsolete(ui, repo, precursor=None, *successors, **opts):
         finally:
             l.release()
     else:
-        for m in obsolete.allmarkers(repo):
+        if opts['rev']:
+            revs = scmutil.revrange(repo, opts['rev'])
+            nodes = [repo[r].node() for r in revs]
+            markers = list(obsolete.getmarkers(repo, nodes=nodes))
+            markers.sort(key=lambda x: x._data)
+        else:
+            markers = obsolete.getmarkers(repo)
+
+        for m in markers:
             cmdutil.showmarker(ui, m)
 
 @command('debugpathcomplete',
@@ -2518,24 +2543,36 @@ def debugrevlog(ui, repo, file_=None, **opts):
     if opts.get("dump"):
         numrevs = len(r)
         ui.write("# rev p1rev p2rev start   end deltastart base   p1   p2"
-                 " rawsize totalsize compression heads\n")
+                 " rawsize totalsize compression heads chainlen\n")
         ts = 0
         heads = set()
+        rindex = r.index
+
+        def chainbaseandlen(rev):
+            clen = 0
+            base = rindex[rev][3]
+            while base != rev:
+                clen += 1
+                rev = base
+                base = rindex[rev][3]
+            return base, clen
+
         for rev in xrange(numrevs):
             dbase = r.deltaparent(rev)
             if dbase == -1:
                 dbase = rev
-            cbase = r.chainbase(rev)
+            cbase, clen = chainbaseandlen(rev)
             p1, p2 = r.parentrevs(rev)
             rs = r.rawsize(rev)
             ts = ts + rs
             heads -= set(r.parentrevs(rev))
             heads.add(rev)
-            ui.write("%5d %5d %5d %5d %5d %10d %4d %4d %4d %7d %9d %11d %5d\n" %
+            ui.write("%5d %5d %5d %5d %5d %10d %4d %4d %4d %7d %9d "
+                     "%11d %5d %8d\n" %
                      (rev, p1, p2, r.start(rev), r.end(rev),
                       r.start(dbase), r.start(cbase),
                       r.start(p1), r.start(p2),
-                      rs, ts, ts / r.end(rev), len(heads)))
+                      rs, ts, ts / r.end(rev), len(heads), clen))
         return 0
 
     v = r.version
@@ -3064,6 +3101,7 @@ def forget(ui, repo, *pats, **opts):
      ('c', 'continue', False, _('resume interrupted graft')),
      ('e', 'edit', False, _('invoke editor on commit messages')),
      ('', 'log', None, _('append graft info to log message')),
+     ('f', 'force', False, _('force graft')),
      ('D', 'currentdate', False,
       _('record the current date as commit date')),
      ('U', 'currentuser', False,
@@ -3087,6 +3125,10 @@ def graft(ui, repo, *revs, **opts):
 
       (grafted from CHANGESETHASH)
 
+    If --force is specified, revisions will be grafted even if they
+    are already ancestors of or have been grafted to the destination.
+    This is useful when the revisions have since been backed out.
+
     If a graft merge results in conflicts, the graft process is
     interrupted so that the current merge can be manually resolved.
     Once all conflicts are addressed, the graft process can be
@@ -3094,7 +3136,8 @@ def graft(ui, repo, *revs, **opts):
 
     .. note::
 
-      The -c/--continue option does not reapply earlier options.
+      The -c/--continue option does not reapply earlier options, except
+      for --force.
 
     .. container:: verbose
 
@@ -3131,7 +3174,7 @@ def graft(ui, repo, *revs, **opts):
     if not opts.get('date') and opts.get('currentdate'):
         opts['date'] = "%d %d" % util.makedate()
 
-    editor = cmdutil.getcommiteditor(**opts)
+    editor = cmdutil.getcommiteditor(editform='graft', **opts)
 
     cont = False
     if opts['continue']:
@@ -3160,61 +3203,68 @@ def graft(ui, repo, *revs, **opts):
     if not revs:
         return -1
 
-    # check for ancestors of dest branch
-    crev = repo['.'].rev()
-    ancestors = repo.changelog.ancestors([crev], inclusive=True)
-    # Cannot use x.remove(y) on smart set, this has to be a list.
-    # XXX make this lazy in the future
-    revs = list(revs)
-    # don't mutate while iterating, create a copy
-    for rev in list(revs):
-        if rev in ancestors:
-            ui.warn(_('skipping ancestor revision %s\n') % rev)
-            # XXX remove on list is slow
-            revs.remove(rev)
-    if not revs:
-        return -1
+    # Don't check in the --continue case, in effect retaining --force across
+    # --continues. That's because without --force, any revisions we decided to
+    # skip would have been filtered out here, so they wouldn't have made their
+    # way to the graftstate. With --force, any revisions we would have otherwise
+    # skipped would not have been filtered out, and if they hadn't been applied
+    # already, they'd have been in the graftstate.
+    if not (cont or opts.get('force')):
+        # check for ancestors of dest branch
+        crev = repo['.'].rev()
+        ancestors = repo.changelog.ancestors([crev], inclusive=True)
+        # Cannot use x.remove(y) on smart set, this has to be a list.
+        # XXX make this lazy in the future
+        revs = list(revs)
+        # don't mutate while iterating, create a copy
+        for rev in list(revs):
+            if rev in ancestors:
+                ui.warn(_('skipping ancestor revision %s\n') % rev)
+                # XXX remove on list is slow
+                revs.remove(rev)
+        if not revs:
+            return -1
 
-    # analyze revs for earlier grafts
-    ids = {}
-    for ctx in repo.set("%ld", revs):
-        ids[ctx.hex()] = ctx.rev()
-        n = ctx.extra().get('source')
-        if n:
-            ids[n] = ctx.rev()
+        # analyze revs for earlier grafts
+        ids = {}
+        for ctx in repo.set("%ld", revs):
+            ids[ctx.hex()] = ctx.rev()
+            n = ctx.extra().get('source')
+            if n:
+                ids[n] = ctx.rev()
 
-    # check ancestors for earlier grafts
-    ui.debug('scanning for duplicate grafts\n')
+        # check ancestors for earlier grafts
+        ui.debug('scanning for duplicate grafts\n')
 
-    for rev in repo.changelog.findmissingrevs(revs, [crev]):
-        ctx = repo[rev]
-        n = ctx.extra().get('source')
-        if n in ids:
-            try:
-                r = repo[n].rev()
-            except error.RepoLookupError:
-                r = None
-            if r in revs:
-                ui.warn(_('skipping revision %s (already grafted to %s)\n')
-                        % (r, rev))
+        for rev in repo.changelog.findmissingrevs(revs, [crev]):
+            ctx = repo[rev]
+            n = ctx.extra().get('source')
+            if n in ids:
+                try:
+                    r = repo[n].rev()
+                except error.RepoLookupError:
+                    r = None
+                if r in revs:
+                    ui.warn(_('skipping revision %s (already grafted to %s)\n')
+                            % (r, rev))
+                    revs.remove(r)
+                elif ids[n] in revs:
+                    if r is None:
+                        ui.warn(_('skipping already grafted revision %s '
+                                  '(%s also has unknown origin %s)\n')
+                                % (ids[n], rev, n))
+                    else:
+                        ui.warn(_('skipping already grafted revision %s '
+                                  '(%s also has origin %d)\n')
+                                % (ids[n], rev, r))
+                    revs.remove(ids[n])
+            elif ctx.hex() in ids:
+                r = ids[ctx.hex()]
+                ui.warn(_('skipping already grafted revision %s '
+                                '(was grafted from %d)\n') % (r, rev))
                 revs.remove(r)
-            elif ids[n] in revs:
-                if r is None:
-                    ui.warn(_('skipping already grafted revision %s '
-                              '(%s also has unknown origin %s)\n')
-                            % (ids[n], rev, n))
-                else:
-                    ui.warn(_('skipping already grafted revision %s '
-                              '(%s also has origin %d)\n')
-                            % (ids[n], rev, r))
-                revs.remove(ids[n])
-        elif ctx.hex() in ids:
-            r = ids[ctx.hex()]
-            ui.warn(_('skipping already grafted revision %s '
-                            '(was grafted from %d)\n') % (r, rev))
-            revs.remove(r)
-    if not revs:
-        return -1
+        if not revs:
+            return -1
 
     wlock = repo.wlock()
     try:
@@ -3858,6 +3908,8 @@ def import_(ui, repo, patch1=None, *patches, **opts):
         raise util.Abort(_('similarity must be between 0 and 100'))
     if sim and not update:
         raise util.Abort(_('cannot use --similarity with --bypass'))
+    if opts.get('exact') and opts.get('edit'):
+        raise util.Abort(_('cannot use --exact with --edit'))
 
     if update:
         cmdutil.checkunfinished(repo)
@@ -4046,11 +4098,11 @@ def locate(ui, repo, *pats, **opts):
     rev = scmutil.revsingle(repo, opts.get('rev'), None).node()
 
     ret = 1
-    m = scmutil.match(repo[rev], pats, opts, default='relglob')
+    ctx = repo[rev]
+    m = scmutil.match(ctx, pats, opts, default='relglob')
     m.bad = lambda x, y: False
-    for abs in repo[rev].walk(m):
-        if not rev and abs not in repo.dirstate:
-            continue
+
+    for abs in ctx.matches(m):
         if opts.get('fullpath'):
             ui.write(repo.wjoin(abs), end)
         else:
@@ -4579,17 +4631,22 @@ def phase(ui, repo, *revs, **opts):
             ctx = repo[r]
             ui.write('%i: %s\n' % (ctx.rev(), ctx.phasestr()))
     else:
+        tr = None
         lock = repo.lock()
         try:
+            tr = repo.transaction("phase")
             # set phase
             if not revs:
                 raise util.Abort(_('empty revision set'))
             nodes = [repo[r].node() for r in revs]
             olddata = repo._phasecache.getphaserevs(repo)[:]
-            phases.advanceboundary(repo, targetphase, nodes)
+            phases.advanceboundary(repo, tr, targetphase, nodes)
             if opts['force']:
-                phases.retractboundary(repo, targetphase, nodes)
+                phases.retractboundary(repo, tr, targetphase, nodes)
+            tr.close()
         finally:
+            if tr is not None:
+                tr.release()
             lock.release()
         # moving revision from public to draft may hide them
         # We have to check result on an unfiltered repository
@@ -5593,7 +5650,7 @@ def summary(ui, repo, **opts):
         ui.write(_('commit: %s\n') % t.strip())
 
     # all ancestors of branch heads - all ancestors of parent = new csets
-    new = len(repo.changelog.findmissing([ctx.node() for ctx in parents],
+    new = len(repo.changelog.findmissing([pctx.node() for pctx in parents],
                                          bheads))
 
     if new == 0:
@@ -5804,7 +5861,11 @@ def tag(ui, repo, name1, *names, **opts):
         if date:
             date = util.parsedate(date)
 
-        editor = cmdutil.getcommiteditor(**opts)
+        if opts.get('remove'):
+            editform = 'tag.remove'
+        else:
+            editform = 'tag.add'
+        editor = cmdutil.getcommiteditor(editform=editform, **opts)
 
         # don't allow tagging the null rev
         if (not opts.get('remove') and

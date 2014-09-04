@@ -109,7 +109,25 @@ def logmessage(ui, opts):
                              (logfile, inst.strerror))
     return message
 
-def getcommiteditor(edit=False, finishdesc=None, extramsg=None, **opts):
+def mergeeditform(ctxorbool, baseform):
+    """build appropriate editform from ctxorbool and baseform
+
+    'cxtorbool' is one of a ctx to be committed, or a bool whether
+    merging is committed.
+
+    This returns editform 'baseform' with '.merge' if merging is
+    committed, or one with '.normal' suffix otherwise.
+    """
+    if isinstance(ctxorbool, bool):
+        if ctxorbool:
+            return baseform + ".merge"
+    elif 1 < len(ctxorbool.parents()):
+        return baseform + ".merge"
+
+    return baseform + ".normal"
+
+def getcommiteditor(edit=False, finishdesc=None, extramsg=None,
+                    editform='', **opts):
     """get appropriate commit message editor according to '--edit' option
 
     'finishdesc' is a function to be called with edited commit message
@@ -122,6 +140,9 @@ def getcommiteditor(edit=False, finishdesc=None, extramsg=None, **opts):
     'Leave message empty to abort commit' line. 'HG: ' prefix and EOL
     is automatically added.
 
+    'editform' is a dot-separated list of names, to distinguish
+    the purpose of commit text editing.
+
     'getcommiteditor' returns 'commitforceeditor' regardless of
     'edit', if one of 'finishdesc' or 'extramsg' is specified, because
     they are specific for usage in MQ.
@@ -129,7 +150,10 @@ def getcommiteditor(edit=False, finishdesc=None, extramsg=None, **opts):
     if edit or finishdesc or extramsg:
         return lambda r, c, s: commitforceeditor(r, c, s,
                                                  finishdesc=finishdesc,
-                                                 extramsg=extramsg)
+                                                 extramsg=extramsg,
+                                                 editform=editform)
+    elif editform:
+        return lambda r, c, s: commiteditor(r, c, s, editform=editform)
     else:
         return commiteditor
 
@@ -586,7 +610,6 @@ def tryimportone(ui, repo, hunk, parents, opts, msgs, updatefunc):
     tmpname, message, user, date, branch, nodeid, p1, p2 = \
         patch.extract(ui, hunk)
 
-    editor = getcommiteditor(**opts)
     update = not opts.get('bypass')
     strip = opts["strip"]
     sim = float(opts.get('similarity') or 0)
@@ -667,6 +690,11 @@ def tryimportone(ui, repo, hunk, parents, opts, msgs, updatefunc):
                     m = None
                 else:
                     m = scmutil.matchfiles(repo, files or [])
+                editform = mergeeditform(repo[None], 'import.normal')
+                if opts.get('exact'):
+                    editor = None
+                else:
+                    editor = getcommiteditor(editform=editform, **opts)
                 n = repo.commit(message, opts.get('user') or user,
                                 opts.get('date') or date, match=m,
                                 editor=editor, force=partial)
@@ -683,12 +711,16 @@ def tryimportone(ui, repo, hunk, parents, opts, msgs, updatefunc):
                                     files, eolmode=None)
                 except patch.PatchError, e:
                     raise util.Abort(str(e))
+                if opts.get('exact'):
+                    editor = None
+                else:
+                    editor = getcommiteditor(editform='import.bypass')
                 memctx = context.makememctx(repo, (p1.node(), p2.node()),
                                             message,
                                             opts.get('user') or user,
                                             opts.get('date') or date,
                                             branch, files, store,
-                                            editor=getcommiteditor())
+                                            editor=editor)
                 n = memctx.commit()
             finally:
                 store.close()
@@ -1180,9 +1212,14 @@ def showmarker(ui, marker):
     for repl in marker.succnodes():
         ui.write(' ')
         ui.write(hex(repl))
-    ui.write(' %X ' % marker._data[2])
+    ui.write(' %X ' % marker.flags())
+    parents = marker.parentnodes()
+    if parents is not None:
+        ui.write('{%s} ' % ', '.join(hex(p) for p in parents))
+    ui.write('(%s) ' % util.datestr(marker.date()))
     ui.write('{%s}' % (', '.join('%r: %r' % t for t in
-                                 sorted(marker.metadata().items()))))
+                                 sorted(marker.metadata().items())
+                                 if t[0] != 'date')))
     ui.write('\n')
 
 def finddate(ui, repo, date):
@@ -1578,8 +1615,14 @@ def _makelogrevset(repo, pats, opts, revs):
     if not slowpath:
         for f in match.files():
             if follow and f not in pctx:
-                raise util.Abort(_('cannot follow file not in parent '
-                                   'revision: "%s"') % f)
+                # If the file exists, it may be a directory, so let it
+                # take the slow path.
+                if os.path.exists(repo.wjoin(f)):
+                    slowpath = True
+                    continue
+                else:
+                    raise util.Abort(_('cannot follow file not in parent '
+                                       'revision: "%s"') % f)
             filelog = repo.file(f)
             if not filelog:
                 # A zero count may be a directory or deleted file, so
@@ -1603,9 +1646,6 @@ def _makelogrevset(repo, pats, opts, revs):
     if slowpath:
         # See walkchangerevs() slow path.
         #
-        if follow:
-            raise util.Abort(_('can only follow copies/renames for explicit '
-                               'filenames'))
         # pats/include/exclude cannot be represented as separate
         # revset expressions as their filtering logic applies at file
         # level. For instance "-I a -X a" matches a revision touching
@@ -1637,7 +1677,10 @@ def _makelogrevset(repo, pats, opts, revs):
 
     filematcher = None
     if opts.get('patch') or opts.get('stat'):
-        if follow and not match.always():
+        # When following files, track renames via a special matcher.
+        # If we're forced to take the slowpath it means we're following
+        # at least one pattern/directory, so don't bother with rename tracking.
+        if follow and not match.always() and not slowpath:
             # _makelogfilematcher expects its files argument to be relative to
             # the repo root, so use match.files(), not pats.
             filematcher = _makefollowlogfilematcher(repo, match.files(),
@@ -2091,7 +2134,7 @@ def amend(ui, repo, commitfunc, old, extra, pats, opts):
                                                   copied=copied.get(path))
                         return mctx
                     except KeyError:
-                        raise IOError
+                        return None
             else:
                 ui.note(_('copying changeset %s to %s\n') % (old, base))
 
@@ -2100,13 +2143,14 @@ def amend(ui, repo, commitfunc, old, extra, pats, opts):
                     try:
                         return old.filectx(path)
                     except KeyError:
-                        raise IOError
+                        return None
 
                 user = opts.get('user') or old.user()
                 date = opts.get('date') or old.date()
-            editor = getcommiteditor(**opts)
+            editform = mergeeditform(old, 'commit.amend')
+            editor = getcommiteditor(editform=editform, **opts)
             if not message:
-                editor = getcommiteditor(edit=True)
+                editor = getcommiteditor(edit=True, editform=editform)
                 message = old.description()
 
             pureextra = extra.copy()
@@ -2180,24 +2224,31 @@ def amend(ui, repo, commitfunc, old, extra, pats, opts):
         lockmod.release(lock, wlock)
     return newid
 
-def commiteditor(repo, ctx, subs):
+def commiteditor(repo, ctx, subs, editform=''):
     if ctx.description():
         return ctx.description()
-    return commitforceeditor(repo, ctx, subs)
+    return commitforceeditor(repo, ctx, subs, editform=editform)
 
-def commitforceeditor(repo, ctx, subs, finishdesc=None, extramsg=None):
+def commitforceeditor(repo, ctx, subs, finishdesc=None, extramsg=None,
+                      editform=''):
     if not extramsg:
         extramsg = _("Leave message empty to abort commit.")
-    tmpl = repo.ui.config('committemplate', 'changeset', '').strip()
-    if tmpl:
-        committext = buildcommittemplate(repo, ctx, subs, extramsg, tmpl)
+
+    forms = [e for e in editform.split('.') if e]
+    forms.insert(0, 'changeset')
+    while forms:
+        tmpl = repo.ui.config('committemplate', '.'.join(forms))
+        if tmpl:
+            committext = buildcommittemplate(repo, ctx, subs, extramsg, tmpl)
+            break
+        forms.pop()
     else:
         committext = buildcommittext(repo, ctx, subs, extramsg)
 
     # run editor in the repository root
     olddir = os.getcwd()
     os.chdir(repo.root)
-    text = repo.ui.edit(committext, ctx.user(), ctx.extra())
+    text = repo.ui.edit(committext, ctx.user(), ctx.extra(), editform=editform)
     text = re.sub("(?m)^HG:.*(\n|$)", "", text)
     os.chdir(olddir)
 
@@ -2216,6 +2267,10 @@ def buildcommittemplate(repo, ctx, subs, extramsg, tmpl):
         t = changeset_templater(ui, repo, None, {}, tmpl, mapfile, False)
     except SyntaxError, inst:
         raise util.Abort(inst.args[0])
+
+    for k, v in repo.ui.configitems('committemplate'):
+        if k != 'changeset':
+            t.t.cache[k] = v
 
     if not extramsg:
         extramsg = '' # ensure that extramsg is string
@@ -2351,17 +2406,89 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
         # get the list of subrepos that must be reverted
         targetsubs = sorted(s for s in ctx.substate if m(s))
 
-        # Find status of all file in `names`. (Against working directory parent)
+        # Find status of all file in `names`.
         m = scmutil.matchfiles(repo, names)
-        changes = repo.status(node1=parent, match=m)[:4]
-        modified, added, removed, deleted = map(set, changes)
+
+        changes = repo.status(node1=node, match=m,
+                              unknown=True, ignored=True, clean=True)
+        modified = set(changes[0])
+        added    = set(changes[1])
+        removed  = set(changes[2])
+        _deleted = set(changes[3])
+        unknown  = set(changes[4])
+        unknown.update(changes[5])
+        clean    = set(changes[6])
+
+        # split between files known in target manifest and the others
+        smf = set(mf)
+
+        # determine the exact nature of the deleted changesets
+        _deletedadded = _deleted - smf
+        _deletedmodified = _deleted - _deletedadded
+        added |= _deletedadded
+        modified |= _deletedmodified
+
+        # We need to account for the state of file in the dirstate
+        #
+        # Even, when we revert agains something else than parent. this will
+        # slightly alter the behavior of revert (doing back up or not, delete
+        # or just forget etc)
+        if parent == node:
+            dsmodified = modified
+            dsadded = added
+            dsremoved = removed
+            modified, added, removed = set(), set(), set()
+        else:
+            changes = repo.status(node1=parent, match=m)
+            dsmodified = set(changes[0])
+            dsadded    = set(changes[1])
+            dsremoved  = set(changes[2])
+
+            # only take into account for removes between wc and target
+            clean |= dsremoved - removed
+            dsremoved &= removed
+            # distinct between dirstate remove and other
+            removed -= dsremoved
+
+            # tell newly modified apart.
+            dsmodified &= modified
+            dsmodified |= modified & dsadded # dirstate added may needs backup
+            modified -= dsmodified
+
+            # There are three categories of added files
+            #
+            # 1. addition that just happened in the dirstate
+            #    (should be forgotten)
+            # 2. file is added since target revision and has local changes
+            #    (should be backed up and removed)
+            # 3. file is added since target revision and is clean
+            #    (should be removed)
+            #
+            # However we do not need to split them yet. The current revert code
+            # will automatically recognize (1) when performing operation. And
+            # the backup system is currently unabled to handle (2).
+            #
+            # So we just put them all in the same group.
+            dsadded = added
+
+        # in case of merge, files that are actually added can be reported as
+        # modified, we need to post process the result
+        if p2 != nullid:
+            if pmf is None:
+                # only need parent manifest in the merge case,
+                # so do not read by default
+                pmf = repo[parent].manifest()
+            mergeadd = dsmodified - set(pmf)
+            dsadded |= mergeadd
+            dsmodified -= mergeadd
 
         # if f is a rename, update `names` to also revert the source
         cwd = repo.getcwd()
-        for f in added:
+        for f in dsadded:
             src = repo.dirstate.copied(f)
+            # XXX should we check for rename down to target node?
             if src and src not in names and repo.dirstate[src] == 'r':
-                removed.add(src)
+                dsremoved.add(src)
                 names[src] = (repo.pathto(src, cwd), True)
 
         ## computation of the action to performs on `names` content.
@@ -2376,86 +2503,56 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
         actions = {'revert': ([], _('reverting %s\n')),
                    'add': ([], _('adding %s\n')),
                    'remove': ([], removeforget),
-                   'undelete': ([], _('undeleting %s\n'))}
+                   'undelete': ([], _('undeleting %s\n')),
+                   'noop': (None, _('no changes needed to %s\n')),
+                   'unknown': (None, _('file not managed: %s\n')),
+                  }
+
+
+        # should we do a backup?
+        backup = not opts.get('no_backup')
+        discard = False
 
         disptable = (
             # dispatch table:
             #   file state
-            #   action if in target manifest
-            #   action if not in target manifest
-            #   make backup if in target manifest
-            #   make backup if not in target manifest
-            (modified, (actions['revert'],   True),
-                       (actions['remove'],   True)),
-            (added,    (actions['revert'],   True),
-                       (actions['remove'],   False)),
-            (removed,  (actions['undelete'], True),
-                       (None,                False)),
-            (deleted,  (actions['revert'], False),
-                       (actions['remove'], False)),
+            #   action
+            #   make backup
+            (modified,   actions['revert'],   discard),
+            (dsmodified, actions['revert'],   backup),
+            (dsadded,    actions['remove'],   backup),
+            (removed,    actions['add'],      backup),
+            (dsremoved,  actions['undelete'], backup),
+            (clean,      actions['noop'],     discard),
+            (unknown,    actions['unknown'],  discard),
             )
 
         for abs, (rel, exact) in sorted(names.items()):
-            # hash on file in target manifest (or None if missing from target)
-            mfentry = mf.get(abs)
             # target file to be touch on disk (relative to cwd)
             target = repo.wjoin(abs)
-            def handle(xlist, dobackup):
-                xlist[0].append(abs)
-                if (dobackup and not opts.get('no_backup') and
-                    os.path.lexists(target) and
-                    abs in ctx and repo[None][abs].cmp(ctx[abs])):
-                    bakname = "%s.orig" % rel
-                    ui.note(_('saving current version of %s as %s\n') %
-                            (rel, bakname))
-                    if not opts.get('dry_run'):
-                        util.rename(target, bakname)
-                if ui.verbose or not exact:
-                    msg = xlist[1]
-                    if not isinstance(msg, basestring):
-                        msg = msg(abs)
-                    ui.status(msg % rel)
             # search the entry in the dispatch table.
-            # if the file is in any of this sets, it was touched in the working
+            # if the file is in any of these sets, it was touched in the working
             # directory parent and we are sure it needs to be reverted.
-            for table, hit, miss in disptable:
+            for table, (xlist, msg), dobackup in disptable:
                 if abs not in table:
                     continue
-                # file has changed in dirstate
-                if mfentry:
-                    handle(*hit)
-                elif miss[0] is not None:
-                    handle(*miss)
+                if xlist is not None:
+                    xlist.append(abs)
+                    if (dobackup and os.path.lexists(target) and
+                        abs in ctx and repo[None][abs].cmp(ctx[abs])):
+                        bakname = "%s.orig" % rel
+                        ui.note(_('saving current version of %s as %s\n') %
+                                (rel, bakname))
+                        if not opts.get('dry_run'):
+                            util.rename(target, bakname)
+                    if ui.verbose or not exact:
+                        if not isinstance(msg, basestring):
+                            msg = msg(abs)
+                        ui.status(msg % rel)
+                elif exact:
+                    ui.warn(msg % rel)
                 break
-            else:
-                # Not touched in current dirstate.
 
-                # file is unknown in parent, restore older version or ignore.
-                if abs not in repo.dirstate:
-                    if mfentry:
-                        handle(actions['add'], True)
-                    elif exact:
-                        ui.warn(_('file not managed: %s\n') % rel)
-                    continue
-
-                # parent is target, no changes mean no changes
-                if node == parent:
-                    if exact:
-                        ui.warn(_('no changes needed to %s\n') % rel)
-                    continue
-                # no change in dirstate but parent and target may differ
-                if pmf is None:
-                    # only need parent manifest in this unlikely case,
-                    # so do not read by default
-                    pmf = repo[parent].manifest()
-                if abs in pmf and mfentry:
-                    # if version of file is same in parent and target
-                    # manifests, do nothing
-                    if (pmf[abs] != mfentry or
-                        pmf.flags(abs) != mf.flags(abs)):
-                        handle(actions['revert'], False)
-                else:
-                    handle(actions['remove'], False)
 
         if not opts.get('dry_run'):
             _performrevert(repo, parents, ctx, actions)

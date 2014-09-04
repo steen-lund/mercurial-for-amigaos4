@@ -146,6 +146,7 @@ import util
 import struct
 import urllib
 import string
+import obsolete
 import pushkey
 
 import changegroup, error
@@ -775,6 +776,23 @@ class unbundlepart(unpackermixin):
             self.consumed = True
         return data
 
+capabilities = {'HG2X': (),
+                'b2x:listkeys': (),
+                'b2x:pushkey': (),
+                'b2x:changegroup': (),
+               }
+
+def getrepocaps(repo):
+    """return the bundle2 capabilities for a given repo
+
+    Exists to allow extensions (like evolution) to mutate the capabilities.
+    """
+    caps = capabilities.copy()
+    if obsolete._enabled:
+        supportedformat = tuple('V%i' % v for v in obsolete.formats)
+        caps['b2x:obsmarkers'] = supportedformat
+    return caps
+
 def bundle2caps(remote):
     """return the bundlecapabilities of a peer as dict"""
     raw = remote.capable('bundle2-exp')
@@ -782,6 +800,12 @@ def bundle2caps(remote):
         return {}
     capsblob = urllib.unquote(remote.capable('bundle2-exp'))
     return decodecaps(capsblob)
+
+def obsmarkersversion(caps):
+    """extract the list of supported obsmarkers versions from a bundle2caps dict
+    """
+    obscaps = caps.get('b2x:obsmarkers', ())
+    return [int(c[1:]) for c in obscaps if c.startswith('V')]
 
 @parthandler('b2x:changegroup')
 def handlechangegroup(op, inpart):
@@ -899,3 +923,24 @@ def handlepushkeyreply(op, inpart):
     ret = int(inpart.params['return'])
     partid = int(inpart.params['in-reply-to'])
     op.records.add('pushkey', {'return': ret}, partid)
+
+@parthandler('b2x:obsmarkers')
+def handleobsmarker(op, inpart):
+    """add a stream of obsmarkers to the repo"""
+    tr = op.gettransaction()
+    new = op.repo.obsstore.mergemarkers(tr, inpart.read())
+    if new:
+        op.repo.ui.status(_('%i new obsolescence markers\n') % new)
+    op.records.add('obsmarkers', {'new': new})
+    if op.reply is not None:
+        rpart = op.reply.newpart('b2x:reply:obsmarkers')
+        rpart.addparam('in-reply-to', str(inpart.id), mandatory=False)
+        rpart.addparam('new', '%i' % new, mandatory=False)
+
+
+@parthandler('b2x:reply:obsmarkers', ('new', 'in-reply-to'))
+def handlepushkeyreply(op, inpart):
+    """retrieve the result of a pushkey request"""
+    ret = int(inpart.params['new'])
+    partid = int(inpart.params['in-reply-to'])
+    op.records.add('obsmarkers', {'new': ret}, partid)
