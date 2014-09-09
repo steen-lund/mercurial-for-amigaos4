@@ -138,7 +138,6 @@ def rebase(ui, repo, **opts):
     skipped = set()
     targetancestors = set()
 
-    editor = cmdutil.getcommiteditor(**opts)
 
     lock = wlock = None
     try:
@@ -354,6 +353,9 @@ def rebase(ui, repo, **opts):
                     p1rev = repo[rev].p1().rev()
                     cmdutil.duplicatecopies(repo, rev, p1rev, skiprev=target)
                 if not collapsef:
+                    merging = repo[p2].rev() != nullrev
+                    editform = cmdutil.mergeeditform(merging, 'rebase')
+                    editor = cmdutil.getcommiteditor(editform=editform, **opts)
                     newrev = concludenode(repo, rev, p1, p2, extrafn=extrafn,
                                           editor=editor)
                 else:
@@ -376,6 +378,8 @@ def rebase(ui, repo, **opts):
         if collapsef and not keepopen:
             p1, p2 = defineparents(repo, min(state), target,
                                                         state, targetancestors)
+            editopt = opts.get('edit')
+            editform = 'rebase.collapse'
             if collapsemsg:
                 commitmsg = collapsemsg
             else:
@@ -383,7 +387,8 @@ def rebase(ui, repo, **opts):
                 for rebased in state:
                     if rebased not in skipped and state[rebased] > nullmerge:
                         commitmsg += '\n* %s' % repo[rebased].description()
-                editor = cmdutil.getcommiteditor(edit=True)
+                editopt = True
+            editor = cmdutil.getcommiteditor(edit=editopt, editform=editform)
             newrev = concludenode(repo, rev, p1, external, commitmsg=commitmsg,
                                   extrafn=extrafn, editor=editor)
             for oldrev in state.iterkeys():
@@ -468,15 +473,18 @@ def concludenode(repo, rev, p1, p2, commitmsg=None, editor=None, extrafn=None):
         extra = {'rebase_source': ctx.hex()}
         if extrafn:
             extrafn(ctx, extra)
-        # Commit might fail if unresolved files exist
-        newrev = repo.commit(text=commitmsg, user=ctx.user(),
-                             date=ctx.date(), extra=extra, editor=editor)
+
+        backup = repo.ui.backupconfig('phases', 'new-commit')
+        try:
+            targetphase = max(ctx.phase(), phases.draft)
+            repo.ui.setconfig('phases', 'new-commit', targetphase, 'rebase')
+            # Commit might fail if unresolved files exist
+            newrev = repo.commit(text=commitmsg, user=ctx.user(),
+                                 date=ctx.date(), extra=extra, editor=editor)
+        finally:
+            repo.ui.restoreconfig(backup)
+
         repo.dirstate.setbranch(repo[newrev].branch())
-        targetphase = max(ctx.phase(), phases.draft)
-        # retractboundary doesn't overwrite upper phase inherited from parent
-        newnode = repo[newrev].node()
-        if newnode:
-            phases.retractboundary(repo, targetphase, [newnode])
         return newrev
     except util.Abort:
         # Invalidate the previous setparents

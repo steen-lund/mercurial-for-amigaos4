@@ -29,7 +29,7 @@ help qrefresh (no record)
   
       Returns 0 on success.
   
-  options:
+  options ([+] can be repeated):
   
    -e --edit                invoke editor on commit messages
    -g --git                 use git extended diff format
@@ -44,9 +44,7 @@ help qrefresh (no record)
    -m --message TEXT        use text as commit message
    -l --logfile FILE        read commit message from file
   
-  [+] marked option can be specified multiple times
-  
-  use "hg -v help qrefresh" to show the global options
+  (some details hidden, use --verbose to show complete help)
 
 help qrefresh (record)
 
@@ -73,7 +71,7 @@ help qrefresh (record)
   
       Returns 0 on success.
   
-  options:
+  options ([+] can be repeated):
   
    -e --edit                invoke editor on commit messages
    -g --git                 use git extended diff format
@@ -89,9 +87,7 @@ help qrefresh (record)
    -l --logfile FILE        read commit message from file
    -i --interactive         interactively select changes to refresh
   
-  [+] marked option can be specified multiple times
-  
-  use "hg -v help qrefresh" to show the global options
+  (some details hidden, use --verbose to show complete help)
 
   $ hg init a
   $ cd a

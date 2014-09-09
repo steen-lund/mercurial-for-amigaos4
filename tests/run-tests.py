@@ -57,6 +57,7 @@ import re
 import threading
 import killdaemons as killmod
 import Queue as queue
+from xml.dom import minidom
 import unittest
 
 processlock = threading.Lock()
@@ -190,6 +191,8 @@ def getparser():
              " (implies --keep-tmpdir)")
     parser.add_option("-v", "--verbose", action="store_true",
         help="output verbose messages")
+    parser.add_option("--xunit", type="string",
+                      help="record xunit results at specified path")
     parser.add_option("--view", type="string",
         help="external diff viewer")
     parser.add_option("--with-hg", type="string",
@@ -303,6 +306,20 @@ def vlog(*msg):
         return
 
     return log(*msg)
+
+# Bytes that break XML even in a CDATA block: control characters 0-31
+# sans \t, \n and \r
+CDATA_EVIL = re.compile(r"[\000-\010\013\014\016-\037]")
+
+def cdatasafe(data):
+    """Make a string safe to include in a CDATA block.
+
+    Certain control characters are illegal in a CDATA block, and
+    there's no way to include a ]]> in a CDATA either. This function
+    replaces illegal bytes with ? and adds a space between the ]] so
+    that it won't break the CDATA block.
+    """
+    return CDATA_EVIL.sub('?', data).replace(']]>', '] ]>')
 
 def log(*msg):
     """Log something to stdout.
@@ -460,8 +477,15 @@ class Test(unittest.TestCase):
                 raise
             except SkipTest, e:
                 result.addSkip(self, str(e))
+                # The base class will have already counted this as a
+                # test we "ran", but we want to exclude skipped tests
+                # from those we count towards those run.
+                result.testsRun -= 1
             except IgnoreTest, e:
                 result.addIgnore(self, str(e))
+                # As with skips, ignores also should be excluded from
+                # the number of tests executed.
+                result.testsRun -= 1
             except WarnTest, e:
                 result.addWarn(self, str(e))
             except self.failureException, e:
@@ -522,7 +546,7 @@ class Test(unittest.TestCase):
                 missing, failed = TTest.parsehghaveoutput(out)
 
             if not missing:
-                missing = ['irrelevant']
+                missing = ['skipped']
 
             if failed:
                 self.fail('hg have failed checking for %s' % failed[-1])
@@ -786,7 +810,15 @@ class TTest(Test):
         for n, l in enumerate(lines):
             if not l.endswith('\n'):
                 l += '\n'
-            if l.startswith('#if'):
+            if l.startswith('#require'):
+                lsplit = l.split()
+                if len(lsplit) < 2 or lsplit[0] != '#require':
+                    after.setdefault(pos, []).append('  !!! invalid #require\n')
+                if not self._hghave(lsplit[1:]):
+                    script = ["exit 80\n"]
+                    break
+                after.setdefault(pos, []).append(l)
+            elif l.startswith('#if'):
                 lsplit = l.split()
                 if len(lsplit) < 2 or lsplit[0] != '#if':
                     after.setdefault(pos, []).append('  !!! invalid #if\n')
@@ -1041,7 +1073,7 @@ def run(cmd, wd, replacements, env, debug=False, timeout=None):
         output = re.sub(s, r, output)
     return ret, output.splitlines(True)
 
-iolock = threading.Lock()
+iolock = threading.RLock()
 
 class SkipTest(Exception):
     """Raised to indicate that a test is to be skipped."""
@@ -1077,46 +1109,59 @@ class TestResult(unittest._TextTestResult):
 
         self.times = []
         self._started = {}
+        self._stopped = {}
+        # Data stored for the benefit of generating xunit reports.
+        self.successes = []
+        self.faildata = {}
 
     def addFailure(self, test, reason):
         self.failures.append((test, reason))
 
-        iolock.acquire()
         if self._options.first:
             self.stop()
         else:
+            iolock.acquire()
             if not self._options.nodiff:
                 self.stream.write('\nERROR: %s output changed\n' % test)
 
             self.stream.write('!')
             self.stream.flush()
+            iolock.release()
+
+    def addSuccess(self, test):
+        iolock.acquire()
+        super(TestResult, self).addSuccess(test)
         iolock.release()
+        self.successes.append(test)
 
-    def addError(self, *args, **kwargs):
-        super(TestResult, self).addError(*args, **kwargs)
-
+    def addError(self, test, err):
+        super(TestResult, self).addError(test, err)
         if self._options.first:
             self.stop()
 
     # Polyfill.
     def addSkip(self, test, reason):
         self.skipped.append((test, reason))
-
+        iolock.acquire()
         if self.showAll:
             self.stream.writeln('skipped %s' % reason)
         else:
             self.stream.write('s')
             self.stream.flush()
+        iolock.release()
 
     def addIgnore(self, test, reason):
         self.ignored.append((test, reason))
-
+        iolock.acquire()
         if self.showAll:
             self.stream.writeln('ignored %s' % reason)
         else:
-            if reason != 'not retesting':
+            if reason != 'not retesting' and reason != "doesn't match keyword":
                 self.stream.write('i')
+            else:
+                self.testsRun += 1
             self.stream.flush()
+        iolock.release()
 
     def addWarn(self, test, reason):
         self.warned.append((test, reason))
@@ -1124,16 +1169,20 @@ class TestResult(unittest._TextTestResult):
         if self._options.first:
             self.stop()
 
+        iolock.acquire()
         if self.showAll:
             self.stream.writeln('warned %s' % reason)
         else:
             self.stream.write('~')
             self.stream.flush()
+        iolock.release()
 
     def addOutputMismatch(self, test, ret, got, expected):
         """Record a mismatch in test output for a particular test."""
 
         accepted = False
+        failed = False
+        lines = []
 
         iolock.acquire()
         if self._options.nodiff:
@@ -1152,17 +1201,18 @@ class TestResult(unittest._TextTestResult):
                     self.stream.write(line)
                 self.stream.flush()
 
-            # handle interactive prompt without releasing iolock
-            if self._options.interactive:
-                self.stream.write('Accept this change? [n] ')
-                answer = sys.stdin.readline().strip()
-                if answer.lower() in ('y', 'yes'):
-                    if test.name.endswith('.t'):
-                        rename(test.errpath, test.path)
-                    else:
-                        rename(test.errpath, '%s.out' % test.path)
-                    accepted = True
-
+        # handle interactive prompt without releasing iolock
+        if self._options.interactive:
+            self.stream.write('Accept this change? [n] ')
+            answer = sys.stdin.readline().strip()
+            if answer.lower() in ('y', 'yes'):
+                if test.name.endswith('.t'):
+                    rename(test.errpath, test.path)
+                else:
+                    rename(test.errpath, '%s.out' % test.path)
+                accepted = True
+        if not accepted and not failed:
+            self.faildata[test.name] = ''.join(lines)
         iolock.release()
 
         return accepted
@@ -1170,17 +1220,30 @@ class TestResult(unittest._TextTestResult):
     def startTest(self, test):
         super(TestResult, self).startTest(test)
 
-        self._started[test.name] = time.time()
+        # os.times module computes the user time and system time spent by
+        # child's processes along with real elapsed time taken by a process.
+        # This module has one limitation. It can only work for Linux user
+        # and not for Windows.
+        self._started[test.name] = os.times()
 
     def stopTest(self, test, interrupted=False):
         super(TestResult, self).stopTest(test)
 
-        self.times.append((test.name, time.time() - self._started[test.name]))
+        self._stopped[test.name] = os.times()
+
+        starttime = self._started[test.name]
+        endtime = self._stopped[test.name]
+        self.times.append((test.name, endtime[2] - starttime[2],
+                    endtime[3] - starttime[3], endtime[4] - starttime[4]))
+
         del self._started[test.name]
+        del self._stopped[test.name]
 
         if interrupted:
+            iolock.acquire()
             self.stream.writeln('INTERRUPTED: %s (after %d seconds)' % (
-                test.name, self.times[-1][1]))
+                test.name, self.times[-1][3]))
+            iolock.release()
 
 class TestSuite(unittest.TestSuite):
     """Custom unitest TestSuite that knows how to execute Mercurial tests."""
@@ -1314,6 +1377,7 @@ class TextTestRunner(unittest.TextTestRunner):
         skipped = len(result.skipped)
         ignored = len(result.ignored)
 
+        iolock.acquire()
         self.stream.writeln('')
 
         if not self._runner.options.noskips:
@@ -1326,20 +1390,39 @@ class TextTestRunner(unittest.TextTestRunner):
         for test, msg in result.errors:
             self.stream.writeln('Errored %s: %s' % (test.name, msg))
 
+        if self._runner.options.xunit:
+            xuf = open(self._runner.options.xunit, 'wb')
+            try:
+                timesd = dict(
+                    (test, real) for test, cuser, csys, real in result.times)
+                doc = minidom.Document()
+                s = doc.createElement('testsuite')
+                s.setAttribute('name', 'run-tests')
+                s.setAttribute('tests', str(result.testsRun))
+                s.setAttribute('errors', "0") # TODO
+                s.setAttribute('failures', str(failed))
+                s.setAttribute('skipped', str(skipped + ignored))
+                doc.appendChild(s)
+                for tc in result.successes:
+                    t = doc.createElement('testcase')
+                    t.setAttribute('name', tc.name)
+                    t.setAttribute('time', '%.3f' % timesd[tc.name])
+                    s.appendChild(t)
+                for tc, err in sorted(result.faildata.iteritems()):
+                    t = doc.createElement('testcase')
+                    t.setAttribute('name', tc)
+                    t.setAttribute('time', '%.3f' % timesd[tc])
+                    cd = doc.createCDATASection(cdatasafe(err))
+                    t.appendChild(cd)
+                    s.appendChild(t)
+                xuf.write(doc.toprettyxml(indent='  ', encoding='utf-8'))
+            finally:
+                xuf.close()
+
         self._runner._checkhglib('Tested')
 
-        # When '--retest' is enabled, only failure tests run. At this point
-        # "result.testsRun" holds the count of failure test that has run. But
-        # as while printing output, we have subtracted the skipped and ignored
-        # count from "result.testsRun". Therefore, to make the count remain
-        # the same, we need to add skipped and ignored count in here.
-        if self._runner.options.retest:
-            result.testsRun = result.testsRun + skipped + ignored
-
-        # This differs from unittest's default output in that we don't count
-        # skipped and ignored tests as part of the total test count.
         self.stream.writeln('# Ran %d tests, %d skipped, %d warned, %d failed.'
-            % (result.testsRun - skipped - ignored,
+            % (result.testsRun,
                skipped + ignored, warned, failed))
         if failed:
             self.stream.writeln('python hash seed: %s' %
@@ -1347,15 +1430,19 @@ class TextTestRunner(unittest.TextTestRunner):
         if self._runner.options.time:
             self.printtimes(result.times)
 
+        iolock.release()
+
         return result
 
     def printtimes(self, times):
+        # iolock held by run
         self.stream.writeln('# Producing time report')
-        times.sort(key=lambda t: (t[1], t[0]), reverse=True)
-        cols = '%7.3f   %s'
-        self.stream.writeln('%-7s   %s' % ('Time', 'Test'))
-        for test, timetaken in times:
-            self.stream.writeln(cols % (timetaken, test))
+        times.sort(key=lambda t: (t[3]))
+        cols = '%7.3f %7.3f %7.3f   %s'
+        self.stream.writeln('%-7s %-7s %-7s   %s' % ('cuser', 'csys', 'real',
+                    'Test'))
+        for test, cuser, csys, real in times:
+            self.stream.writeln(cols % (cuser, csys, real, test))
 
 class TestRunner(object):
     """Holds context for executing tests.

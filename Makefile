@@ -56,7 +56,8 @@ clean:
 	find contrib doc hgext i18n mercurial tests \
 		\( -name '*.py[cdo]' -o -name '*.so' \) -exec rm -f '{}' ';'
 	rm -f $(addprefix mercurial/,$(notdir $(wildcard mercurial/pure/[a-z]*.py)))
-	rm -f MANIFEST MANIFEST.in mercurial/__version__.py hgext/__index__.py tests/*.err
+	rm -f MANIFEST MANIFEST.in hgext/__index__.py tests/*.err
+	if test -d .hg; then rm -f mercurial/__version__.py; fi
 	rm -rf build mercurial/locale
 	$(MAKE) -C doc clean
 
@@ -135,12 +136,13 @@ i18n/hg.pot: $(PYFILES) $(DOCFILES) i18n/posplit i18n/hggettext
 # Packaging targets
 
 osx:
-	@which -s bdist_mpkg || \
+	@which bdist_mpkg >/dev/null || \
 	   (echo "Missing bdist_mpkg (easy_install bdist_mpkg)"; false)
+	rm -rf dist/mercurial-*.mpkg
 	bdist_mpkg setup.py
 	mkdir -p packages/osx
+	N=`cd dist && echo mercurial-*.mpkg | sed 's,\.mpkg$$,,'` && hdiutil create -srcfolder dist/$$N.mpkg/ -scrub -volname "$$N" -ov packages/osx/$$N.dmg
 	rm -rf dist/mercurial-*.mpkg
-	mv dist/mercurial*macosx*.zip packages/osx
 
 fedora:
 	mkdir -p packages/fedora

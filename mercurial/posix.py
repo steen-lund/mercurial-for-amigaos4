@@ -8,6 +8,7 @@
 from i18n import _
 import encoding
 import os, sys, errno, stat, getpass, pwd, grp, socket, tempfile, unicodedata
+import fcntl
 
 posixfile = open
 normpath = os.path.normpath
@@ -432,7 +433,7 @@ def gethgcmd():
 
 def termwidth():
     try:
-        import termios, array, fcntl
+        import termios, array
         for dev in (sys.stderr, sys.stdout, sys.stdin):
             try:
                 try:
@@ -567,3 +568,27 @@ def statislink(st):
 def statisexec(st):
     '''check whether a stat result is an executable file'''
     return st and (st.st_mode & 0100 != 0)
+
+def readpipe(pipe):
+    """Read all available data from a pipe."""
+    # We can't fstat() a pipe because Linux will always report 0.
+    # So, we set the pipe to non-blocking mode and read everything
+    # that's available.
+    flags = fcntl.fcntl(pipe, fcntl.F_GETFL)
+    flags |= os.O_NONBLOCK
+    oldflags = fcntl.fcntl(pipe, fcntl.F_SETFL, flags)
+
+    try:
+        chunks = []
+        while True:
+            try:
+                s = pipe.read()
+                if not s:
+                    break
+                chunks.append(s)
+            except IOError:
+                break
+
+        return ''.join(chunks)
+    finally:
+        fcntl.fcntl(pipe, fcntl.F_SETFL, oldflags)
