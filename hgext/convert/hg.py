@@ -128,12 +128,16 @@ class mercurial_sink(converter_sink):
             fp.write('%s %s\n' % (revid, s[1]))
         return fp.getvalue()
 
-    def putcommit(self, files, copies, parents, commit, source, revmap):
-
+    def putcommit(self, files, copies, parents, commit, source, revmap, full):
         files = dict(files)
         def getfilectx(repo, memctx, f):
-            v = files[f]
+            try:
+                v = files[f]
+            except KeyError:
+                return None
             data, mode = source.getfile(f, v)
+            if data is None:
+                return None
             if f == '.hgtags':
                 data = self._rewritetags(source, revmap, data)
             return context.memfilectx(self.repo, f, data, 'l' in mode,
@@ -191,7 +195,11 @@ class mercurial_sink(converter_sink):
         while parents:
             p1 = p2
             p2 = parents.pop(0)
-            ctx = context.memctx(self.repo, (p1, p2), text, files.keys(),
+            fileset = set(files)
+            if full:
+                fileset.update(self.repo[p1])
+                fileset.update(self.repo[p2])
+            ctx = context.memctx(self.repo, (p1, p2), text, fileset,
                                  getfilectx, commit.author, commit.date, extra)
             self.repo.commitctx(ctx)
             text = "(octopus merge fixup)\n"
@@ -299,7 +307,7 @@ class mercurial_source(converter_source):
             raise NoRepo(_("%s is not a local Mercurial repository") % path)
         self.lastrev = None
         self.lastctx = None
-        self._changescache = None
+        self._changescache = None, None
         self.convertfp = None
         # Restrict converted revisions to startrev descendants
         startnode = ui.config('convert', 'hg.startrev')
@@ -351,29 +359,28 @@ class mercurial_source(converter_source):
         try:
             fctx = self.changectx(rev)[name]
             return fctx.data(), fctx.flags()
-        except error.LookupError, err:
-            raise IOError(err)
+        except error.LookupError:
+            return None, None
 
-    def getchanges(self, rev):
+    def getchanges(self, rev, full):
         ctx = self.changectx(rev)
         parents = self.parents(ctx)
-        if not parents:
-            files = sorted(ctx.manifest())
-            # getcopies() is not needed for roots, but it is a simple way to
-            # detect missing revlogs and abort on errors or populate
-            # self.ignored
-            self.getcopies(ctx, parents, files)
-            return [(f, rev) for f in files if f not in self.ignored], {}
-        if self._changescache and self._changescache[0] == rev:
-            m, a, r = self._changescache[1]
-        else:
-            m, a, r = self.repo.status(parents[0].node(), ctx.node())[:3]
-        # getcopies() detects missing revlogs early, run it before
-        # filtering the changes.
-        copies = self.getcopies(ctx, parents, m + a)
-        changes = [(name, rev) for name in m + a + r
-                   if name not in self.ignored]
-        return sorted(changes), copies
+        if full or not parents:
+            files = copyfiles = ctx.manifest()
+        if parents:
+            if self._changescache[0] == rev:
+                m, a, r = self._changescache[1]
+            else:
+                m, a, r = self.repo.status(parents[0].node(), ctx.node())[:3]
+            if not full:
+                files = m + a + r
+            copyfiles = m + a
+        # getcopies() is also run for roots and before filtering so missing
+        # revlogs are detected early
+        copies = self.getcopies(ctx, parents, copyfiles)
+        changes = [(f, rev) for f in files if f not in self.ignored]
+        changes.sort()
+        return changes, copies
 
     def getcopies(self, ctx, parents, files):
         copies = {}

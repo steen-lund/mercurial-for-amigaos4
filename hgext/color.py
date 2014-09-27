@@ -19,7 +19,23 @@ terminal codes used to change color and effect.  If terminfo is not
 available, then effects are rendered with the ECMA-48 SGR control
 function (aka ANSI escape codes).
 
-Default effects may be overridden from your configuration file::
+Text receives color effects depending on the labels that it has. Many
+default Mercurial commands emit labelled text. You can also define
+your own labels in templates using the label function, see :hg:`help
+templates`. A single portion of text may have more than one label. In
+that case, effects given to the last label will override any other
+effects. This includes the special "none" effect, which nullifies
+other effects.
+
+Labels are normally invisible. In order to see these labels and their
+position in the text, use the global --color=debug option. In case of
+multiple labels for the same text, the labels will be enclosed by
+square brackets, e.g.
+
+  [log.changeset changeset.secret](changeset:   22611:6f0a53c8f587)
+
+The following are the default effects for some default labels. Default
+effects may be overridden from your configuration file::
 
   [color]
   status.modified = blue bold underline red_background
@@ -46,6 +62,11 @@ Default effects may be overridden from your configuration file::
   diff.inserted = green
   diff.changed = white
   diff.trailingwhitespace = bold red_background
+
+  # Blank so it inherits the style of the surrounding label
+  changeset.public =
+  changeset.draft =
+  changeset.secret =
 
   resolve.unresolved = red bold
   resolve.resolved = green bold
@@ -168,6 +189,9 @@ def _terminfosetup(ui, mode):
 def _modesetup(ui, coloropt):
     global _terminfo_params
 
+    if coloropt == 'debug':
+        return 'debug'
+
     auto = (coloropt == 'auto')
     always = not auto and util.parsebool(coloropt)
     if not always and not auto:
@@ -256,6 +280,9 @@ _styles = {'grep.match': 'red bold',
            'diff.hunk': 'magenta',
            'diff.inserted': 'green',
            'diff.trailingwhitespace': 'bold red_background',
+           'changeset.public' : '',
+           'changeset.draft' : '',
+           'changeset.secret' : '',
            'diffstat.deleted': 'red',
            'diffstat.inserted': 'green',
            'histedit.remaining': 'red bold',
@@ -378,9 +405,21 @@ class colorui(uimod.ui):
             return super(colorui, self).write_err(
                 *[self.label(str(a), label) for a in args], **opts)
 
+    def showlabel(self, msg, label):
+        if label:
+            if msg and msg[-1] == '\n':
+                return "[%s|%s]\n" % (label, msg[:-1])
+            else:
+                return "[%s|%s]" % (label, msg)
+        else:
+            return msg
+
     def label(self, msg, label):
         if self._colormode is None:
             return super(colorui, self).label(msg, label)
+
+        if self._colormode == 'debug':
+            return self.showlabel(msg, label)
 
         effects = []
         for l in label.split():
@@ -427,7 +466,7 @@ def uisetup(ui):
     def colorcmd(orig, ui_, opts, cmd, cmdfunc):
         mode = _modesetup(ui_, opts['color'])
         colorui._colormode = mode
-        if mode:
+        if mode and mode != 'debug':
             extstyles()
             configstyles(ui_)
         return orig(ui_, opts, cmd, cmdfunc)
@@ -437,9 +476,9 @@ def uisetup(ui):
 def extsetup(ui):
     commands.globalopts.append(
         ('', 'color', 'auto',
-         # i18n: 'always', 'auto', and 'never' are keywords and should
-         # not be translated
-         _("when to colorize (boolean, always, auto, or never)"),
+         # i18n: 'always', 'auto', 'never', and 'debug' are keywords
+         # and should not be translated
+         _("when to colorize (boolean, always, auto, never, or debug)"),
          _('TYPE')))
 
 @command('debugcolor', [], 'hg debugcolor')

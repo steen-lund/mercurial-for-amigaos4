@@ -151,8 +151,7 @@ def analyze(ui, repo, *revs, **opts):
             lastctx = repo[rev - 1]
         if lastctx.rev() != nullrev:
             interarrival[roundto(ctx.date()[0] - lastctx.date()[0], 300)] += 1
-        diff = sum((d.splitlines()
-                    for d in ctx.diff(pctx, opts={'git': True})), [])
+        diff = sum((d.splitlines() for d in ctx.diff(pctx, git=True)), [])
         fileadds, diradds, fileremoves, filechanges = 0, 0, 0, 0
         for filename, mar, lineadd, lineremove, binary in parsegitdiff(diff):
             if binary:
@@ -307,7 +306,8 @@ def synthesize(ui, repo, descpath, **opts):
 
         # the number of heads will grow without bound if we use a pure
         # model, so artificially constrain their proliferation
-        if pick(parents) == 2 or len(heads) > random.randint(1, 20):
+        toomanyheads = len(heads) > random.randint(1, 20)
+        if p2distance[0] and (pick(parents) == 2 or toomanyheads):
             r2, p2 = pickhead(heads.difference([r1]), p2distance)
         else:
             r2, p2 = nullrev, nullid
@@ -356,10 +356,7 @@ def synthesize(ui, repo, descpath, **opts):
                              for __ in xrange(pick(linesinfilesadded))) + '\n'
             changes[path] = context.memfilectx(repo, path, data)
         def filectxfn(repo, memctx, path):
-            data = changes[path]
-            if data is None:
-                raise IOError
-            return data
+            return changes[path]
         if not changes:
             continue
         if revs:

@@ -11,7 +11,7 @@ from lock import release
 from node import hex, nullid
 import localrepo, bundlerepo, unionrepo, httppeer, sshpeer, statichttprepo
 import bookmarks, lock, util, extensions, error, node, scmutil, phases, url
-import cmdutil, discovery
+import cmdutil, discovery, repoview
 import merge as mergemod
 import verify as verifymod
 import errno, os, shutil
@@ -366,13 +366,20 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
 
             # Recomputing branch cache might be slow on big repos,
             # so just copy it
+            def copybranchcache(fname):
+                srcbranchcache = srcrepo.join('cache/%s' % fname)
+                dstbranchcache = os.path.join(dstcachedir, fname)
+                if os.path.exists(srcbranchcache):
+                    if not os.path.exists(dstcachedir):
+                        os.mkdir(dstcachedir)
+                    util.copyfile(srcbranchcache, dstbranchcache)
+
             dstcachedir = os.path.join(destpath, 'cache')
-            srcbranchcache = srcrepo.sjoin('cache/branch2')
-            dstbranchcache = os.path.join(dstcachedir, 'branch2')
-            if os.path.exists(srcbranchcache):
-                if not os.path.exists(dstcachedir):
-                    os.mkdir(dstcachedir)
-                util.copyfile(srcbranchcache, dstbranchcache)
+            # In local clones we're copying all nodes, not just served
+            # ones. Therefore copy all branchcaches over.
+            copybranchcache('branch2')
+            for cachename in repoview.filtertable:
+                copybranchcache('branch2-%s' % cachename)
 
             # we need to re-init the repo after manually copying the data
             # into it
@@ -425,12 +432,23 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
                 destpeer.pushkey('bookmarks', k, '', hex(n))
 
         if destrepo:
+            template = (
+                '# You may want to set your username here if it is not set\n'
+                "# globally, or this repository requires a different\n"
+                '# username from your usual configuration. If you want to\n'
+                '# set something for all of your repositories on this\n'
+                '# computer, try running the command\n'
+                "# 'hg config --edit --global'\n"
+                '# [ui]\n'
+                '# username = Jane Doe <jdoe@example.com>\n'
+                '[paths]\n'
+                'default = %s\n'
+                )
             fp = destrepo.opener("hgrc", "w", text=True)
-            fp.write("[paths]\n")
             u = util.url(abspath)
             u.passwd = None
             defaulturl = str(u)
-            fp.write("default = %s\n" % defaulturl)
+            fp.write(template % defaulturl)
             fp.close()
 
             destrepo.ui.setconfig('paths', 'default', defaulturl, 'clone')

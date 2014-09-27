@@ -40,6 +40,37 @@ class manifestdict(dict):
     def flagsdiff(self, d2):
         return dicthelpers.diff(self._flags, d2._flags, "")
 
+
+def _checkforbidden(l):
+    """Check filenames for illegal characters."""
+    for f in l:
+        if '\n' in f or '\r' in f:
+            raise error.RevlogError(
+                _("'\\n' and '\\r' disallowed in filenames: %r") % f)
+
+
+# apply the changes collected during the bisect loop to our addlist
+# return a delta suitable for addrevision
+def _addlistdelta(addlist, x):
+    # for large addlist arrays, building a new array is cheaper
+    # than repeatedly modifying the existing one
+    currentposition = 0
+    newaddlist = array.array('c')
+
+    for start, end, content in x:
+        newaddlist += addlist[currentposition:start]
+        if content:
+            newaddlist += array.array('c', content)
+
+        currentposition = end
+
+    newaddlist += addlist[currentposition:]
+
+    deltatext = "".join(struct.pack(">lll", start, end, len(content))
+                   + content for start, end, content in x)
+    return deltatext, newaddlist
+
+
 class manifest(revlog.revlog):
     def __init__(self, opener):
         # we expect to deal with not more than four revs at a time,
@@ -131,38 +162,11 @@ class manifest(revlog.revlog):
 
     def add(self, map, transaction, link, p1=None, p2=None,
             changed=None):
-        # apply the changes collected during the bisect loop to our addlist
-        # return a delta suitable for addrevision
-        def addlistdelta(addlist, x):
-            # for large addlist arrays, building a new array is cheaper
-            # than repeatedly modifying the existing one
-            currentposition = 0
-            newaddlist = array.array('c')
-
-            for start, end, content in x:
-                newaddlist += addlist[currentposition:start]
-                if content:
-                    newaddlist += array.array('c', content)
-
-                currentposition = end
-
-            newaddlist += addlist[currentposition:]
-
-            deltatext = "".join(struct.pack(">lll", start, end, len(content))
-                           + content for start, end, content in x)
-            return deltatext, newaddlist
-
-        def checkforbidden(l):
-            for f in l:
-                if '\n' in f or '\r' in f:
-                    raise error.RevlogError(
-                        _("'\\n' and '\\r' disallowed in filenames: %r") % f)
-
         # if we're using the cache, make sure it is valid and
         # parented by the same node we're diffing against
         if not (changed and p1 and (p1 in self._mancache)):
             files = sorted(map)
-            checkforbidden(files)
+            _checkforbidden(files)
 
             # if this is changed to support newlines in filenames,
             # be sure to check the templates/ dir again (especially *-raw.tmpl)
@@ -175,7 +179,7 @@ class manifest(revlog.revlog):
             added, removed = changed
             addlist = self._mancache[p1][1]
 
-            checkforbidden(added)
+            _checkforbidden(added)
             # combine the changed lists into one list for sorting
             work = [(x, False) for x in added]
             work.extend((x, True) for x in removed)
@@ -219,7 +223,7 @@ class manifest(revlog.revlog):
             if dstart is not None:
                 delta.append([dstart, dend, "".join(dline)])
             # apply the delta to the addlist, and get a delta for addrevision
-            deltatext, addlist = addlistdelta(addlist, delta)
+            deltatext, addlist = _addlistdelta(addlist, delta)
             cachedelta = (self.rev(p1), deltatext)
             arraytext = addlist
             text = util.buffer(arraytext)

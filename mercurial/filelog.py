@@ -9,25 +9,23 @@ import revlog
 import re
 
 _mdre = re.compile('\1\n')
-def _parsemeta(text):
+def parsemeta(text):
     """return (metadatadict, keylist, metadatasize)"""
     # text can be buffer, so we can't use .startswith or .index
     if text[:2] != '\1\n':
-        return None, None, None
+        return None, None
     s = _mdre.search(text, 2).start()
     mtext = text[2:s]
     meta = {}
-    keys = []
     for l in mtext.splitlines():
         k, v = l.split(": ", 1)
         meta[k] = v
-        keys.append(k)
-    return meta, keys, (s + 2)
+    return meta, (s + 2)
 
-def _packmeta(meta, keys=None):
-    if not keys:
-        keys = sorted(meta.iterkeys())
-    return "".join("%s: %s\n" % (k, meta[k]) for k in keys)
+def packmeta(meta, text):
+    keys = sorted(meta.iterkeys())
+    metatext = "".join("%s: %s\n" % (k, meta[k]) for k in keys)
+    return "\1\n%s\1\n%s" % (metatext, text)
 
 class filelog(revlog.revlog):
     def __init__(self, opener, path):
@@ -43,14 +41,14 @@ class filelog(revlog.revlog):
 
     def add(self, text, meta, transaction, link, p1=None, p2=None):
         if meta or text.startswith('\1\n'):
-            text = "\1\n%s\1\n%s" % (_packmeta(meta), text)
+            text = packmeta(meta, text)
         return self.addrevision(text, transaction, link, p1, p2)
 
     def renamed(self, node):
         if self.parents(node)[0] != revlog.nullid:
             return False
         t = self.revision(node)
-        m = _parsemeta(t)[0]
+        m = parsemeta(t)[0]
         if m and "copy" in m:
             return (m["copy"], revlog.bin(m["copyrev"]))
         return False

@@ -275,14 +275,19 @@ static PyObject *parse_dirstate(PyObject *self, PyObject *args)
 	PyObject *fname = NULL, *cname = NULL, *entry = NULL;
 	char state, *cur, *str, *cpos;
 	int mode, size, mtime;
-	unsigned int flen;
-	int len, pos = 40;
+	unsigned int flen, len, pos = 40;
+	int readlen;
 
 	if (!PyArg_ParseTuple(args, "O!O!s#:parse_dirstate",
 			      &PyDict_Type, &dmap,
 			      &PyDict_Type, &cmap,
-			      &str, &len))
+			      &str, &readlen))
 		goto quit;
+
+	if (readlen < 0)
+		goto quit;
+
+	len = readlen;
 
 	/* read parents */
 	if (len < 40)
@@ -503,6 +508,7 @@ typedef struct {
 	Py_ssize_t length;     /* current number of elements */
 	PyObject *added;       /* populated on demand */
 	PyObject *headrevs;    /* cache, invalidated on changes */
+	PyObject *filteredrevs;/* filtered revs set */
 	nodetree *nt;          /* base-16 trie */
 	int ntlength;          /* # nodes in use */
 	int ntcapacity;        /* # nodes allocated */
@@ -524,7 +530,7 @@ static Py_ssize_t index_length(const indexObject *self)
 static PyObject *nullentry;
 static const char nullid[20];
 
-static long inline_scan(indexObject *self, const char **offsets);
+static Py_ssize_t inline_scan(indexObject *self, const char **offsets);
 
 #if LONG_MAX == 0x7fffffffL
 static char *tuple_format = "Kiiiiiis#";
@@ -681,10 +687,9 @@ static PyObject *index_insert(indexObject *self, PyObject *args)
 {
 	PyObject *obj;
 	char *node;
-	long offset;
-	Py_ssize_t len, nodelen;
+	Py_ssize_t offset, len, nodelen;
 
-	if (!PyArg_ParseTuple(args, "lO", &offset, &obj))
+	if (!PyArg_ParseTuple(args, "nO", &offset, &obj))
 		return NULL;
 
 	if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) != 8) {
@@ -819,14 +824,59 @@ static PyObject *list_copy(PyObject *list)
 	return newlist;
 }
 
-static PyObject *index_headrevs(indexObject *self)
+static int check_filter(PyObject *filter, Py_ssize_t arg) {
+	if (filter) {
+		PyObject *arglist, *result;
+		int isfiltered;
+
+		arglist = Py_BuildValue("(n)", arg);
+		if (!arglist) {
+			return -1;
+		}
+
+		result = PyEval_CallObject(filter, arglist);
+		Py_DECREF(arglist);
+		if (!result) {
+			return -1;
+		}
+
+		/* PyObject_IsTrue returns 1 if true, 0 if false, -1 if error,
+		 * same as this function, so we can just return it directly.*/
+		isfiltered = PyObject_IsTrue(result);
+		Py_DECREF(result);
+		return isfiltered;
+	} else {
+		return 0;
+	}
+}
+
+static PyObject *index_headrevs(indexObject *self, PyObject *args)
 {
 	Py_ssize_t i, len, addlen;
 	char *nothead = NULL;
-	PyObject *heads;
+	PyObject *heads = NULL;
+	PyObject *filter = NULL;
+	PyObject *filteredrevs = Py_None;
 
-	if (self->headrevs)
+	if (!PyArg_ParseTuple(args, "|O", &filteredrevs)) {
+		return NULL;
+	}
+
+	if (self->headrevs && filteredrevs == self->filteredrevs)
 		return list_copy(self->headrevs);
+
+	Py_DECREF(self->filteredrevs);
+	self->filteredrevs = filteredrevs;
+	Py_INCREF(filteredrevs);
+
+	if (filteredrevs != Py_None) {
+		filter = PyObject_GetAttrString(filteredrevs, "__contains__");
+		if (!filter) {
+			PyErr_SetString(PyExc_TypeError,
+				"filteredrevs has no attribute __contains__");
+			goto bail;
+		}
+	}
 
 	len = index_length(self) - 1;
 	heads = PyList_New(0);
@@ -846,9 +896,25 @@ static PyObject *index_headrevs(indexObject *self)
 		goto bail;
 
 	for (i = 0; i < self->raw_length; i++) {
-		const char *data = index_deref(self, i);
-		int parent_1 = getbe32(data + 24);
-		int parent_2 = getbe32(data + 28);
+		const char *data;
+		int parent_1, parent_2, isfiltered;
+
+		isfiltered = check_filter(filter, i);
+		if (isfiltered == -1) {
+			PyErr_SetString(PyExc_TypeError,
+				"unable to check filter");
+			goto bail;
+		}
+
+		if (isfiltered) {
+			nothead[i] = 1;
+			continue;
+		}
+
+		data = index_deref(self, i);
+		parent_1 = getbe32(data + 24);
+		parent_2 = getbe32(data + 28);
+
 		if (parent_1 >= 0)
 			nothead[parent_1] = 1;
 		if (parent_2 >= 0)
@@ -862,12 +928,26 @@ static PyObject *index_headrevs(indexObject *self)
 		PyObject *p1 = PyTuple_GET_ITEM(rev, 5);
 		PyObject *p2 = PyTuple_GET_ITEM(rev, 6);
 		long parent_1, parent_2;
+		int isfiltered;
 
 		if (!PyInt_Check(p1) || !PyInt_Check(p2)) {
 			PyErr_SetString(PyExc_TypeError,
 					"revlog parents are invalid");
 			goto bail;
 		}
+
+		isfiltered = check_filter(filter, i);
+		if (isfiltered == -1) {
+			PyErr_SetString(PyExc_TypeError,
+				"unable to check filter");
+			goto bail;
+		}
+
+		if (isfiltered) {
+			nothead[i] = 1;
+			continue;
+		}
+
 		parent_1 = PyInt_AS_LONG(p1);
 		parent_2 = PyInt_AS_LONG(p2);
 		if (parent_1 >= 0)
@@ -881,7 +961,7 @@ static PyObject *index_headrevs(indexObject *self)
 
 		if (nothead[i])
 			continue;
-		head = PyInt_FromLong(i);
+		head = PyInt_FromSsize_t(i);
 		if (head == NULL || PyList_Append(heads, head) == -1) {
 			Py_XDECREF(head);
 			goto bail;
@@ -890,9 +970,11 @@ static PyObject *index_headrevs(indexObject *self)
 
 done:
 	self->headrevs = heads;
+	Py_XDECREF(filter);
 	free(nothead);
 	return list_copy(self->headrevs);
 bail:
+	Py_XDECREF(filter);
 	Py_XDECREF(heads);
 	free(nothead);
 	return NULL;
@@ -1304,7 +1386,7 @@ static PyObject *find_gca_candidates(indexObject *self, const int *revs,
 	PyObject *gca = PyList_New(0);
 	int i, v, interesting;
 	int maxrev = -1;
-	long sp;
+	bitmask sp;
 	bitmask *seen;
 
 	if (gca == NULL)
@@ -1327,7 +1409,7 @@ static PyObject *find_gca_candidates(indexObject *self, const int *revs,
 	interesting = revcount;
 
 	for (v = maxrev; v >= 0 && interesting; v--) {
-		long sv = seen[v];
+		bitmask sv = seen[v];
 		int parents[2];
 
 		if (!sv)
@@ -1853,7 +1935,7 @@ static int index_assign_subscript(indexObject *self, PyObject *item,
  * Find all RevlogNG entries in an index that has inline data. Update
  * the optional "offsets" table with those entries.
  */
-static long inline_scan(indexObject *self, const char **offsets)
+static Py_ssize_t inline_scan(indexObject *self, const char **offsets)
 {
 	const char *data = PyString_AS_STRING(self->data);
 	Py_ssize_t pos = 0;
@@ -1892,6 +1974,8 @@ static int index_init(indexObject *self, PyObject *args)
 	self->cache = NULL;
 	self->data = NULL;
 	self->headrevs = NULL;
+	self->filteredrevs = Py_None;
+	Py_INCREF(Py_None);
 	self->nt = NULL;
 	self->offsets = NULL;
 
@@ -1913,7 +1997,7 @@ static int index_init(indexObject *self, PyObject *args)
 	Py_INCREF(self->data);
 
 	if (self->inlined) {
-		long len = inline_scan(self, NULL);
+		Py_ssize_t len = inline_scan(self, NULL);
 		if (len == -1)
 			goto bail;
 		self->raw_length = len;
@@ -1941,6 +2025,7 @@ static PyObject *index_nodemap(indexObject *self)
 static void index_dealloc(indexObject *self)
 {
 	_index_clearcaches(self);
+	Py_XDECREF(self->filteredrevs);
 	Py_XDECREF(self->data);
 	Py_XDECREF(self->added);
 	PyObject_Del(self);
@@ -1973,7 +2058,7 @@ static PyMethodDef index_methods[] = {
 	 "clear the index caches"},
 	{"get", (PyCFunction)index_m_get, METH_VARARGS,
 	 "get an index entry"},
-	{"headrevs", (PyCFunction)index_headrevs, METH_NOARGS,
+	{"headrevs", (PyCFunction)index_headrevs, METH_VARARGS,
 	 "get head revisions"},
 	{"insert", (PyCFunction)index_insert, METH_VARARGS,
 	 "insert an index entry"},

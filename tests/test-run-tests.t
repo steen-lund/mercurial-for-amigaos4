@@ -13,6 +13,8 @@ a succesful test
   $ cat > test-success.t << EOF
   >   $ echo babar
   >   babar
+  >   $ echo xyzzy
+  >   xyzzy
   > EOF
 
   $ $TESTDIR/run-tests.py --with-hg=`which hg`
@@ -25,16 +27,20 @@ failing test
   $ cat > test-failure.t << EOF
   >   $ echo babar
   >   rataxes
+  > This is a noop statement so that
+  > this test is still more bytes than success.
   > EOF
 
   $ $TESTDIR/run-tests.py --with-hg=`which hg`
   
   --- $TESTTMP/test-failure.t (glob)
   +++ $TESTTMP/test-failure.t.err (glob)
-  @@ -1,2 +1,2 @@
+  @@ -1,4 +1,4 @@
      $ echo babar
   -  rataxes
   +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
   
   ERROR: test-failure.t output changed
   !.
@@ -42,6 +48,39 @@ failing test
   # Ran 2 tests, 0 skipped, 0 warned, 1 failed.
   python hash seed: * (glob)
   [1]
+test --xunit support
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` --xunit=xunit.xml
+  
+  --- $TESTTMP/test-failure.t
+  +++ $TESTTMP/test-failure.t.err
+  @@ -1,4 +1,4 @@
+     $ echo babar
+  -  rataxes
+  +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
+  
+  ERROR: test-failure.t output changed
+  !.
+  Failed test-failure.t: output changed
+  # Ran 2 tests, 0 skipped, 0 warned, 1 failed.
+  python hash seed: * (glob)
+  [1]
+  $ cat xunit.xml
+  <?xml version="1.0" encoding="utf-8"?>
+  <testsuite errors="0" failures="1" name="run-tests" skipped="0" tests="2">
+    <testcase name="test-success.t" time="*"/> (glob)
+    <testcase name="test-failure.t" time="*"> (glob)
+  <![CDATA[--- $TESTTMP/test-failure.t
+  +++ $TESTTMP/test-failure.t.err
+  @@ -1,4 +1,4 @@
+     $ echo babar
+  -  rataxes
+  +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
+  ]]>  </testcase>
+  </testsuite>
 
 test for --retest
 ====================
@@ -50,15 +89,17 @@ test for --retest
   
   --- $TESTTMP/test-failure.t (glob)
   +++ $TESTTMP/test-failure.t.err (glob)
-  @@ -1,2 +1,2 @@
+  @@ -1,4 +1,4 @@
      $ echo babar
   -  rataxes
   +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
   
   ERROR: test-failure.t output changed
   !
   Failed test-failure.t: output changed
-  # Ran 1 tests, 1 skipped, 0 warned, 1 failed.
+  # Ran 2 tests, 1 skipped, 0 warned, 1 failed.
   python hash seed: * (glob)
   [1]
 
@@ -71,21 +112,47 @@ successful
   .
   # Ran 1 tests, 0 skipped, 0 warned, 0 failed.
 
+success w/ keyword
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` -k xyzzy
+  .
+  # Ran 2 tests, 1 skipped, 0 warned, 0 failed.
+
 failed
 
   $ $TESTDIR/run-tests.py --with-hg=`which hg` test-failure.t
   
   --- $TESTTMP/test-failure.t (glob)
   +++ $TESTTMP/test-failure.t.err (glob)
-  @@ -1,2 +1,2 @@
+  @@ -1,4 +1,4 @@
      $ echo babar
   -  rataxes
   +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
   
   ERROR: test-failure.t output changed
   !
   Failed test-failure.t: output changed
   # Ran 1 tests, 0 skipped, 0 warned, 1 failed.
+  python hash seed: * (glob)
+  [1]
+
+failure w/ keyword
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` -k rataxes
+  
+  --- $TESTTMP/test-failure.t
+  +++ $TESTTMP/test-failure.t.err
+  @@ -1,4 +1,4 @@
+     $ echo babar
+  -  rataxes
+  +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
+  
+  ERROR: test-failure.t output changed
+  !
+  Failed test-failure.t: output changed
+  # Ran 2 tests, 1 skipped, 0 warned, 1 failed.
   python hash seed: * (glob)
   [1]
 
@@ -97,14 +164,18 @@ Running In Debug Mode
   SALT* 0 0 (glob)
   + echo babar
   babar
-  + echo SALT* 2 0 (glob)
-  SALT* 2 0 (glob)
+  + echo SALT* 4 0 (glob)
+  SALT* 4 0 (glob)
   .+ echo SALT* 0 0 (glob)
   SALT* 0 0 (glob)
   + echo babar
   babar
   + echo SALT* 2 0 (glob)
   SALT* 2 0 (glob)
+  + echo xyzzy
+  xyzzy
+  + echo SALT* 4 0 (glob)
+  SALT* 4 0 (glob)
   .
   # Ran 2 tests, 0 skipped, 0 warned, 0 failed.
 
@@ -118,19 +189,23 @@ Parallel runs
   
   --- $TESTTMP/test-failure*.t (glob)
   +++ $TESTTMP/test-failure*.t.err (glob)
-  @@ -1,2 +1,2 @@
+  @@ -1,4 +1,4 @@
      $ echo babar
   -  rataxes
   +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
   
   ERROR: test-failure*.t output changed (glob)
   !
   --- $TESTTMP/test-failure*.t (glob)
   +++ $TESTTMP/test-failure*.t.err (glob)
-  @@ -1,2 +1,2 @@
+  @@ -1,4 +1,4 @@
      $ echo babar
   -  rataxes
   +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
   
   ERROR: test-failure*.t output changed (glob)
   !
@@ -156,10 +231,12 @@ Refuse the fix
   
   --- $TESTTMP/test-failure.t
   +++ $TESTTMP/test-failure.t.err
-  @@ -1,2 +1,2 @@
+  @@ -1,4 +1,4 @@
      $ echo babar
   -  rataxes
   +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
   Accept this change? [n] 
   ERROR: test-failure.t output changed
   !.
@@ -171,6 +248,32 @@ Refuse the fix
   $ cat test-failure.t
     $ echo babar
     rataxes
+  This is a noop statement so that
+  this test is still more bytes than success.
+
+Interactive with custom view
+
+  $ echo 'n' | $TESTDIR/run-tests.py --with-hg=`which hg` -i --view echo
+  $TESTTMP/test-failure.t $TESTTMP/test-failure.t.err
+  Accept this change? [n]* (glob)
+  ERROR: test-failure.t output changed
+  !.
+  Failed test-failure.t: output changed
+  # Ran 2 tests, 0 skipped, 0 warned, 1 failed.
+  python hash seed: * (glob)
+  [1]
+
+View the fix
+
+  $ echo 'y' | $TESTDIR/run-tests.py --with-hg=`which hg` --view echo
+  $TESTTMP/test-failure.t $TESTTMP/test-failure.t.err
+  
+  ERROR: test-failure.t output changed
+  !.
+  Failed test-failure.t: output changed
+  # Ran 2 tests, 0 skipped, 0 warned, 1 failed.
+  python hash seed: * (glob)
+  [1]
 
 Accept the fix
 
@@ -178,16 +281,20 @@ Accept the fix
   
   --- $TESTTMP/test-failure.t
   +++ $TESTTMP/test-failure.t.err
-  @@ -1,2 +1,2 @@
+  @@ -1,4 +1,4 @@
      $ echo babar
   -  rataxes
   +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
   Accept this change? [n] ..
   # Ran 2 tests, 0 skipped, 0 warned, 0 failed.
 
   $ cat test-failure.t
     $ echo babar
     babar
+  This is a noop statement so that
+  this test is still more bytes than success.
 
 (reinstall)
   $ mv backup test-failure.t
@@ -201,3 +308,107 @@ No Diff
   # Ran 2 tests, 0 skipped, 0 warned, 1 failed.
   python hash seed: * (glob)
   [1]
+
+test for --time
+==================
+
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` test-success.t --time
+  .
+  # Ran 1 tests, 0 skipped, 0 warned, 0 failed.
+  # Producing time report
+  cuser   csys    real      Test
+  \s*[\d\.]{5}   \s*[\d\.]{5}   \s*[\d\.]{5}   test-success.t (re)
+
+test for --time with --job enabled
+====================================
+
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` test-success.t --time --jobs 2
+  .
+  # Ran 1 tests, 0 skipped, 0 warned, 0 failed.
+  # Producing time report
+  cuser   csys    real      Test
+  \s*[\d\.]{5}   \s*[\d\.]{5}   \s*[\d\.]{5}   test-success.t (re)
+
+Skips
+================
+  $ cat > test-skip.t <<EOF
+  >   $ echo xyzzy
+  > #require false
+  > EOF
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` --nodiff
+  !.s
+  Skipped test-skip.t: skipped
+  Failed test-failure.t: output changed
+  # Ran 2 tests, 1 skipped, 0 warned, 1 failed.
+  python hash seed: * (glob)
+  [1]
+
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` --keyword xyzzy
+  .s
+  Skipped test-skip.t: skipped
+  # Ran 2 tests, 2 skipped, 0 warned, 0 failed.
+
+Skips with xml
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` --keyword xyzzy \
+  >  --xunit=xunit.xml
+  .s
+  Skipped test-skip.t: skipped
+  # Ran 2 tests, 2 skipped, 0 warned, 0 failed.
+  $ cat xunit.xml
+  <?xml version="1.0" encoding="utf-8"?>
+  <testsuite errors="0" failures="0" name="run-tests" skipped="2" tests="2">
+    <testcase name="test-success.t" time="*"/> (glob)
+  </testsuite>
+
+Missing skips or blacklisted skips don't count as executed:
+  $ echo test-failure.t > blacklist
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` --blacklist=blacklist \
+  >   test-failure.t test-bogus.t
+  ss
+  Skipped test-bogus.t: Doesn't exist
+  Skipped test-failure.t: blacklisted
+  # Ran 0 tests, 2 skipped, 0 warned, 0 failed.
+
+test for --json
+==================
+
+  $ $TESTDIR/run-tests.py --with-hg=`which hg` --json
+  
+  --- $TESTTMP/test-failure.t
+  +++ $TESTTMP/test-failure.t.err
+  @@ -1,4 +1,4 @@
+     $ echo babar
+  -  rataxes
+  +  babar
+   This is a noop statement so that
+   this test is still more bytes than success.
+  
+  ERROR: test-failure.t output changed
+  !.s
+  Skipped test-skip.t: skipped
+  Failed test-failure.t: output changed
+  # Ran 2 tests, 1 skipped, 0 warned, 1 failed.
+  python hash seed: * (glob)
+  [1]
+
+  $ cat report.json
+  testreport ={
+      "test-failure.t": [\{] (re)
+          "csys": "\s*[\d\.]{5}",  (re)
+          "cuser": "\s*[\d\.]{5}",  (re)
+          "result": "failure", 
+          "time": "\s*[\d\.]{5}" (re)
+      }, 
+      "test-skip.t": {
+          "csys": "\s*[\d\.]{5}",  (re)
+          "cuser": "\s*[\d\.]{5}",  (re)
+          "result": "skip", 
+          "time": "\s*[\d\.]{5}" (re)
+      }, 
+      "test-success.t": [\{] (re)
+          "csys": "\s*[\d\.]{5}",  (re)
+          "cuser": "\s*[\d\.]{5}",  (re)
+          "result": "success", 
+          "time": "\s*[\d\.]{5}" (re)
+      }
+  } (no-eol)

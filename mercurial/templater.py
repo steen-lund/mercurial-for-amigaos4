@@ -8,6 +8,7 @@
 from i18n import _
 import sys, os, re
 import util, config, templatefilters, templatekw, parser, error
+import revset as revsetmod
 import types
 import minirst
 
@@ -224,6 +225,23 @@ def date(context, mapping, args):
         return util.datestr(date, fmt)
     return util.datestr(date)
 
+def diff(context, mapping, args):
+    if len(args) > 2:
+        # i18n: "diff" is a keyword
+        raise error.ParseError(_("diff expects one, two or no arguments"))
+
+    def getpatterns(i):
+        if i < len(args):
+            s = args[i][1].strip()
+            if s:
+                return [s]
+        return []
+
+    ctx = mapping['ctx']
+    chunks = ctx.diff(match=ctx.match([], getpatterns(0), getpatterns(1)))
+
+    return ''.join(chunks)
+
 def fill(context, mapping, args):
     if not (1 <= len(args) <= 4):
         raise error.ParseError(_("fill expects one to four arguments"))
@@ -370,16 +388,20 @@ def revset(context, mapping, args):
     ctx = mapping['ctx']
     repo = ctx._repo
 
+    def query(expr):
+        m = revsetmod.match(repo.ui, expr)
+        return m(repo, revsetmod.spanset(repo))
+
     if len(args) > 1:
         formatargs = list([a[0](context, mapping, a[1]) for a in args[1:]])
-        revs = repo.revs(raw, *formatargs)
+        revs = query(revsetmod.formatspec(raw, *formatargs))
         revs = list([str(r) for r in revs])
     else:
         revsetcache = mapping['cache'].setdefault("revsetcache", {})
         if raw in revsetcache:
             revs = revsetcache[raw]
         else:
-            revs = repo.revs(raw)
+            revs = query(raw)
             revs = list([str(r) for r in revs])
             revsetcache[raw] = revs
 
@@ -511,6 +533,7 @@ methods = {
 
 funcs = {
     "date": date,
+    "diff": diff,
     "fill": fill,
     "get": get,
     "if": if_,

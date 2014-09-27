@@ -180,10 +180,6 @@ class localrepository(object):
     requirements = ['revlogv1']
     filtername = None
 
-    bundle2caps = {'HG2X': (),
-                   'b2x:listkeys': (),
-                   'b2x:pushkey': ()}
-
     # a list of (ui, featureset) functions.
     # only functions defined in module of enabled extensions are invoked
     featuresetupfuncs = set()
@@ -309,7 +305,7 @@ class localrepository(object):
         # required by the tests (or some brave tester)
         if self.ui.configbool('experimental', 'bundle2-exp', False):
             caps = set(caps)
-            capsblob = bundle2.encodecaps(self.bundle2caps)
+            capsblob = bundle2.encodecaps(bundle2.getrepocaps(self))
             caps.add('bundle2-exp=' + urllib.quote(capsblob))
         return caps
 
@@ -674,8 +670,7 @@ class localrepository(object):
         if not self._tagscache.tagslist:
             l = []
             for t, n in self.tags().iteritems():
-                r = self.changelog.rev(n)
-                l.append((r, t, n))
+                l.append((self.changelog.rev(n), t, n))
             self._tagscache.tagslist = [(t, n) for r, t, n in sorted(l)]
 
         return self._tagscache.tagslist
@@ -744,11 +739,11 @@ class localrepository(object):
         # if publishing we can't copy if there is filtered content
         return not self.filtered('visible').changelog.filteredrevs
 
-    def join(self, f):
-        return os.path.join(self.path, f)
+    def join(self, f, *insidef):
+        return os.path.join(self.path, f, *insidef)
 
-    def wjoin(self, f):
-        return os.path.join(self.root, f)
+    def wjoin(self, f, *insidef):
+        return os.path.join(self.root, f, *insidef)
 
     def file(self, f):
         if f[0] == '/':
@@ -763,6 +758,7 @@ class localrepository(object):
         return self[changeid].parents()
 
     def setparents(self, p1, p2=nullid):
+        self.dirstate.beginparentchange()
         copies = self.dirstate.setparents(p1, p2)
         pctx = self[p1]
         if copies:
@@ -776,6 +772,7 @@ class localrepository(object):
             for f, s in sorted(self.dirstate.copies().items()):
                 if f not in pctx and s not in pctx:
                     self.dirstate.copy(None, f)
+        self.dirstate.endparentchange()
 
     def filectx(self, path, changeid=None, fileid=None):
         """changeid can be a changeset revision, node, or tag.
@@ -1087,8 +1084,6 @@ class localrepository(object):
             return l
 
         def unlock():
-            if hasunfilteredcache(self, '_phasecache'):
-                self._phasecache.write()
             for k, ce in self._filecache.items():
                 if k == 'dirstate' or k not in self.__dict__:
                     continue
@@ -1109,7 +1104,11 @@ class localrepository(object):
             return l
 
         def unlock():
-            self.dirstate.write()
+            if self.dirstate.pendingparentchange():
+                self.dirstate.invalidate()
+            else:
+                self.dirstate.write()
+
             self._filecache['dirstate'].refresh()
 
         l = self._lock(self.vfs, "wlock", wait, unlock,
@@ -1394,9 +1393,12 @@ class localrepository(object):
                     self.ui.note(f + "\n")
                     try:
                         fctx = ctx[f]
-                        new[f] = self._filecommit(fctx, m1, m2, linkrev, trp,
-                                                  changed)
-                        m1.set(f, fctx.flags())
+                        if fctx is None:
+                            removed.append(f)
+                        else:
+                            new[f] = self._filecommit(fctx, m1, m2, linkrev,
+                                                      trp, changed)
+                            m1.set(f, fctx.flags())
                     except OSError, inst:
                         self.ui.warn(_("trouble committing %s!\n") % f)
                         raise
@@ -1404,9 +1406,7 @@ class localrepository(object):
                         errcode = getattr(inst, 'errno', errno.ENOENT)
                         if error or errcode and errcode != errno.ENOENT:
                             self.ui.warn(_("trouble committing %s!\n") % f)
-                            raise
-                        else:
-                            removed.append(f)
+                        raise
 
                 # update manifest
                 m1.update(new)
@@ -1439,7 +1439,7 @@ class localrepository(object):
                 # be compliant anyway
                 #
                 # if minimal phase was 0 we don't need to retract anything
-                phases.retractboundary(self, targetphase, [n])
+                phases.retractboundary(self, tr, targetphase, [n])
             tr.close()
             branchmap.updatecache(self.filtered('served'))
             return n

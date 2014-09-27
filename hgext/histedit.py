@@ -36,6 +36,7 @@ file open in your editor::
  #  p, pick = use commit
  #  e, edit = use commit, but stop for amending
  #  f, fold = use commit, but combine it with the one above
+ #  r, roll = like fold, but discard this commit's description
  #  d, drop = remove commit from history
  #  m, mess = edit message without changing commit content
  #
@@ -57,6 +58,7 @@ would reorganize the file to look like this::
  #  p, pick = use commit
  #  e, edit = use commit, but stop for amending
  #  f, fold = use commit, but combine it with the one above
+ #  r, roll = like fold, but discard this commit's description
  #  d, drop = remove commit from history
  #  m, mess = edit message without changing commit content
  #
@@ -180,6 +182,7 @@ editcomment = _("""# Edit history between %s and %s
 #  p, pick = use commit
 #  e, edit = use commit, but stop for amending
 #  f, fold = use commit, but combine it with the one above
+#  r, roll = like fold, but discard this commit's description
 #  d, drop = remove commit from history
 #  m, mess = edit message without changing commit content
 #
@@ -209,8 +212,6 @@ def commitfuncfor(repo, src):
             repo.ui.restoreconfig(phasebackup)
     return commitfunc
 
-
-
 def applychanges(ui, repo, ctx, opts):
     """Merge changeset from ctx (only) in the current working directory"""
     wcpar = repo.dirstate.parents()[0]
@@ -220,6 +221,7 @@ def applychanges(ui, repo, ctx, opts):
         cmdutil.revert(ui, repo, ctx, (wcpar, node.nullid), all=True)
         stats = None
     else:
+        repo.dirstate.beginparentchange()
         try:
             # ui.forcemerge is an internal variable, do not document
             repo.ui.setconfig('ui', 'forcemerge', opts.get('tool', ''),
@@ -229,6 +231,7 @@ def applychanges(ui, repo, ctx, opts):
         finally:
             repo.ui.setconfig('ui', 'forcemerge', '', 'histedit')
         repo.setparents(wcpar, node.nullid)
+        repo.dirstate.endparentchange()
         repo.dirstate.write()
         # fix up dirstate for copies and renames
     cmdutil.duplicatecopies(repo, ctx.rev(), ctx.p1().rev())
@@ -283,7 +286,7 @@ def collapse(repo, first, last, commitopts):
                                       isexec='x' in flags,
                                       copied=copied.get(path))
             return mctx
-        raise IOError()
+        return None
 
     if commitopts.get('message'):
         message = commitopts['message']
@@ -294,6 +297,9 @@ def collapse(repo, first, last, commitopts):
     extra = commitopts.get('extra')
 
     parents = (first.p1().node(), first.p2().node())
+    editor = None
+    if not commitopts.get('rollup'):
+        editor = cmdutil.getcommiteditor(edit=True, editform='histedit.fold')
     new = context.memctx(repo,
                          parents=parents,
                          text=message,
@@ -302,7 +308,7 @@ def collapse(repo, first, last, commitopts):
                          user=user,
                          date=date,
                          extra=extra,
-                         editor=cmdutil.getcommiteditor(edit=True))
+                         editor=editor)
     return repo.commitctx(new)
 
 def pick(ui, repo, ctx, ha, opts):
@@ -335,6 +341,11 @@ def edit(ui, repo, ctx, ha, opts):
         _('Make changes as needed, you may commit or record as needed now.\n'
           'When you are finished, run hg histedit --continue to resume.'))
 
+def rollup(ui, repo, ctx, ha, opts):
+    rollupopts = opts.copy()
+    rollupopts['rollup'] = True
+    return fold(ui, repo, ctx, ha, rollupopts)
+
 def fold(ui, repo, ctx, ha, opts):
     oldctx = repo[ha]
     hg.update(repo, ctx.node())
@@ -357,10 +368,13 @@ def finishfold(ui, repo, ctx, oldctx, newnode, opts, internalchanges):
     commitopts = opts.copy()
     commitopts['user'] = ctx.user()
     # commit message
-    newmessage = '\n***\n'.join(
-        [ctx.description()] +
-        [repo[r].description() for r in internalchanges] +
-        [oldctx.description()]) + '\n'
+    if opts.get('rollup'):
+        newmessage = ctx.description()
+    else:
+        newmessage = '\n***\n'.join(
+            [ctx.description()] +
+            [repo[r].description() for r in internalchanges] +
+            [oldctx.description()]) + '\n'
     commitopts['message'] = newmessage
     # date
     commitopts['date'] = max(ctx.date(), oldctx.date())
@@ -401,9 +415,10 @@ def message(ui, repo, ctx, ha, opts):
             _('Fix up the change and run hg histedit --continue'))
     message = oldctx.description()
     commit = commitfuncfor(repo, oldctx)
+    editor = cmdutil.getcommiteditor(edit=True, editform='histedit.mess')
     new = commit(text=message, user=oldctx.user(), date=oldctx.date(),
                  extra=oldctx.extra(),
-                 editor=cmdutil.getcommiteditor(edit=True))
+                 editor=editor)
     newctx = repo[new]
     if oldctx.node() != newctx.node():
         return newctx, [(oldctx.node(), (new,))]
@@ -440,6 +455,8 @@ actiontable = {'p': pick,
                'edit': edit,
                'f': fold,
                'fold': fold,
+               'r': rollup,
+               'roll': rollup,
                'd': drop,
                'drop': drop,
                'm': message,
@@ -596,11 +613,10 @@ def _histedit(ui, repo, *freeargs, **opts):
             rules = f.read()
             f.close()
         rules = [l for l in (r.strip() for r in rules.splitlines())
-                 if l and not l[0] == '#']
+                 if l and not l.startswith('#')]
         rules = verifyrules(rules, repo, ctxs)
 
         parentctx = repo[root].parents()[0]
-        keep = opts.get('keep', False)
         replacements = []
 
 
@@ -675,12 +691,14 @@ def bootstrapcontinue(ui, repo, parentctx, rules, opts):
     m, a, r, d = repo.status()[:4]
     if m or a or r or d:
         # prepare the message for the commit to comes
-        if action in ('f', 'fold'):
+        if action in ('f', 'fold', 'r', 'roll'):
             message = 'fold-temp-revision %s' % currentnode
         else:
             message = ctx.description()
         editopt = action in ('e', 'edit', 'm', 'mess')
-        editor = cmdutil.getcommiteditor(edit=editopt)
+        canonaction = {'e': 'edit', 'm': 'mess', 'p': 'pick'}
+        editform = 'histedit.%s' % canonaction.get(action, action)
+        editor = cmdutil.getcommiteditor(edit=editopt, editform=editform)
         commit = commitfuncfor(repo, ctx)
         new = commit(text=message, user=ctx.user(),
                      date=ctx.date(), extra=ctx.extra(),
@@ -696,15 +714,19 @@ def bootstrapcontinue(ui, repo, parentctx, rules, opts):
         # to parent.
         replacements.append((ctx.node(), tuple(newchildren)))
 
-    if action in ('f', 'fold'):
+    if action in ('f', 'fold', 'r', 'roll'):
         if newchildren:
             # finalize fold operation if applicable
             if new is None:
                 new = newchildren[-1]
             else:
                 newchildren.pop()  # remove new from internal changes
-            parentctx, repl = finishfold(ui, repo, parentctx, ctx, new, opts,
-                                         newchildren)
+            foldopts = opts
+            if action in ('r', 'roll'):
+                foldopts = foldopts.copy()
+                foldopts['rollup'] = True
+            parentctx, repl = finishfold(ui, repo, parentctx, ctx, new,
+                                         foldopts, newchildren)
             replacements.extend(repl)
         else:
             # newchildren is empty if the fold did not result in any commit
@@ -729,7 +751,7 @@ def between(repo, old, new, keep):
         if repo.revs('(%ld) and merge()', ctxs):
             raise util.Abort(_('cannot edit history that contains merges'))
         root = ctxs[0] # list is already sorted by repo.set
-        if not root.phase():
+        if not root.mutable():
             raise util.Abort(_('cannot edit immutable changeset: %s') % root)
     return [c.node() for c in ctxs]
 

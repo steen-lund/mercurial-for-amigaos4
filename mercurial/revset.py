@@ -78,7 +78,7 @@ def _revsbetween(repo, roots, heads):
     if not roots:
         return baseset([])
     parentrevs = repo.changelog.parentrevs
-    visit = baseset(heads)
+    visit = list(heads)
     reachable = set()
     seen = {}
     minroot = min(roots)
@@ -376,7 +376,7 @@ def ancestorspec(repo, subset, x, n):
         for i in range(n):
             r = cl.parentrevs(r)[0]
         ps.add(r)
-    return subset.filter(ps.__contains__)
+    return subset & ps
 
 def author(repo, subset, x):
     """``author(string)``
@@ -426,7 +426,7 @@ def bisect(repo, subset, x):
     # i18n: "bisect" is a keyword
     status = getstring(x, _("bisect requires a string")).lower()
     state = set(hbisect.get(repo, status))
-    return subset.filter(state.__contains__)
+    return subset & state
 
 # Backward-compatibility
 # - no help entry so that we do not advertise it any more
@@ -448,12 +448,12 @@ def bookmark(repo, subset, x):
                        # i18n: "bookmark" is a keyword
                        _('the argument to bookmark must be a string'))
         kind, pattern, matcher = _stringmatcher(bm)
+        bms = set()
         if kind == 'literal':
             bmrev = repo._bookmarks.get(pattern, None)
             if not bmrev:
                 raise util.Abort(_("bookmark '%s' does not exist") % bm)
-            bmrev = repo[bmrev].rev()
-            return subset.filter(lambda r: r == bmrev)
+            bms.add(repo[bmrev].rev())
         else:
             matchrevs = set()
             for name, bmrev in repo._bookmarks.iteritems():
@@ -462,14 +462,13 @@ def bookmark(repo, subset, x):
             if not matchrevs:
                 raise util.Abort(_("no bookmarks exist that match '%s'")
                                  % pattern)
-            bmrevs = set()
             for bmrev in matchrevs:
-                bmrevs.add(repo[bmrev].rev())
-            return subset & bmrevs
-
-    bms = set([repo[r].rev()
-               for r in repo._bookmarks.values()])
-    return subset.filter(bms.__contains__)
+                bms.add(repo[bmrev].rev())
+    else:
+        bms = set([repo[r].rev()
+                   for r in repo._bookmarks.values()])
+    bms -= set([node.nullrev])
+    return subset & bms
 
 def branch(repo, subset, x):
     """``branch(string or set)``
@@ -666,10 +665,8 @@ def _descendants(repo, subset, x, followfirst=False):
     # Both sets need to be ascending in order to lazily return the union
     # in the correct order.
     args.ascending()
-
-    subsetset = subset.set()
-    result = (orderedlazyset(s, subsetset.__contains__, ascending=True) +
-              orderedlazyset(args, subsetset.__contains__, ascending=True))
+    result = (orderedlazyset(s, subset.__contains__, ascending=True) +
+              orderedlazyset(args, subset.__contains__, ascending=True))
 
     # Wrap result in a lazyset since it's an _addset, which doesn't implement
     # all the necessary functions to be consumed by callers.
@@ -737,7 +734,7 @@ def divergent(repo, subset, x):
     # i18n: "divergent" is a keyword
     getargs(x, 0, 0, _("divergent takes no arguments"))
     divergent = obsmod.getrevs(repo, 'divergent')
-    return subset.filter(divergent.__contains__)
+    return subset & divergent
 
 def draft(repo, subset, x):
     """``draft()``
@@ -814,7 +811,7 @@ def filelog(repo, subset, x):
                 for fr in fl:
                     s.add(fl.linkrev(fr))
 
-    return subset.filter(s.__contains__)
+    return subset & s
 
 def first(repo, subset, x):
     """``first(set, [n])``
@@ -837,7 +834,7 @@ def _follow(repo, subset, x, name, followfirst=False):
     else:
         s = _revancestors(repo, baseset([c.rev()]), followfirst)
 
-    return subset.filter(s.__contains__)
+    return subset & s
 
 def follow(repo, subset, x):
     """``follow([file])``
@@ -1169,7 +1166,8 @@ def origin(repo, subset, x):
             src = prev
 
     o = set([_firstsrc(r) for r in args])
-    return subset.filter(o.__contains__)
+    o -= set([None])
+    return subset & o
 
 def outgoing(repo, subset, x):
     """``outgoing([path])``
@@ -1192,7 +1190,7 @@ def outgoing(repo, subset, x):
     repo.ui.popbuffer()
     cl = repo.changelog
     o = set([cl.rev(r) for r in outgoing.missing])
-    return subset.filter(o.__contains__)
+    return subset & o
 
 def p1(repo, subset, x):
     """``p1([set])``
@@ -1200,12 +1198,15 @@ def p1(repo, subset, x):
     """
     if x is None:
         p = repo[x].p1().rev()
-        return subset.filter(lambda r: r == p)
+        if p >= 0:
+            return subset & baseset([p])
+        return baseset([])
 
     ps = set()
     cl = repo.changelog
     for r in getset(repo, spanset(repo), x):
         ps.add(cl.parentrevs(r)[0])
+    ps -= set([node.nullrev])
     return subset & ps
 
 def p2(repo, subset, x):
@@ -1216,7 +1217,9 @@ def p2(repo, subset, x):
         ps = repo[x].parents()
         try:
             p = ps[1].rev()
-            return subset.filter(lambda r: r == p)
+            if p >= 0:
+                return subset & baseset([p])
+            return baseset([])
         except IndexError:
             return baseset([])
 
@@ -1224,6 +1227,7 @@ def p2(repo, subset, x):
     cl = repo.changelog
     for r in getset(repo, spanset(repo), x):
         ps.add(cl.parentrevs(r)[1])
+    ps -= set([node.nullrev])
     return subset & ps
 
 def parents(repo, subset, x):
@@ -1231,14 +1235,14 @@ def parents(repo, subset, x):
     The set of all parents for all changesets in set, or the working directory.
     """
     if x is None:
-        ps = tuple(p.rev() for p in repo[x].parents())
-        return subset & ps
-
-    ps = set()
-    cl = repo.changelog
-    for r in getset(repo, spanset(repo), x):
-        ps.update(cl.parentrevs(r))
-    return subset & ps
+        ps = set(p.rev() for p in repo[x].parents())
+    else:
+        ps = set()
+        cl = repo.changelog
+        for r in getset(repo, spanset(repo), x):
+            ps.update(cl.parentrevs(r))
+    ps -= set([node.nullrev])
+    return baseset(ps) & subset
 
 def parentspec(repo, subset, x, n):
     """``set^0``
@@ -1346,7 +1350,7 @@ def rev(repo, subset, x):
     except (TypeError, ValueError):
         # i18n: "rev" is a keyword
         raise error.ParseError(_("rev expects a number"))
-    return subset.filter(lambda r: r == l)
+    return subset & baseset([l])
 
 def matching(repo, subset, x):
     """``matching(revision [, field])``
@@ -1913,7 +1917,7 @@ def optimize(x, small):
             w = 100 # very slow
         elif f == "ancestor":
             w = 1 * smallbonus
-        elif f in "reverse limit first":
+        elif f in "reverse limit first _intlist":
             w = 0
         elif f in "sort":
             w = 10 # assume most sorts look at changelog
@@ -2342,7 +2346,8 @@ class lazyset(object):
     def __contains__(self, x):
         c = self._cache
         if x not in c:
-            c[x] = x in self._subset and self._condition(x)
+            v = c[x] = x in self._subset and self._condition(x)
+            return v
         return c[x]
 
     def __iter__(self):
@@ -2654,6 +2659,12 @@ class _generatorset(object):
                 yield x
             return
 
+        # We have to use this complex iteration strategy to allow multiple
+        # iterations at the same time. We need to be able to catch revision
+        # removed from `consumegen` and added to genlist in another instance.
+        #
+        # Getting rid of it would provide an about 15% speed up on this
+        # iteration.
         i = 0
         genlist = self._genlist
         consume = self._consumegen()
@@ -2665,9 +2676,11 @@ class _generatorset(object):
             i += 1
 
     def _consumegen(self):
+        cache = self._cache
+        genlist = self._genlist.append
         for item in self._gen:
-            self._cache[item] = True
-            self._genlist.append(item)
+            cache[item] = True
+            genlist(item)
             yield item
         self._finished = True
 
@@ -2726,7 +2739,18 @@ class _descgeneratorset(_generatorset):
         self._cache[x] = False
         return False
 
-class spanset(_orderedsetmixin):
+def spanset(repo, start=None, end=None):
+    """factory function to dispatch between fullreposet and actual spanset
+
+    Feel free to update all spanset call sites and kill this function at some
+    point.
+    """
+    if start is None and end is None:
+        return fullreposet(repo)
+    return _spanset(repo, start, end)
+
+
+class _spanset(_orderedsetmixin):
     """Duck type for baseset class which represents a range of revisions and
     can work lazily and without having all the range in memory
 
@@ -2753,15 +2777,15 @@ class spanset(_orderedsetmixin):
         self._hiddenrevs = repo.changelog.filteredrevs
 
     def ascending(self):
-        if self._start > self._end:
+        if not self.isascending():
             self.reverse()
 
     def descending(self):
-        if self._start < self._end:
+        if not self.isdescending():
             self.reverse()
 
     def __iter__(self):
-        if self._start <= self._end:
+        if self.isascending():
             iterrange = xrange(self._start, self._end)
         else:
             iterrange = xrange(self._start, self._end, -1)
@@ -2776,9 +2800,11 @@ class spanset(_orderedsetmixin):
                 yield r
 
     def __contains__(self, rev):
-        return (((self._end < rev <= self._start)
-                  or (self._start <= rev < self._end))
-                and not (self._hiddenrevs and rev in self._hiddenrevs))
+        start = self._start
+        end = self._end
+        hidden = self._hiddenrevs
+        return (((end < rev <= start) or (start <= rev and rev < end))
+                and not (hidden and rev in hidden))
 
     def __nonzero__(self):
         for r in self:
@@ -2788,18 +2814,14 @@ class spanset(_orderedsetmixin):
     def __and__(self, x):
         if isinstance(x, baseset):
             x = x.set()
-        if self._start <= self._end:
-            return orderedlazyset(self, x.__contains__)
-        else:
-            return orderedlazyset(self, x.__contains__, ascending=False)
+        return orderedlazyset(self, x.__contains__,
+                              ascending=self.isascending())
 
     def __sub__(self, x):
         if isinstance(x, baseset):
             x = x.set()
-        if self._start <= self._end:
-            return orderedlazyset(self, lambda r: r not in x)
-        else:
-            return orderedlazyset(self, lambda r: r not in x, ascending=False)
+        return orderedlazyset(self, lambda r: r not in x,
+                              ascending=self.isascending())
 
     def __add__(self, x):
         kwargs = {}
@@ -2832,7 +2854,7 @@ class spanset(_orderedsetmixin):
 
     def reverse(self):
         # Just switch the _start and _end parameters
-        if self._start <= self._end:
+        if self.isascending():
             self._start, self._end = self._end - 1, self._start - 1
         else:
             self._start, self._end = self._end + 1, self._start + 1
@@ -2841,16 +2863,53 @@ class spanset(_orderedsetmixin):
         return self
 
     def isascending(self):
-        return self._start < self._end
+        return self._start <= self._end
 
     def isdescending(self):
-        return self._start > self._end
+        return self._start >= self._end
 
     def filter(self, l):
-        if self._start <= self._end:
-            return orderedlazyset(self, l)
+        return orderedlazyset(self, l, ascending=self.isascending())
+
+class fullreposet(_spanset):
+    """a set containing all revisions in the repo
+
+    This class exists to host special optimisation.
+    """
+
+    def __init__(self, repo):
+        super(fullreposet, self).__init__(repo)
+
+    def __and__(self, other):
+        """fullrepo & other -> other
+
+        As self contains the whole repo, all of the other set should also be in
+        self. Therefor `self & other = other`.
+
+        This boldly assumes the other contains valid revs only.
+        """
+        # other not a smartset, make is so
+        if not util.safehasattr(other, 'set'):
+            # filter out hidden revision
+            # (this boldly assumes all smartset are pure)
+            #
+            # `other` was used with "&", let's assume this is a set like
+            # object.
+            other = baseset(other - self._hiddenrevs)
+        elif not util.safehasattr(other, 'ascending'):
+            # "other" is _generatorset not a real smart set
+            # we fallback to the old way (sad kitten)
+            return super(fullreposet, self).__and__(other)
+
+        # preserve order:
+        #
+        # this is probably useless and harmful in multiple cases but matches
+        # the current behavior.
+        if self.isascending():
+            other.ascending()
         else:
-            return orderedlazyset(self, l, ascending=False)
+            other.descending()
+        return other
 
 # tell hggettext to extract docstrings from these functions:
 i18nfunctions = symbols.values()

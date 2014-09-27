@@ -10,7 +10,7 @@ import struct
 from node import nullid, nullrev, hex, bin
 from i18n import _
 from mercurial import obsolete
-import error, util, filemerge, copies, subrepo, worker, dicthelpers
+import error as errormod, util, filemerge, copies, subrepo, worker, dicthelpers
 import errno, os, shutil
 
 _pack = struct.pack
@@ -1011,7 +1011,7 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
             # but currently we are only checking the branch tips.
             try:
                 node = repo.branchtip(wc.branch())
-            except error.RepoLookupError:
+            except errormod.RepoLookupError:
                 if wc.branch() == "default": # no default branch!
                     node = repo.lookup("tip") # update to tip
                 else:
@@ -1134,6 +1134,7 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
         stats = applyupdates(repo, actions, wc, p2, overwrite, labels=labels)
 
         if not partial:
+            repo.dirstate.beginparentchange()
             repo.setparents(fp1, fp2)
             recordupdates(repo, actions, branchmerge)
             # update completed, clear state
@@ -1141,6 +1142,7 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
 
             if not branchmerge:
                 repo.dirstate.setbranch(p2.branch())
+            repo.dirstate.endparentchange()
     finally:
         wlock.release()
 

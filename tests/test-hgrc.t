@@ -28,6 +28,14 @@ Issue1199: Can't use '%' in hgrc (eg url encoded username)
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ cd foobar
   $ cat .hg/hgrc
+  # You may want to set your username here if it is not set
+  # globally, or this repository requires a different
+  # username from your usual configuration. If you want to
+  # set something for all of your repositories on this
+  # computer, try running the command
+  # 'hg config --edit --global'
+  # [ui]
+  # username = Jane Doe <jdoe@example.com>
   [paths]
   default = $TESTTMP/foo%bar (glob)
   $ hg paths
@@ -43,6 +51,7 @@ issue1829: wrong indentation
   $ echo '  x = y' >> $HGRC
   $ hg version
   hg: parse error at $TESTTMP/hgrc:2:   x = y
+  unexpected leading whitespace
   [255]
 
   $ python -c "print '[foo]\nbar = a\n b\n c \n  de\n fg \nbaz = bif cb \n'" \

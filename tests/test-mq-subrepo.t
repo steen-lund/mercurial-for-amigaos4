@@ -419,9 +419,9 @@ both into 'revision' and 'patch file under .hg/patches':
   +b6f6e9c41f3dfd374a6d2ed4535c87951cf979cf sub
   $ cat .hg/patches/import-at-qnew
   # HG changeset patch
-  # Parent f499373e340cdca5d01dee904aeb42dd2a325e71
   # User test
   # Date 0 0
+  # Parent  f499373e340cdca5d01dee904aeb42dd2a325e71
   
   diff -r f499373e340c -r f69e96d86e75 .hgsub
   --- /dev/null
@@ -482,9 +482,9 @@ check whether qrefresh imports updated .hgsubstate correctly
   +88ac1bef5ed43b689d1d200b59886b675dec474b sub
   $ cat .hg/patches/import-at-qrefresh
   # HG changeset patch
-  # Date 0 0
   # User test
-  # Parent 05b056bb9c8c05ff15258b84fd42ab3527271033
+  # Date 0 0
+  # Parent  05b056bb9c8c05ff15258b84fd42ab3527271033
   
   diff -r 05b056bb9c8c .hgsubstate
   --- a/.hgsubstate
@@ -507,9 +507,9 @@ check whether qrefresh imports updated .hgsubstate correctly
   +88ac1bef5ed43b689d1d200b59886b675dec474b sub
   $ cat .hg/patches/import-at-qrefresh
   # HG changeset patch
-  # Date 0 0
   # User test
-  # Parent 05b056bb9c8c05ff15258b84fd42ab3527271033
+  # Date 0 0
+  # Parent  05b056bb9c8c05ff15258b84fd42ab3527271033
   
   diff -r 05b056bb9c8c .hgsubstate
   --- a/.hgsubstate
@@ -554,9 +554,9 @@ check whether qrefresh imports updated .hgsubstate correctly
   +88ac1bef5ed43b689d1d200b59886b675dec474b sub
   $ cat .hg/patches/checkstate-at-qnew
   # HG changeset patch
-  # Parent 4d91eb2fa1d1b22ec513347b9cd06f6b49d470fa
   # User test
   # Date 0 0
+  # Parent  4d91eb2fa1d1b22ec513347b9cd06f6b49d470fa
   
   diff -r 4d91eb2fa1d1 -r 1259c112d884 .hgsubstate
   --- a/.hgsubstate
