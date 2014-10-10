@@ -6,7 +6,7 @@
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
-import os
+import os, sys
 
 from mercurial import util
 from mercurial.i18n import _
@@ -89,19 +89,28 @@ def _verifycert(cert, hostname):
 # busted on those versions.
 
 def sslkwargs(ui, host):
-    cacerts = ui.config('web', 'cacerts')
     forcetls = ui.configbool('ui', 'tls', default=True)
     if forcetls:
         ssl_version = PROTOCOL_TLSv1
     else:
         ssl_version = PROTOCOL_SSLv23
-    hostfingerprint = ui.config('hostfingerprints', host)
     kws = {'ssl_version': ssl_version,
            }
-    if cacerts and not hostfingerprint:
+    hostfingerprint = ui.config('hostfingerprints', host)
+    if hostfingerprint:
+        return kws
+    cacerts = ui.config('web', 'cacerts')
+    if cacerts:
         cacerts = util.expandpath(cacerts)
         if not os.path.exists(cacerts):
             raise util.Abort(_('could not find web.cacerts: %s') % cacerts)
+    elif cacerts is None and sys.platform == 'darwin' and not util.mainfrozen():
+        dummycert = os.path.join(os.path.dirname(__file__), 'dummycert.pem')
+        if os.path.exists(dummycert):
+            ui.debug('using %s to enable OS X system CA\n' % dummycert)
+            ui.setconfig('web', 'cacerts', dummycert, 'dummy')
+            cacerts = dummycert
+    if cacerts:
         kws.update({'ca_certs': cacerts,
                     'cert_reqs': CERT_REQUIRED,
                     })

@@ -1,4 +1,4 @@
-  $ "$TESTDIR/hghave" serve || exit 80
+#require serve
 
   $ cat << EOF >> $HGRCPATH
   > [ui]
@@ -61,7 +61,6 @@ import bookmark by name
   $ hg pull -B X ../a
   pulling from ../a
   no changes found
-  importing bookmark X
   $ hg bookmark
      X                         0:4e3505fd9583
    * Y                         0:4e3505fd9583
@@ -99,8 +98,8 @@ push/pull name that doesn't exist
   $ hg push -B badname ../a
   pushing to ../a
   searching for changes
-  no changes found
   bookmark badname does not exist on the local or remote repository!
+  no changes found
   [2]
   $ hg pull -B anotherbadname ../a
   pulling from ../a
@@ -356,7 +355,7 @@ hgweb
   pushing to http://localhost:$HGPORT/
   searching for changes
   no changes found
-  exporting bookmark Z
+  updating bookmark Z
   [1]
   $ hg book -d Z
   $ hg in -B http://localhost:$HGPORT/
@@ -373,7 +372,6 @@ hgweb
   adding remote bookmark Z
   adding remote bookmark foo
   adding remote bookmark foobar
-  importing bookmark Z
   $ hg clone http://localhost:$HGPORT/ cloned-bookmarks
   requesting all changes
   adding changesets

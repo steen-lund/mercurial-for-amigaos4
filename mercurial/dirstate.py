@@ -44,6 +44,30 @@ class dirstate(object):
         self._lastnormaltime = 0
         self._ui = ui
         self._filecache = {}
+        self._parentwriters = 0
+
+    def beginparentchange(self):
+        '''Marks the beginning of a set of changes that involve changing
+        the dirstate parents. If there is an exception during this time,
+        the dirstate will not be written when the wlock is released. This
+        prevents writing an incoherent dirstate where the parent doesn't
+        match the contents.
+        '''
+        self._parentwriters += 1
+
+    def endparentchange(self):
+        '''Marks the end of a set of changes that involve changing the
+        dirstate parents. Once all parent changes have been marked done,
+        the wlock will be free to write the dirstate on release.
+        '''
+        if self._parentwriters > 0:
+            self._parentwriters -= 1
+
+    def pendingparentchange(self):
+        '''Returns true if the dirstate is in the middle of a set of changes
+        that modify the dirstate parent.
+        '''
+        return self._parentwriters > 0
 
     @propertycache
     def _map(self):
@@ -60,11 +84,12 @@ class dirstate(object):
     @propertycache
     def _foldmap(self):
         f = {}
+        normcase = util.normcase
         for name, s in self._map.iteritems():
             if s[0] != 'r':
-                f[util.normcase(name)] = name
+                f[normcase(name)] = name
         for name in self._dirs:
-            f[util.normcase(name)] = name
+            f[normcase(name)] = name
         f['.'] = '.' # prevents useless util.fspath() invocation
         return f
 
@@ -232,6 +257,10 @@ class dirstate(object):
 
         See localrepo.setparents()
         """
+        if self._parentwriters == 0:
+            raise ValueError("cannot set dirstate parent without "
+                             "calling dirstate.beginparentchange")
+
         self._dirty = self._dirtypl = True
         oldp2 = self._pl[1]
         self._pl = p1, p2
@@ -300,6 +329,7 @@ class dirstate(object):
                 delattr(self, a)
         self._lastnormaltime = 0
         self._dirty = False
+        self._parentwriters = 0
 
     def copy(self, source, dest):
         """Mark dest as a copy of source. Unmark dest if source is None."""
@@ -873,3 +903,21 @@ class dirstate(object):
 
         return (lookup, modified, added, removed, deleted, unknown, ignored,
                 clean)
+
+    def matches(self, match):
+        '''
+        return files in the dirstate (in whatever state) filtered by match
+        '''
+        dmap = self._map
+        if match.always():
+            return dmap.keys()
+        files = match.files()
+        if match.matchfn == match.exact:
+            # fast path -- filter the other way around, since typically files is
+            # much smaller than dmap
+            return [f for f in files if f in dmap]
+        if not match.anypats() and util.all(fn in dmap for fn in files):
+            # fast path -- all the values are known to be files, so just return
+            # that
+            return list(files)
+        return [f for f in dmap if match(f)]

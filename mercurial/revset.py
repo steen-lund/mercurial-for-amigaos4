@@ -26,7 +26,7 @@ def _revancestors(repo, revs, followfirst):
         revqueue, revsnode = None, None
         h = []
 
-        revs.descending()
+        revs.sort(reverse=True)
         revqueue = util.deque(revs)
         if revqueue:
             revsnode = revqueue.popleft()
@@ -46,7 +46,7 @@ def _revancestors(repo, revs, followfirst):
                     if parent != node.nullrev:
                         heapq.heappush(h, -parent)
 
-    return _descgeneratorset(iterate())
+    return generatorset(iterate(), iterasc=False)
 
 def _revdescendants(repo, revs, followfirst):
     """Like revlog.descendants() but supports followfirst."""
@@ -70,15 +70,15 @@ def _revdescendants(repo, revs, followfirst):
                         yield i
                         break
 
-    return _ascgeneratorset(iterate())
+    return generatorset(iterate(), iterasc=True)
 
 def _revsbetween(repo, roots, heads):
     """Return all paths between roots and heads, inclusive of both endpoint
     sets."""
     if not roots:
-        return baseset([])
+        return baseset()
     parentrevs = repo.changelog.parentrevs
-    visit = baseset(heads)
+    visit = list(heads)
     reachable = set()
     seen = {}
     minroot = min(roots)
@@ -95,7 +95,7 @@ def _revsbetween(repo, roots, heads):
             if parent >= minroot and parent not in seen:
                 visit.append(parent)
     if not reachable:
-        return baseset([])
+        return baseset()
     for rev in sorted(seen):
         for parent in seen[rev]:
             if parent in reachable:
@@ -257,7 +257,7 @@ def stringset(repo, subset, x):
         return baseset([-1])
     if len(subset) == len(repo) or x in subset:
         return baseset([x])
-    return baseset([])
+    return baseset()
 
 def symbolset(repo, subset, x):
     if x in symbols:
@@ -270,8 +270,8 @@ def rangeset(repo, subset, x, y):
     n = getset(repo, cl, y)
 
     if not m or not n:
-        return baseset([])
-    m, n = m[0], n[-1]
+        return baseset()
+    m, n = m.first(), n.last()
 
     if m < n:
         r = spanset(repo, m, n + 1)
@@ -341,12 +341,12 @@ def ancestor(repo, subset, x):
 
     if anc is not None and anc.rev() in subset:
         return baseset([anc.rev()])
-    return baseset([])
+    return baseset()
 
 def _ancestors(repo, subset, x, followfirst=False):
     args = getset(repo, spanset(repo), x)
     if not args:
-        return baseset([])
+        return baseset()
     s = _revancestors(repo, args, followfirst)
     return subset.filter(s.__contains__)
 
@@ -376,7 +376,7 @@ def ancestorspec(repo, subset, x, n):
         for i in range(n):
             r = cl.parentrevs(r)[0]
         ps.add(r)
-    return subset.filter(ps.__contains__)
+    return subset & ps
 
 def author(repo, subset, x):
     """``author(string)``
@@ -400,7 +400,7 @@ def only(repo, subset, x):
     include = getset(repo, spanset(repo), args[0]).set()
     if len(args) == 1:
         if len(include) == 0:
-            return baseset([])
+            return baseset()
 
         descendants = set(_revdescendants(repo, include, False))
         exclude = [rev for rev in cl.headrevs()
@@ -409,7 +409,7 @@ def only(repo, subset, x):
         exclude = getset(repo, spanset(repo), args[1])
 
     results = set(ancestormod.missingancestors(include, exclude, cl.parentrevs))
-    return lazyset(subset, results.__contains__)
+    return filteredset(subset, results.__contains__)
 
 def bisect(repo, subset, x):
     """``bisect(string)``
@@ -426,7 +426,7 @@ def bisect(repo, subset, x):
     # i18n: "bisect" is a keyword
     status = getstring(x, _("bisect requires a string")).lower()
     state = set(hbisect.get(repo, status))
-    return subset.filter(state.__contains__)
+    return subset & state
 
 # Backward-compatibility
 # - no help entry so that we do not advertise it any more
@@ -448,12 +448,12 @@ def bookmark(repo, subset, x):
                        # i18n: "bookmark" is a keyword
                        _('the argument to bookmark must be a string'))
         kind, pattern, matcher = _stringmatcher(bm)
+        bms = set()
         if kind == 'literal':
             bmrev = repo._bookmarks.get(pattern, None)
             if not bmrev:
                 raise util.Abort(_("bookmark '%s' does not exist") % bm)
-            bmrev = repo[bmrev].rev()
-            return subset.filter(lambda r: r == bmrev)
+            bms.add(repo[bmrev].rev())
         else:
             matchrevs = set()
             for name, bmrev in repo._bookmarks.iteritems():
@@ -462,14 +462,13 @@ def bookmark(repo, subset, x):
             if not matchrevs:
                 raise util.Abort(_("no bookmarks exist that match '%s'")
                                  % pattern)
-            bmrevs = set()
             for bmrev in matchrevs:
-                bmrevs.add(repo[bmrev].rev())
-            return subset & bmrevs
-
-    bms = set([repo[r].rev()
-               for r in repo._bookmarks.values()])
-    return subset.filter(bms.__contains__)
+                bms.add(repo[bmrev].rev())
+    else:
+        bms = set([repo[r].rev()
+                   for r in repo._bookmarks.values()])
+    bms -= set([node.nullrev])
+    return subset & bms
 
 def branch(repo, subset, x):
     """``branch(string or set)``
@@ -660,20 +659,16 @@ def desc(repo, subset, x):
 def _descendants(repo, subset, x, followfirst=False):
     args = getset(repo, spanset(repo), x)
     if not args:
-        return baseset([])
+        return baseset()
     s = _revdescendants(repo, args, followfirst)
 
     # Both sets need to be ascending in order to lazily return the union
     # in the correct order.
-    args.ascending()
+    args.sort()
+    result = (filteredset(s, subset.__contains__, ascending=True) +
+              filteredset(args, subset.__contains__, ascending=True))
 
-    subsetset = subset.set()
-    result = (orderedlazyset(s, subsetset.__contains__, ascending=True) +
-              orderedlazyset(args, subsetset.__contains__, ascending=True))
-
-    # Wrap result in a lazyset since it's an _addset, which doesn't implement
-    # all the necessary functions to be consumed by callers.
-    return orderedlazyset(result, lambda r: True, ascending=True)
+    return result
 
 def descendants(repo, subset, x):
     """``descendants(set)``
@@ -737,7 +732,7 @@ def divergent(repo, subset, x):
     # i18n: "divergent" is a keyword
     getargs(x, 0, 0, _("divergent takes no arguments"))
     divergent = obsmod.getrevs(repo, 'divergent')
-    return subset.filter(divergent.__contains__)
+    return subset & divergent
 
 def draft(repo, subset, x):
     """``draft()``
@@ -814,7 +809,7 @@ def filelog(repo, subset, x):
                 for fr in fl:
                     s.add(fl.linkrev(fr))
 
-    return subset.filter(s.__contains__)
+    return subset & s
 
 def first(repo, subset, x):
     """``first(set, [n])``
@@ -833,11 +828,11 @@ def _follow(repo, subset, x, name, followfirst=False):
             # include the revision responsible for the most recent version
             s.add(cx.linkrev())
         else:
-            return baseset([])
+            return baseset()
     else:
         s = _revancestors(repo, baseset([c.rev()]), followfirst)
 
-    return subset.filter(s.__contains__)
+    return subset & s
 
 def follow(repo, subset, x):
     """``follow([file])``
@@ -1018,16 +1013,16 @@ def limit(repo, subset, x):
         raise error.ParseError(_("limit expects a number"))
     ss = subset.set()
     os = getset(repo, spanset(repo), l[0])
-    bs = baseset([])
+    result = []
     it = iter(os)
     for x in xrange(lim):
         try:
             y = it.next()
             if y in ss:
-                bs.append(y)
+                result.append(y)
         except (StopIteration):
             break
-    return bs
+    return baseset(result)
 
 def last(repo, subset, x):
     """``last(set, [n])``
@@ -1046,16 +1041,16 @@ def last(repo, subset, x):
     ss = subset.set()
     os = getset(repo, spanset(repo), l[0])
     os.reverse()
-    bs = baseset([])
+    result = []
     it = iter(os)
     for x in xrange(lim):
         try:
             y = it.next()
             if y in ss:
-                bs.append(y)
+                result.append(y)
         except (StopIteration):
             break
-    return bs
+    return baseset(result)
 
 def maxrev(repo, subset, x):
     """``max(set)``
@@ -1066,7 +1061,7 @@ def maxrev(repo, subset, x):
         m = os.max()
         if m in subset:
             return baseset([m])
-    return baseset([])
+    return baseset()
 
 def merge(repo, subset, x):
     """``merge()``
@@ -1085,7 +1080,7 @@ def branchpoint(repo, subset, x):
     getargs(x, 0, 0, _("branchpoint takes no arguments"))
     cl = repo.changelog
     if not subset:
-        return baseset([])
+        return baseset()
     baserev = min(subset)
     parentscount = [0]*(len(repo) - baserev)
     for r in cl.revs(start=baserev + 1):
@@ -1103,7 +1098,7 @@ def minrev(repo, subset, x):
         m = os.min()
         if m in subset:
             return baseset([m])
-    return baseset([])
+    return baseset()
 
 def modifies(repo, subset, x):
     """``modifies(pattern)``
@@ -1169,7 +1164,8 @@ def origin(repo, subset, x):
             src = prev
 
     o = set([_firstsrc(r) for r in args])
-    return subset.filter(o.__contains__)
+    o -= set([None])
+    return subset & o
 
 def outgoing(repo, subset, x):
     """``outgoing([path])``
@@ -1192,7 +1188,7 @@ def outgoing(repo, subset, x):
     repo.ui.popbuffer()
     cl = repo.changelog
     o = set([cl.rev(r) for r in outgoing.missing])
-    return subset.filter(o.__contains__)
+    return subset & o
 
 def p1(repo, subset, x):
     """``p1([set])``
@@ -1200,12 +1196,15 @@ def p1(repo, subset, x):
     """
     if x is None:
         p = repo[x].p1().rev()
-        return subset.filter(lambda r: r == p)
+        if p >= 0:
+            return subset & baseset([p])
+        return baseset()
 
     ps = set()
     cl = repo.changelog
     for r in getset(repo, spanset(repo), x):
         ps.add(cl.parentrevs(r)[0])
+    ps -= set([node.nullrev])
     return subset & ps
 
 def p2(repo, subset, x):
@@ -1216,14 +1215,17 @@ def p2(repo, subset, x):
         ps = repo[x].parents()
         try:
             p = ps[1].rev()
-            return subset.filter(lambda r: r == p)
+            if p >= 0:
+                return subset & baseset([p])
+            return baseset()
         except IndexError:
-            return baseset([])
+            return baseset()
 
     ps = set()
     cl = repo.changelog
     for r in getset(repo, spanset(repo), x):
         ps.add(cl.parentrevs(r)[1])
+    ps -= set([node.nullrev])
     return subset & ps
 
 def parents(repo, subset, x):
@@ -1231,13 +1233,13 @@ def parents(repo, subset, x):
     The set of all parents for all changesets in set, or the working directory.
     """
     if x is None:
-        ps = tuple(p.rev() for p in repo[x].parents())
-        return subset & ps
-
-    ps = set()
-    cl = repo.changelog
-    for r in getset(repo, spanset(repo), x):
-        ps.update(cl.parentrevs(r))
+        ps = set(p.rev() for p in repo[x].parents())
+    else:
+        ps = set()
+        cl = repo.changelog
+        for r in getset(repo, spanset(repo), x):
+            ps.update(cl.parentrevs(r))
+    ps -= set([node.nullrev])
     return subset & ps
 
 def parentspec(repo, subset, x, n):
@@ -1277,7 +1279,7 @@ def present(repo, subset, x):
     try:
         return getset(repo, subset, x)
     except error.RepoLookupError:
-        return baseset([])
+        return baseset()
 
 def public(repo, subset, x):
     """``public()``
@@ -1320,7 +1322,7 @@ def remote(repo, subset, x):
         r = repo[n].rev()
         if r in subset:
             return baseset([r])
-    return baseset([])
+    return baseset()
 
 def removes(repo, subset, x):
     """``removes(pattern)``
@@ -1346,7 +1348,7 @@ def rev(repo, subset, x):
     except (TypeError, ValueError):
         # i18n: "rev" is a keyword
         raise error.ParseError(_("rev expects a number"))
-    return subset.filter(lambda r: r == l)
+    return subset & baseset([l])
 
 def matching(repo, subset, x):
     """``matching(revision [, field])``
@@ -1648,7 +1650,7 @@ def user(repo, subset, x):
 def _list(repo, subset, x):
     s = getstring(x, "internal error")
     if not s:
-        return baseset([])
+        return baseset()
     ls = [repo[r].rev() for r in s.split('\0')]
     s = subset.set()
     return baseset([r for r in ls if r in s])
@@ -1657,7 +1659,7 @@ def _list(repo, subset, x):
 def _intlist(repo, subset, x):
     s = getstring(x, "internal error")
     if not s:
-        return baseset([])
+        return baseset()
     ls = [int(r) for r in s.split('\0')]
     s = subset.set()
     return baseset([r for r in ls if r in s])
@@ -1666,7 +1668,7 @@ def _intlist(repo, subset, x):
 def _hexlist(repo, subset, x):
     s = getstring(x, "internal error")
     if not s:
-        return baseset([])
+        return baseset()
     cl = repo.changelog
     ls = [cl.rev(node.bin(r)) for r in s.split('\0')]
     s = subset.set()
@@ -1913,7 +1915,7 @@ def optimize(x, small):
             w = 100 # very slow
         elif f == "ancestor":
             w = 1 * smallbonus
-        elif f in "reverse limit first":
+        elif f in "reverse limit first _intlist":
             w = 0
         elif f in "sort":
             w = 10 # assume most sorts look at changelog
@@ -2059,8 +2061,10 @@ def match(ui, spec, repo=None):
     weight, tree = optimize(tree, True)
     def mfunc(repo, subset):
         if util.safehasattr(subset, 'set'):
-            return getset(repo, subset, tree)
-        return getset(repo, baseset(subset), tree)
+            result = getset(repo, subset, tree)
+        else:
+            result = getset(repo, baseset(subset), tree)
+        return result
     return mfunc
 
 def formatspec(expr, *args):
@@ -2189,33 +2193,151 @@ def funcsused(tree):
             funcs.add(tree[1][1])
         return funcs
 
-class baseset(list):
+class abstractsmartset(object):
+
+    def __nonzero__(self):
+        """True if the smartset is not empty"""
+        raise NotImplementedError()
+
+    def __contains__(self, rev):
+        """provide fast membership testing"""
+        raise NotImplementedError()
+
+    def __set__(self):
+        """Returns a set or a smartset containing all the elements.
+
+        The returned structure should be the fastest option for membership
+        testing.
+
+        This is part of the mandatory API for smartset."""
+        raise NotImplementedError()
+
+    def __iter__(self):
+        """iterate the set in the order it is supposed to be iterated"""
+        raise NotImplementedError()
+
+    # Attributes containing a function to perform a fast iteration in a given
+    # direction. A smartset can have none, one, or both defined.
+    #
+    # Default value is None instead of a function returning None to avoid
+    # initializing an iterator just for testing if a fast method exists.
+    fastasc = None
+    fastdesc = None
+
+    def isascending(self):
+        """True if the set will iterate in ascending order"""
+        raise NotImplementedError()
+
+    def isdescending(self):
+        """True if the set will iterate in descending order"""
+        raise NotImplementedError()
+
+    def min(self):
+        """return the minimum element in the set"""
+        if self.fastasc is not None:
+            for r in self.fastasc():
+                return r
+            raise ValueError('arg is an empty sequence')
+        return min(self)
+
+    def max(self):
+        """return the maximum element in the set"""
+        if self.fastdesc is not None:
+            for r in self.fastdesc():
+                return r
+            raise ValueError('arg is an empty sequence')
+        return max(self)
+
+    def first(self):
+        """return the first element in the set (user iteration perspective)
+
+        Return None if the set is empty"""
+        raise NotImplementedError()
+
+    def last(self):
+        """return the last element in the set (user iteration perspective)
+
+        Return None if the set is empty"""
+        raise NotImplementedError()
+
+    def reverse(self):
+        """reverse the expected iteration order"""
+        raise NotImplementedError()
+
+    def sort(self, reverse=True):
+        """get the set to iterate in an ascending or descending order"""
+        raise NotImplementedError()
+
+    def __and__(self, other):
+        """Returns a new object with the intersection of the two collections.
+
+        This is part of the mandatory API for smartset."""
+        return self.filter(other.__contains__)
+
+    def __add__(self, other):
+        """Returns a new object with the union of the two collections.
+
+        This is part of the mandatory API for smartset."""
+        kwargs = {}
+        if self.isascending() and other.isascending():
+            kwargs['ascending'] = True
+        if self.isdescending() and other.isdescending():
+            kwargs['ascending'] = False
+        return addset(self, other, **kwargs)
+
+    def __sub__(self, other):
+        """Returns a new object with the substraction of the two collections.
+
+        This is part of the mandatory API for smartset."""
+        c = other.__contains__
+        return self.filter(lambda r: not c(r))
+
+    def filter(self, condition):
+        """Returns this smartset filtered by condition as a new smartset.
+
+        `condition` is a callable which takes a revision number and returns a
+        boolean.
+
+        This is part of the mandatory API for smartset."""
+        kwargs = {}
+        if self.isascending():
+            kwargs['ascending'] = True
+        elif self.isdescending():
+            kwargs['ascending'] = False
+        return filteredset(self, condition, **kwargs)
+
+class baseset(abstractsmartset):
     """Basic data structure that represents a revset and contains the basic
     operation that it should be able to perform.
 
     Every method in this class should be implemented by any smartset class.
     """
     def __init__(self, data=()):
-        super(baseset, self).__init__(data)
+        if not isinstance(data, list):
+            data = list(data)
+        self._list = data
         self._set = None
+        self._ascending = None
 
-    def ascending(self):
-        """Sorts the set in ascending order (in place).
+    @util.propertycache
+    def _asclist(self):
+        asclist = self._list[:]
+        asclist.sort()
+        return asclist
 
-        This is part of the mandatory API for smartset."""
-        self.sort()
+    def __iter__(self):
+        if self._ascending is None:
+            return iter(self._list)
+        elif self._ascending:
+            return iter(self._asclist)
+        else:
+            return reversed(self._asclist)
 
-    def descending(self):
-        """Sorts the set in descending order (in place).
+    def fastasc(self):
+        return iter(self._asclist)
 
-        This is part of the mandatory API for smartset."""
-        self.sort(reverse=True)
-
-    def min(self):
-        return min(self)
-
-    def max(self):
-        return max(self)
+    def fastdesc(self):
+        return reversed(self._asclist)
 
     def set(self):
         """Returns a set or a smartset containing all the elements.
@@ -2232,12 +2354,27 @@ class baseset(list):
     def __contains__(self):
         return self.set().__contains__
 
+    def __nonzero__(self):
+        return bool(self._list)
+
+    def sort(self, reverse=False):
+        self._ascending = not bool(reverse)
+
+    def reverse(self):
+        if self._ascending is None:
+            self._list.reverse()
+        else:
+            self._ascending = not self._ascending
+
+    def __len__(self):
+        return len(self._list)
+
     def __sub__(self, other):
         """Returns a new object with the substraction of the two collections.
 
         This is part of the mandatory API for smartset."""
         # If we are operating on 2 baseset, do the computation now since all
-        # data is available. The alternative is to involve a lazyset, which
+        # data is available. The alternative is to involve a filteredset, which
         # may be slow.
         if isinstance(other, baseset):
             other = other.set()
@@ -2249,8 +2386,6 @@ class baseset(list):
         """Returns a new object with the intersection of the two collections.
 
         This is part of the mandatory API for smartset."""
-        if isinstance(other, baseset):
-            other = other.set()
         return baseset([y for y in self if y in other])
 
     def __add__(self, other):
@@ -2265,60 +2400,40 @@ class baseset(list):
         """Returns True if the collection is ascending order, False if not.
 
         This is part of the mandatory API for smartset."""
-        return False
+        return self._ascending is not None and self._ascending
 
     def isdescending(self):
         """Returns True if the collection is descending order, False if not.
 
         This is part of the mandatory API for smartset."""
-        return False
+        return self._ascending is not None and not self._ascending
 
-    def filter(self, condition):
-        """Returns this smartset filtered by condition as a new smartset.
+    def first(self):
+        if self:
+            if self._ascending is None:
+                return self._list[0]
+            elif self._ascending:
+                return self._asclist[0]
+            else:
+                return self._asclist[-1]
+        return None
 
-        `condition` is a callable which takes a revision number and returns a
-        boolean.
+    def last(self):
+        if self:
+            if self._ascending is None:
+                return self._list[-1]
+            elif self._ascending:
+                return self._asclist[-1]
+            else:
+                return self._asclist[0]
+        return None
 
-        This is part of the mandatory API for smartset."""
-        return lazyset(self, condition)
-
-class _orderedsetmixin(object):
-    """Mixin class with utility methods for smartsets
-
-    This should be extended by smartsets which have the isascending(),
-    isdescending() and reverse() methods"""
-
-    def _first(self):
-        """return the first revision in the set"""
-        for r in self:
-            return r
-        raise ValueError('arg is an empty sequence')
-
-    def _last(self):
-        """return the last revision in the set"""
-        self.reverse()
-        m = self._first()
-        self.reverse()
-        return m
-
-    def min(self):
-        """return the smallest element in the set"""
-        if self.isascending():
-            return self._first()
-        return self._last()
-
-    def max(self):
-        """return the largest element in the set"""
-        if self.isascending():
-            return self._last()
-        return self._first()
-
-class lazyset(object):
+class filteredset(abstractsmartset):
     """Duck type for baseset class which iterates lazily over the revisions in
     the subset and contains a function which tests for membership in the
     revset
     """
-    def __init__(self, subset, condition=lambda x: True):
+    def __init__(self, subset, condition=lambda x: True, ascending=None):
         """
         condition: a function that decide whether a revision in the subset
                    belongs to the revset or not.
@@ -2326,39 +2441,39 @@ class lazyset(object):
         self._subset = subset
         self._condition = condition
         self._cache = {}
-
-    def ascending(self):
-        self._subset.sort()
-
-    def descending(self):
-        self._subset.sort(reverse=True)
-
-    def min(self):
-        return min(self)
-
-    def max(self):
-        return max(self)
+        if ascending is not None:
+            ascending = bool(ascending)
+        self._ascending = ascending
 
     def __contains__(self, x):
         c = self._cache
         if x not in c:
-            c[x] = x in self._subset and self._condition(x)
+            v = c[x] = x in self._subset and self._condition(x)
+            return v
         return c[x]
 
     def __iter__(self):
+        return self._iterfilter(self._subset)
+
+    def _iterfilter(self, it):
         cond = self._condition
-        for x in self._subset:
+        for x in it:
             if cond(x):
                 yield x
 
-    def __and__(self, x):
-        return lazyset(self, x.__contains__)
+    @property
+    def fastasc(self):
+        it = self._subset.fastasc
+        if it is None:
+            return None
+        return lambda: self._iterfilter(it())
 
-    def __sub__(self, x):
-        return lazyset(self, lambda r: r not in x)
-
-    def __add__(self, x):
-        return _addset(self, x)
+    @property
+    def fastdesc(self):
+        it = self._subset.fastdesc
+        if it is None:
+            return None
+        return lambda: self._iterfilter(it())
 
     def __nonzero__(self):
         for r in self:
@@ -2376,80 +2491,48 @@ class lazyset(object):
         return l[x]
 
     def sort(self, reverse=False):
-        if not util.safehasattr(self._subset, 'sort'):
-            self._subset = baseset(self._subset)
-        self._subset.sort(reverse=reverse)
+        if self._ascending is None:
+            if not util.safehasattr(self._subset, 'sort'):
+                self._subset = baseset(self._subset)
+            self._subset.sort(reverse=reverse)
+            self._ascending = not reverse
+        elif bool(reverse) == self._ascending:
+            self.reverse()
 
     def reverse(self):
         self._subset.reverse()
+        if self._ascending is not None:
+            self._ascending = not self._ascending
 
     def set(self):
         return set([r for r in self])
 
     def isascending(self):
-        return False
+        return self._ascending is not None and self._ascending
 
     def isdescending(self):
-        return False
+        return self._ascending is not None and not self._ascending
 
-    def filter(self, l):
-        return lazyset(self, l)
+    def first(self):
+        for x in self:
+            return x
+        return None
 
-class orderedlazyset(_orderedsetmixin, lazyset):
-    """Subclass of lazyset which subset can be ordered either ascending or
-    descendingly
-    """
-    def __init__(self, subset, condition, ascending=True):
-        super(orderedlazyset, self).__init__(subset, condition)
-        self._ascending = ascending
-
-    def filter(self, l):
-        return orderedlazyset(self, l, ascending=self._ascending)
-
-    def ascending(self):
-        if not self._ascending:
-            self.reverse()
-
-    def descending(self):
-        if self._ascending:
-            self.reverse()
-
-    def __and__(self, x):
-        return orderedlazyset(self, x.__contains__,
-                ascending=self._ascending)
-
-    def __sub__(self, x):
-        return orderedlazyset(self, lambda r: r not in x,
-                ascending=self._ascending)
-
-    def __add__(self, x):
-        kwargs = {}
-        if self.isascending() and x.isascending():
-            kwargs['ascending'] = True
-        if self.isdescending() and x.isdescending():
-            kwargs['ascending'] = False
-        return _addset(self, x, **kwargs)
-
-    def sort(self, reverse=False):
-        if reverse:
+    def last(self):
+        it = None
+        if self._ascending is not None:
             if self._ascending:
-                self._subset.sort(reverse=reverse)
-        else:
-            if not self._ascending:
-                self._subset.sort(reverse=reverse)
-        self._ascending = not reverse
+                it = self.fastdesc
+            else:
+                it = self.fastasc
+        if it is None:
+            # slowly consume everything. This needs improvement
+            it = lambda: reversed(list(self))
+        for x in it():
+            return x
+        return None
 
-    def isascending(self):
-        return self._ascending
-
-    def isdescending(self):
-        return not self._ascending
-
-    def reverse(self):
-        self._subset.reverse()
-        self._ascending = not self._ascending
-
-class _addset(_orderedsetmixin):
+class addset(abstractsmartset):
     """Represent the addition of two sets
 
     Wrapper structure for lazily adding two structures without losing much
@@ -2458,9 +2541,6 @@ class _addset(_orderedsetmixin):
     If the ascending attribute is set, that means the two structures are
     ordered in either an ascending or descending way. Therefore, we can add
     them maintaining the order by iterating over both at the same time
-
-    This class does not duck-type baseset and it's only supposed to be used
-    internally
     """
     def __init__(self, revs1, revs2, ascending=None):
         self._r1 = revs1
@@ -2472,55 +2552,14 @@ class _addset(_orderedsetmixin):
     def __len__(self):
         return len(self._list)
 
+    def __nonzero__(self):
+        return bool(self._r1 or self._r2)
+
     @util.propertycache
     def _list(self):
         if not self._genlist:
             self._genlist = baseset(self._iterator())
         return self._genlist
-
-    def filter(self, condition):
-        if self._ascending is not None:
-            return orderedlazyset(self, condition, ascending=self._ascending)
-        return lazyset(self, condition)
-
-    def ascending(self):
-        if self._ascending is None:
-            self.sort()
-            self._ascending = True
-        else:
-            if not self._ascending:
-                self.reverse()
-
-    def descending(self):
-        if self._ascending is None:
-            self.sort(reverse=True)
-            self._ascending = False
-        else:
-            if self._ascending:
-                self.reverse()
-
-    def __and__(self, other):
-        filterfunc = other.__contains__
-        if self._ascending is not None:
-            return orderedlazyset(self, filterfunc, ascending=self._ascending)
-        return lazyset(self, filterfunc)
-
-    def __sub__(self, other):
-        filterfunc = lambda r: r not in other
-        if self._ascending is not None:
-            return orderedlazyset(self, filterfunc, ascending=self._ascending)
-        return lazyset(self, filterfunc)
-
-    def __add__(self, other):
-        """When both collections are ascending or descending, preserve the order
-        """
-        kwargs = {}
-        if self._ascending is not None:
-            if self.isascending() and other.isascending():
-                kwargs['ascending'] = True
-            if self.isdescending() and other.isdescending():
-                kwargs['ascending'] = False
-        return _addset(self, other, **kwargs)
 
     def _iterator(self):
         """Iterate over both collections without repeating elements
@@ -2532,59 +2571,82 @@ class _addset(_orderedsetmixin):
         If the ascending attribute is set, iterate over both collections at the
         same time, yielding only one value at a time in the given order.
         """
-        if not self._iter:
+        if self._ascending is None:
             def gen():
-                if self._ascending is None:
-                    for r in self._r1:
+                for r in self._r1:
+                    yield r
+                s = self._r1.set()
+                for r in self._r2:
+                    if r not in s:
                         yield r
-                    s = self._r1.set()
-                    for r in self._r2:
-                        if r not in s:
-                            yield r
-                else:
-                    iter1 = iter(self._r1)
-                    iter2 = iter(self._r2)
-
-                    val1 = None
-                    val2 = None
-
-                    choice = max
-                    if self._ascending:
-                        choice = min
-                    try:
-                        # Consume both iterators in an ordered way until one is
-                        # empty
-                        while True:
-                            if val1 is None:
-                                val1 = iter1.next()
-                            if val2 is None:
-                                val2 = iter2.next()
-                            next = choice(val1, val2)
-                            yield next
-                            if val1 == next:
-                                val1 = None
-                            if val2 == next:
-                                val2 = None
-                    except StopIteration:
-                        # Flush any remaining values and consume the other one
-                        it = iter2
-                        if val1 is not None:
-                            yield val1
-                            it = iter1
-                        elif val2 is not None:
-                            # might have been equality and both are empty
-                            yield val2
-                        for val in it:
-                            yield val
-
-            self._iter = _generatorset(gen())
-
-        return self._iter
+            gen = gen()
+        else:
+            iter1 = iter(self._r1)
+            iter2 = iter(self._r2)
+            gen = self._iterordered(self._ascending, iter1, iter2)
+        return gen
 
     def __iter__(self):
         if self._genlist:
             return iter(self._genlist)
         return iter(self._iterator())
+
+    @property
+    def fastasc(self):
+        iter1 = self._r1.fastasc
+        iter2 = self._r2.fastasc
+        if None in (iter1, iter2):
+            return None
+        return lambda: self._iterordered(True, iter1(), iter2())
+
+    @property
+    def fastdesc(self):
+        iter1 = self._r1.fastdesc
+        iter2 = self._r2.fastdesc
+        if None in (iter1, iter2):
+            return None
+        return lambda: self._iterordered(False, iter1(), iter2())
+
+    def _iterordered(self, ascending, iter1, iter2):
+        """produce an ordered iteration from two iterators with the same order
+
+        The ascending is used to indicated the iteration direction.
+        """
+        choice = max
+        if ascending:
+            choice = min
+
+        val1 = None
+        val2 = None
+
+        choice = max
+        if ascending:
+            choice = min
+        try:
+            # Consume both iterators in an ordered way until one is
+            # empty
+            while True:
+                if val1 is None:
+                    val1 = iter1.next()
+                if val2 is None:
+                    val2 = iter2.next()
+                next = choice(val1, val2)
+                yield next
+                if val1 == next:
+                    val1 = None
+                if val2 == next:
+                    val2 = None
+        except StopIteration:
+            # Flush any remaining values and consume the other one
+            it = iter2
+            if val1 is not None:
+                yield val1
+                it = iter1
+            elif val2 is not None:
+                # might have been equality and both are empty
+                yield val2
+            for val in it:
+                yield val
 
     def __contains__(self, x):
         return x in self._r1 or x in self._r2
@@ -2616,25 +2678,46 @@ class _addset(_orderedsetmixin):
         if self._ascending is not None:
             self._ascending = not self._ascending
 
-class _generatorset(object):
+    def first(self):
+        if self:
+            return self._list.first()
+        return None
+
+    def last(self):
+        if self:
+            return self._list.last()
+        return None
+
+class generatorset(abstractsmartset):
     """Wrap a generator for lazy iteration
 
     Wrapper structure for generators that provides lazy membership and can
     be iterated more than once.
     When asked for membership it generates values until either it finds the
     requested one or has gone through all the elements in the generator
-
-    This class does not duck-type baseset and it's only supposed to be used
-    internally
     """
-    def __init__(self, gen):
+    def __init__(self, gen, iterasc=None):
         """
         gen: a generator producing the values for the generatorset.
         """
         self._gen = gen
+        self._asclist = None
         self._cache = {}
-        self._genlist = baseset([])
+        self._genlist = []
         self._finished = False
+        self._ascending = True
+        if iterasc is not None:
+            if iterasc:
+                self.fastasc = self._iterator
+                self.__contains__ = self._asccontains
+            else:
+                self.fastdesc = self._iterator
+                self.__contains__ = self._desccontains
+
+    def __nonzero__(self):
+        for r in self:
+            return True
+        return False
 
     def __contains__(self, x):
         if x in self._cache:
@@ -2648,48 +2731,8 @@ class _generatorset(object):
         self._cache[x] = False
         return False
 
-    def __iter__(self):
-        if self._finished:
-            for x in self._genlist:
-                yield x
-            return
-
-        i = 0
-        genlist = self._genlist
-        consume = self._consumegen()
-        while True:
-            if i < len(genlist):
-                yield genlist[i]
-            else:
-                yield consume.next()
-            i += 1
-
-    def _consumegen(self):
-        for item in self._gen:
-            self._cache[item] = True
-            self._genlist.append(item)
-            yield item
-        self._finished = True
-
-    def set(self):
-        return self
-
-    def sort(self, reverse=False):
-        if not self._finished:
-            for i in self:
-                continue
-        self._genlist.sort(reverse=reverse)
-
-class _ascgeneratorset(_generatorset):
-    """Wrap a generator of ascending elements for lazy iteration
-
-    Same structure as _generatorset but stops iterating after it goes past
-    the value when asked for membership and the element is not contained
-
-    This class does not duck-type baseset and it's only supposed to be used
-    internally
-    """
-    def __contains__(self, x):
+    def _asccontains(self, x):
+        """version of contains optimised for ascending generator"""
         if x in self._cache:
             return self._cache[x]
 
@@ -2703,16 +2746,8 @@ class _ascgeneratorset(_generatorset):
         self._cache[x] = False
         return False
 
-class _descgeneratorset(_generatorset):
-    """Wrap a generator of descending elements for lazy iteration
-
-    Same structure as _generatorset but stops iterating after it goes past
-    the value when asked for membership and the element is not contained
-
-    This class does not duck-type baseset and it's only supposed to be used
-    internally
-    """
-    def __contains__(self, x):
+    def _desccontains(self, x):
+        """version of contains optimised for descending generator"""
         if x in self._cache:
             return self._cache[x]
 
@@ -2726,7 +2761,112 @@ class _descgeneratorset(_generatorset):
         self._cache[x] = False
         return False
 
-class spanset(_orderedsetmixin):
+    def __iter__(self):
+        if self._ascending:
+            it = self.fastasc
+        else:
+            it = self.fastdesc
+        if it is not None:
+            return it()
+        # we need to consume the iterator
+        for x in self._consumegen():
+            pass
+        # recall the same code
+        return iter(self)
+
+    def _iterator(self):
+        if self._finished:
+            return iter(self._genlist)
+
+        # We have to use this complex iteration strategy to allow multiple
+        # iterations at the same time. We need to be able to catch revision
+        # removed from `consumegen` and added to genlist in another instance.
+        #
+        # Getting rid of it would provide an about 15% speed up on this
+        # iteration.
+        genlist = self._genlist
+        nextrev = self._consumegen().next
+        _len = len # cache global lookup
+        def gen():
+            i = 0
+            while True:
+                if i < _len(genlist):
+                    yield genlist[i]
+                else:
+                    yield nextrev()
+                i += 1
+        return gen()
+
+    def _consumegen(self):
+        cache = self._cache
+        genlist = self._genlist.append
+        for item in self._gen:
+            cache[item] = True
+            genlist(item)
+            yield item
+        if not self._finished:
+            self._finished = True
+            asc = self._genlist[:]
+            asc.sort()
+            self._asclist = asc
+            self.fastasc = asc.__iter__
+            self.fastdesc = asc.__reversed__
+
+    def set(self):
+        return self
+
+    def sort(self, reverse=False):
+        self._ascending = not reverse
+
+    def reverse(self):
+        self._ascending = not self._ascending
+
+    def isascending(self):
+        return self._ascending
+
+    def isdescending(self):
+        return not self._ascending
+
+    def first(self):
+        if self._ascending:
+            it = self.fastasc
+        else:
+            it = self.fastdesc
+        if it is None:
+            # we need to consume all and try again
+            for x in self._consumegen():
+                pass
+            return self.first()
+        if self:
+            return it.next()
+        return None
+
+    def last(self):
+        if self._ascending:
+            it = self.fastdesc
+        else:
+            it = self.fastasc
+        if it is None:
+            # we need to consume all and try again
+            for x in self._consumegen():
+                pass
+            return self.first()
+        if self:
+            return it.next()
+        return None
+
+def spanset(repo, start=None, end=None):
+    """factory function to dispatch between fullreposet and actual spanset
+
+    Feel free to update all spanset call sites and kill this function at some
+    point.
+    """
+    if start is None and end is None:
+        return fullreposet(repo)
+    return _spanset(repo, start, end)
+
+
+class _spanset(abstractsmartset):
     """Duck type for baseset class which represents a range of revisions and
     can work lazily and without having all the range in memory
 
@@ -2745,69 +2885,54 @@ class spanset(_orderedsetmixin):
 
         Spanset will be descending if `end` < `start`.
         """
+        if end is None:
+            end = len(repo)
+        self._ascending = start <= end
+        if not self._ascending:
+            start, end = end + 1, start +1
         self._start = start
-        if end is not None:
-            self._end = end
-        else:
-            self._end = len(repo)
+        self._end = end
         self._hiddenrevs = repo.changelog.filteredrevs
 
-    def ascending(self):
-        if self._start > self._end:
-            self.reverse()
+    def sort(self, reverse=False):
+        self._ascending = not reverse
 
-    def descending(self):
-        if self._start < self._end:
-            self.reverse()
+    def reverse(self):
+        self._ascending = not self._ascending
 
-    def __iter__(self):
-        if self._start <= self._end:
-            iterrange = xrange(self._start, self._end)
-        else:
-            iterrange = xrange(self._start, self._end, -1)
-
-        if self._hiddenrevs:
-            s = self._hiddenrevs
-            for r in iterrange:
-                if r not in s:
-                    yield r
-        else:
-            for r in iterrange:
+    def _iterfilter(self, iterrange):
+        s = self._hiddenrevs
+        for r in iterrange:
+            if r not in s:
                 yield r
 
+    def __iter__(self):
+        if self._ascending:
+            return self.fastasc()
+        else:
+            return self.fastdesc()
+
+    def fastasc(self):
+        iterrange = xrange(self._start, self._end)
+        if self._hiddenrevs:
+            return self._iterfilter(iterrange)
+        return iter(iterrange)
+
+    def fastdesc(self):
+        iterrange = xrange(self._end - 1, self._start - 1, -1)
+        if self._hiddenrevs:
+            return self._iterfilter(iterrange)
+        return iter(iterrange)
+
     def __contains__(self, rev):
-        return (((self._end < rev <= self._start)
-                  or (self._start <= rev < self._end))
-                and not (self._hiddenrevs and rev in self._hiddenrevs))
+        hidden = self._hiddenrevs
+        return ((self._start <= rev < self._end)
+                and not (hidden and rev in hidden))
 
     def __nonzero__(self):
         for r in self:
             return True
         return False
-
-    def __and__(self, x):
-        if isinstance(x, baseset):
-            x = x.set()
-        if self._start <= self._end:
-            return orderedlazyset(self, x.__contains__)
-        else:
-            return orderedlazyset(self, x.__contains__, ascending=False)
-
-    def __sub__(self, x):
-        if isinstance(x, baseset):
-            x = x.set()
-        if self._start <= self._end:
-            return orderedlazyset(self, lambda r: r not in x)
-        else:
-            return orderedlazyset(self, lambda r: r not in x, ascending=False)
-
-    def __add__(self, x):
-        kwargs = {}
-        if self.isascending() and x.isascending():
-            kwargs['ascending'] = True
-        if self.isdescending() and x.isdescending():
-            kwargs['ascending'] = False
-        return _addset(self, x, **kwargs)
 
     def __len__(self):
         if not self._hiddenrevs:
@@ -2826,31 +2951,68 @@ class spanset(_orderedsetmixin):
         l = baseset([r for r in self])
         return l[x]
 
-    def sort(self, reverse=False):
-        if bool(reverse) != (self._start > self._end):
-            self.reverse()
-
-    def reverse(self):
-        # Just switch the _start and _end parameters
-        if self._start <= self._end:
-            self._start, self._end = self._end - 1, self._start - 1
-        else:
-            self._start, self._end = self._end + 1, self._start + 1
-
     def set(self):
         return self
 
     def isascending(self):
-        return self._start < self._end
+        return self._start <= self._end
 
     def isdescending(self):
-        return self._start > self._end
+        return self._start >= self._end
 
-    def filter(self, l):
-        if self._start <= self._end:
-            return orderedlazyset(self, l)
+    def first(self):
+        if self._ascending:
+            it = self.fastasc
         else:
-            return orderedlazyset(self, l, ascending=False)
+            it = self.fastdesc
+        for x in it():
+            return x
+        return None
+
+    def last(self):
+        if self._ascending:
+            it = self.fastdesc
+        else:
+            it = self.fastasc
+        for x in it():
+            return x
+        return None
+
+class fullreposet(_spanset):
+    """a set containing all revisions in the repo
+
+    This class exists to host special optimisation.
+    """
+
+    def __init__(self, repo):
+        super(fullreposet, self).__init__(repo)
+
+    def __and__(self, other):
+        """fullrepo & other -> other
+
+        As self contains the whole repo, all of the other set should also be in
+        self. Therefor `self & other = other`.
+
+        This boldly assumes the other contains valid revs only.
+        """
+        # other not a smartset, make is so
+        if not util.safehasattr(other, 'set'):
+            # filter out hidden revision
+            # (this boldly assumes all smartset are pure)
+            #
+            # `other` was used with "&", let's assume this is a set like
+            # object.
+            other = baseset(other - self._hiddenrevs)
+        elif not util.safehasattr(other, 'isascending'):
+            # "other" is generatorset not a real smart set
+            # we fallback to the old way (sad kitten)
+            return super(fullreposet, self).__and__(other)
+
+        if self.isascending():
+            other.sort()
+        else:
+            other.sort(reverse)
+        return other
 
 # tell hggettext to extract docstrings from these functions:
 i18nfunctions = symbols.values()

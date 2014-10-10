@@ -1,3 +1,8 @@
+This test is decicated to test the bundle2 container format
+
+It test multiple existing parts to test different feature of the container. You
+probably do not need to touch this test unless you change the binary encoding
+of the bundle2 format itself.
 
 Create an extension to test bundle2 API
 
@@ -16,6 +21,9 @@ Create an extension to test bundle2 API
   > from mercurial import discovery
   > from mercurial import changegroup
   > from mercurial import error
+  > from mercurial import obsolete
+  > 
+  > obsolete._enabled = True
   > 
   > try:
   >     import msvcrt
@@ -99,7 +107,7 @@ Create an extension to test bundle2 API
   >             headmissing = [c.node() for c in repo.set('heads(%ld)', revs)]
   >             headcommon  = [c.node() for c in repo.set('parents(%ld) - %ld', revs, revs)]
   >             outgoing = discovery.outgoing(repo.changelog, headcommon, headmissing)
-  >             cg = changegroup.getlocalbundle(repo, 'test:bundle2', outgoing, None)
+  >             cg = changegroup.getlocalchangegroup(repo, 'test:bundle2', outgoing, None)
   >             bundler.newpart('b2x:changegroup', data=cg.getchunks())
   > 
   >     if opts['parts']:
@@ -191,7 +199,7 @@ Create an extension to test bundle2 API
   > bundle2-exp=True
   > [ui]
   > ssh=python "$TESTDIR/dummyssh"
-  > logtemplate={rev}:{node|short} {phase} {author} {desc|firstline}
+  > logtemplate={rev}:{node|short} {phase} {author} {bookmarks} {desc|firstline}
   > [web]
   > push_ssl = false
   > allow_push = *
@@ -668,23 +676,23 @@ Support for changegroup
   (run 'hg heads' to see heads, 'hg merge' to merge)
 
   $ hg log -G
-  o  8:02de42196ebe draft Nicolas Dumazet <nicdumz.commits@gmail.com> H
+  o  8:02de42196ebe draft Nicolas Dumazet <nicdumz.commits@gmail.com>  H
   |
-  | o  7:eea13746799a draft Nicolas Dumazet <nicdumz.commits@gmail.com> G
+  | o  7:eea13746799a draft Nicolas Dumazet <nicdumz.commits@gmail.com>  G
   |/|
-  o |  6:24b6387c8c8c draft Nicolas Dumazet <nicdumz.commits@gmail.com> F
+  o |  6:24b6387c8c8c draft Nicolas Dumazet <nicdumz.commits@gmail.com>  F
   | |
-  | o  5:9520eea781bc draft Nicolas Dumazet <nicdumz.commits@gmail.com> E
+  | o  5:9520eea781bc draft Nicolas Dumazet <nicdumz.commits@gmail.com>  E
   |/
-  | o  4:32af7686d403 draft Nicolas Dumazet <nicdumz.commits@gmail.com> D
+  | o  4:32af7686d403 draft Nicolas Dumazet <nicdumz.commits@gmail.com>  D
   | |
-  | o  3:5fddd98957c8 draft Nicolas Dumazet <nicdumz.commits@gmail.com> C
+  | o  3:5fddd98957c8 draft Nicolas Dumazet <nicdumz.commits@gmail.com>  C
   | |
-  | o  2:42ccdea3bb16 draft Nicolas Dumazet <nicdumz.commits@gmail.com> B
+  | o  2:42ccdea3bb16 draft Nicolas Dumazet <nicdumz.commits@gmail.com>  B
   |/
-  o  1:cd010b8cd998 draft Nicolas Dumazet <nicdumz.commits@gmail.com> A
+  o  1:cd010b8cd998 draft Nicolas Dumazet <nicdumz.commits@gmail.com>  A
   
-  @  0:3903775176ed draft test a
+  @  0:3903775176ed draft test  a
   
 
   $ hg bundle2 --debug --rev '8+7+5+4' ../rev.hg2
@@ -758,350 +766,4 @@ with reply
   added 0 changesets with 0 changes to 3 files
   \x00\x00\x00\x00\x00\x00 (no-eol) (esc)
 
-Real world exchange
-=====================
-
-
-clone --pull
-
   $ cd ..
-  $ hg -R main phase --public cd010b8cd998
-  $ hg clone main other --pull --rev 9520eea781bc
-  adding changesets
-  adding manifests
-  adding file changes
-  added 2 changesets with 2 changes to 2 files
-  updating to branch default
-  2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg -R other log -G
-  @  1:9520eea781bc draft Nicolas Dumazet <nicdumz.commits@gmail.com> E
-  |
-  o  0:cd010b8cd998 public Nicolas Dumazet <nicdumz.commits@gmail.com> A
-  
-
-pull
-
-  $ hg -R main phase --public 9520eea781bc
-  $ hg -R other pull -r 24b6387c8c8c
-  pulling from $TESTTMP/main (glob)
-  searching for changes
-  adding changesets
-  adding manifests
-  adding file changes
-  added 1 changesets with 1 changes to 1 files (+1 heads)
-  (run 'hg heads' to see heads, 'hg merge' to merge)
-  $ hg -R other log -G
-  o  2:24b6387c8c8c draft Nicolas Dumazet <nicdumz.commits@gmail.com> F
-  |
-  | @  1:9520eea781bc draft Nicolas Dumazet <nicdumz.commits@gmail.com> E
-  |/
-  o  0:cd010b8cd998 public Nicolas Dumazet <nicdumz.commits@gmail.com> A
-  
-
-pull empty (with phase movement)
-
-  $ hg -R main phase --public 24b6387c8c8c
-  $ hg -R other pull -r 24b6387c8c8c
-  pulling from $TESTTMP/main (glob)
-  no changes found
-  $ hg -R other log -G
-  o  2:24b6387c8c8c public Nicolas Dumazet <nicdumz.commits@gmail.com> F
-  |
-  | @  1:9520eea781bc draft Nicolas Dumazet <nicdumz.commits@gmail.com> E
-  |/
-  o  0:cd010b8cd998 public Nicolas Dumazet <nicdumz.commits@gmail.com> A
-  
-pull empty
-
-  $ hg -R other pull -r 24b6387c8c8c
-  pulling from $TESTTMP/main (glob)
-  no changes found
-  $ hg -R other log -G
-  o  2:24b6387c8c8c public Nicolas Dumazet <nicdumz.commits@gmail.com> F
-  |
-  | @  1:9520eea781bc draft Nicolas Dumazet <nicdumz.commits@gmail.com> E
-  |/
-  o  0:cd010b8cd998 public Nicolas Dumazet <nicdumz.commits@gmail.com> A
-  
-
-push
-
-  $ hg -R main phase --public eea13746799a
-  $ hg -R main push other --rev eea13746799a
-  pushing to other
-  searching for changes
-  remote: adding changesets
-  remote: adding manifests
-  remote: adding file changes
-  remote: added 1 changesets with 0 changes to 0 files (-1 heads)
-  $ hg -R other log -G
-  o    3:eea13746799a public Nicolas Dumazet <nicdumz.commits@gmail.com> G
-  |\
-  | o  2:24b6387c8c8c public Nicolas Dumazet <nicdumz.commits@gmail.com> F
-  | |
-  @ |  1:9520eea781bc public Nicolas Dumazet <nicdumz.commits@gmail.com> E
-  |/
-  o  0:cd010b8cd998 public Nicolas Dumazet <nicdumz.commits@gmail.com> A
-  
-
-pull over ssh
-
-  $ hg -R other pull ssh://user@dummy/main -r 02de42196ebe --traceback
-  pulling from ssh://user@dummy/main
-  searching for changes
-  adding changesets
-  adding manifests
-  adding file changes
-  added 1 changesets with 1 changes to 1 files (+1 heads)
-  (run 'hg heads' to see heads, 'hg merge' to merge)
-
-pull over http
-
-  $ hg -R main serve -p $HGPORT -d --pid-file=main.pid -E main-error.log
-  $ cat main.pid >> $DAEMON_PIDS
-
-  $ hg -R other pull http://localhost:$HGPORT/ -r 42ccdea3bb16
-  pulling from http://localhost:$HGPORT/
-  searching for changes
-  adding changesets
-  adding manifests
-  adding file changes
-  added 1 changesets with 1 changes to 1 files (+1 heads)
-  (run 'hg heads .' to see heads, 'hg merge' to merge)
-  $ cat main-error.log
-
-push over ssh
-
-  $ hg -R main push ssh://user@dummy/other -r 5fddd98957c8
-  pushing to ssh://user@dummy/other
-  searching for changes
-  remote: adding changesets
-  remote: adding manifests
-  remote: adding file changes
-  remote: added 1 changesets with 1 changes to 1 files
-  $ hg -R other log -G
-  o  6:5fddd98957c8 draft Nicolas Dumazet <nicdumz.commits@gmail.com> C
-  |
-  o  5:42ccdea3bb16 draft Nicolas Dumazet <nicdumz.commits@gmail.com> B
-  |
-  | o  4:02de42196ebe draft Nicolas Dumazet <nicdumz.commits@gmail.com> H
-  | |
-  | | o  3:eea13746799a public Nicolas Dumazet <nicdumz.commits@gmail.com> G
-  | |/|
-  | o |  2:24b6387c8c8c public Nicolas Dumazet <nicdumz.commits@gmail.com> F
-  |/ /
-  | @  1:9520eea781bc public Nicolas Dumazet <nicdumz.commits@gmail.com> E
-  |/
-  o  0:cd010b8cd998 public Nicolas Dumazet <nicdumz.commits@gmail.com> A
-  
-
-push over http
-
-  $ hg -R other serve -p $HGPORT2 -d --pid-file=other.pid -E other-error.log
-  $ cat other.pid >> $DAEMON_PIDS
-
-  $ hg -R main phase --public 32af7686d403
-  $ hg -R main push http://localhost:$HGPORT2/ -r 32af7686d403
-  pushing to http://localhost:$HGPORT2/
-  searching for changes
-  remote: adding changesets
-  remote: adding manifests
-  remote: adding file changes
-  remote: added 1 changesets with 1 changes to 1 files
-  $ cat other-error.log
-
-Check final content.
-
-  $ hg -R other log -G
-  o  7:32af7686d403 public Nicolas Dumazet <nicdumz.commits@gmail.com> D
-  |
-  o  6:5fddd98957c8 public Nicolas Dumazet <nicdumz.commits@gmail.com> C
-  |
-  o  5:42ccdea3bb16 public Nicolas Dumazet <nicdumz.commits@gmail.com> B
-  |
-  | o  4:02de42196ebe draft Nicolas Dumazet <nicdumz.commits@gmail.com> H
-  | |
-  | | o  3:eea13746799a public Nicolas Dumazet <nicdumz.commits@gmail.com> G
-  | |/|
-  | o |  2:24b6387c8c8c public Nicolas Dumazet <nicdumz.commits@gmail.com> F
-  |/ /
-  | @  1:9520eea781bc public Nicolas Dumazet <nicdumz.commits@gmail.com> E
-  |/
-  o  0:cd010b8cd998 public Nicolas Dumazet <nicdumz.commits@gmail.com> A
-  
-
-Error Handling
-==============
-
-Check that errors are properly returned to the client during push.
-
-Setting up
-
-  $ cat > failpush.py << EOF
-  > """A small extension that makes push fails when using bundle2
-  > 
-  > used to test error handling in bundle2
-  > """
-  > 
-  > from mercurial import util
-  > from mercurial import bundle2
-  > from mercurial import exchange
-  > from mercurial import extensions
-  > 
-  > def _pushbundle2failpart(pushop, bundler):
-  >     reason = pushop.ui.config('failpush', 'reason', None)
-  >     part = None
-  >     if reason == 'abort':
-  >         bundler.newpart('test:abort')
-  >     if reason == 'unknown':
-  >         bundler.newpart('TEST:UNKNOWN')
-  >     if reason == 'race':
-  >         # 20 Bytes of crap
-  >         bundler.newpart('b2x:check:heads', data='01234567890123456789')
-  > 
-  > @bundle2.parthandler("test:abort")
-  > def handleabort(op, part):
-  >     raise util.Abort('Abandon ship!', hint="don't panic")
-  > 
-  > def uisetup(ui):
-  >     exchange.bundle2partsgenerators.insert(0, _pushbundle2failpart)
-  > 
-  > EOF
-
-  $ cd main
-  $ hg up tip
-  3 files updated, 0 files merged, 1 files removed, 0 files unresolved
-  $ echo 'I' > I
-  $ hg add I
-  $ hg ci -m 'I'
-  $ hg id
-  e7ec4e813ba6 tip
-  $ cd ..
-
-  $ cat << EOF >> $HGRCPATH
-  > [extensions]
-  > failpush=$TESTTMP/failpush.py
-  > EOF
-
-  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
-  $ hg -R other serve -p $HGPORT2 -d --pid-file=other.pid -E other-error.log
-  $ cat other.pid >> $DAEMON_PIDS
-
-Doing the actual push: Abort error
-
-  $ cat << EOF >> $HGRCPATH
-  > [failpush]
-  > reason = abort
-  > EOF
-
-  $ hg -R main push other -r e7ec4e813ba6
-  pushing to other
-  searching for changes
-  abort: Abandon ship!
-  (don't panic)
-  [255]
-
-  $ hg -R main push ssh://user@dummy/other -r e7ec4e813ba6
-  pushing to ssh://user@dummy/other
-  searching for changes
-  abort: Abandon ship!
-  (don't panic)
-  [255]
-
-  $ hg -R main push http://localhost:$HGPORT2/ -r e7ec4e813ba6
-  pushing to http://localhost:$HGPORT2/
-  searching for changes
-  abort: Abandon ship!
-  (don't panic)
-  [255]
-
-
-Doing the actual push: unknown mandatory parts
-
-  $ cat << EOF >> $HGRCPATH
-  > [failpush]
-  > reason = unknown
-  > EOF
-
-  $ hg -R main push other -r e7ec4e813ba6
-  pushing to other
-  searching for changes
-  abort: missing support for test:unknown
-  [255]
-
-  $ hg -R main push ssh://user@dummy/other -r e7ec4e813ba6
-  pushing to ssh://user@dummy/other
-  searching for changes
-  abort: missing support for test:unknown
-  [255]
-
-  $ hg -R main push http://localhost:$HGPORT2/ -r e7ec4e813ba6
-  pushing to http://localhost:$HGPORT2/
-  searching for changes
-  abort: missing support for test:unknown
-  [255]
-
-Doing the actual push: race
-
-  $ cat << EOF >> $HGRCPATH
-  > [failpush]
-  > reason = race
-  > EOF
-
-  $ hg -R main push other -r e7ec4e813ba6
-  pushing to other
-  searching for changes
-  abort: push failed:
-  'repository changed while pushing - please try again'
-  [255]
-
-  $ hg -R main push ssh://user@dummy/other -r e7ec4e813ba6
-  pushing to ssh://user@dummy/other
-  searching for changes
-  abort: push failed:
-  'repository changed while pushing - please try again'
-  [255]
-
-  $ hg -R main push http://localhost:$HGPORT2/ -r e7ec4e813ba6
-  pushing to http://localhost:$HGPORT2/
-  searching for changes
-  abort: push failed:
-  'repository changed while pushing - please try again'
-  [255]
-
-Doing the actual push: hook abort
-
-  $ cat << EOF >> $HGRCPATH
-  > [failpush]
-  > reason =
-  > [hooks]
-  > b2x-pretransactionclose.failpush = false
-  > EOF
-
-  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
-  $ hg -R other serve -p $HGPORT2 -d --pid-file=other.pid -E other-error.log
-  $ cat other.pid >> $DAEMON_PIDS
-
-  $ hg -R main push other -r e7ec4e813ba6
-  pushing to other
-  searching for changes
-  transaction abort!
-  rollback completed
-  abort: b2x-pretransactionclose.failpush hook exited with status 1
-  [255]
-
-  $ hg -R main push ssh://user@dummy/other -r e7ec4e813ba6
-  pushing to ssh://user@dummy/other
-  searching for changes
-  abort: b2x-pretransactionclose.failpush hook exited with status 1
-  remote: transaction abort!
-  remote: rollback completed
-  [255]
-
-  $ hg -R main push http://localhost:$HGPORT2/ -r e7ec4e813ba6
-  pushing to http://localhost:$HGPORT2/
-  searching for changes
-  abort: b2x-pretransactionclose.failpush hook exited with status 1
-  [255]
-
-

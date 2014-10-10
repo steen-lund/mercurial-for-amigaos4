@@ -43,13 +43,13 @@ class Abort(Exception):
         self.hint = kw.get('hint')
 
 class ConfigError(Abort):
-    'Exception raised when parsing config files'
+    """Exception raised when parsing config files"""
 
 class OutOfBandError(Exception):
-    'Exception raised when a remote repo reports failure'
+    """Exception raised when a remote repo reports failure"""
 
 class ParseError(Exception):
-    'Exception raised when parsing config files (msg[, pos])'
+    """Exception raised when parsing config files (msg[, pos])"""
 
 class RepoError(Exception):
     def __init__(self, *args, **kw):
@@ -117,3 +117,9 @@ class ReadOnlyPartError(RuntimeError):
     """error raised when code tries to alter a part being generated"""
     pass
 
+class CensoredNodeError(RevlogError):
+    """error raised when content verification fails on a censored node"""
+
+    def __init__(self, filename, node):
+        from node import short
+        RevlogError.__init__(self, '%s:%s' % (filename, short(node)))

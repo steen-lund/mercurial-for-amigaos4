@@ -6,7 +6,7 @@
 # GNU General Public License version 2 or any later version.
 
 import encoding
-import gettext, sys, os
+import gettext as gettextmod, sys, os, locale
 
 # modelled after templater.templatepath:
 if getattr(sys, 'frozen', None) is not None:
@@ -14,13 +14,32 @@ if getattr(sys, 'frozen', None) is not None:
 else:
     module = __file__
 
-base = os.path.dirname(module)
-for dir in ('.', '..'):
-    localedir = os.path.join(base, dir, 'locale')
-    if os.path.isdir(localedir):
-        break
 
-t = gettext.translation('hg', localedir, fallback=True)
+_languages = None
+if (os.name == 'nt'
+    and 'LANGUAGE' not in os.environ
+    and 'LC_ALL' not in os.environ
+    and 'LC_MESSAGES' not in os.environ
+    and 'LANG' not in os.environ):
+    # Try to detect UI language by "User Interface Language Management" API
+    # if no locale variables are set. Note that locale.getdefaultlocale()
+    # uses GetLocaleInfo(), which may be different from UI language.
+    # (See http://msdn.microsoft.com/en-us/library/dd374098(v=VS.85).aspx )
+    try:
+        import ctypes
+        langid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+        _languages = [locale.windows_locale[langid]]
+    except (ImportError, AttributeError, KeyError):
+        # ctypes not found or unknown langid
+        pass
+
+_ugettext = None
+
+def setdatapath(datapath):
+    localedir = os.path.join(datapath, 'locale')
+    t = gettextmod.translation('hg', localedir, _languages, fallback=True)
+    global _ugettext
+    _ugettext = t.ugettext
 
 def gettext(message):
     """Translate message.
@@ -33,7 +52,7 @@ def gettext(message):
     """
     # If message is None, t.ugettext will return u'None' as the
     # translation whereas our callers expect us to return None.
-    if message is None:
+    if message is None or not _ugettext:
         return message
 
     if type(message) is unicode:
@@ -43,7 +62,7 @@ def gettext(message):
         paragraphs = [p.decode("ascii") for p in message.split('\n\n')]
     # Be careful not to translate the empty string -- it holds the
     # meta data of the .po file.
-    u = u'\n\n'.join([p and t.ugettext(p) or '' for p in paragraphs])
+    u = u'\n\n'.join([p and _ugettext(p) or '' for p in paragraphs])
     try:
         # encoding.tolocal cannot be used since it will first try to
         # decode the Unicode string. Calling u.decode(enc) really

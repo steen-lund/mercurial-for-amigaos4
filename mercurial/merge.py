@@ -10,7 +10,7 @@ import struct
 from node import nullid, nullrev, hex, bin
 from i18n import _
 from mercurial import obsolete
-import error, util, filemerge, copies, subrepo, worker, dicthelpers
+import error as errormod, util, filemerge, copies, subrepo, worker, dicthelpers
 import errno, os, shutil
 
 _pack = struct.pack
@@ -779,8 +779,8 @@ def calculateupdates(repo, wctx, mctx, ancestors, branchmerge, force, partial,
                                 branchmerge, force,
                                 partial, acceptremote, followcopies)
 
-    else: # only when merge.preferancestor=* - experimentalish code
-        repo.ui.status(
+    else: # only when merge.preferancestor=* - the default
+        repo.ui.note(
             _("note: merging %s and %s using bids from ancestors %s\n") %
             (wctx, mctx, _(' and ').join(str(anc) for anc in ancestors)))
 
@@ -1011,7 +1011,7 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
             # but currently we are only checking the branch tips.
             try:
                 node = repo.branchtip(wc.branch())
-            except error.RepoLookupError:
+            except errormod.RepoLookupError:
                 if wc.branch() == "default": # no default branch!
                     node = repo.lookup("tip") # update to tip
                 else:
@@ -1041,14 +1041,14 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
 
                     # get the max revision for the given successors set,
                     # i.e. the 'tip' of a set
-                    node = repo.revs("max(%ln)", successors)[0]
+                    node = repo.revs("max(%ln)", successors).first()
                     pas = [p1]
 
         overwrite = force and not branchmerge
 
         p2 = repo[node]
         if pas[0] is None:
-            if repo.ui.config("merge", "preferancestor") == '*':
+            if repo.ui.config("merge", "preferancestor", '*') == '*':
                 cahs = repo.changelog.commonancestorsheads(p1.node(), p2.node())
                 pas = [repo[anc] for anc in (sorted(cahs) or [nullid])]
             else:
@@ -1058,7 +1058,7 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
 
         ### check phase
         if not overwrite and len(pl) > 1:
-            raise util.Abort(_("outstanding uncommitted merges"))
+            raise util.Abort(_("outstanding uncommitted merge"))
         if branchmerge:
             if pas == [p2]:
                 raise util.Abort(_("merging with a working directory ancestor"
@@ -1134,6 +1134,7 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
         stats = applyupdates(repo, actions, wc, p2, overwrite, labels=labels)
 
         if not partial:
+            repo.dirstate.beginparentchange()
             repo.setparents(fp1, fp2)
             recordupdates(repo, actions, branchmerge)
             # update completed, clear state
@@ -1141,6 +1142,7 @@ def update(repo, node, branchmerge, force, partial, ancestor=None,
 
             if not branchmerge:
                 repo.dirstate.setbranch(p2.branch())
+            repo.dirstate.endparentchange()
     finally:
         wlock.release()
 

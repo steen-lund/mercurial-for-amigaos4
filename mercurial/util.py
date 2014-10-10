@@ -13,7 +13,8 @@ This contains helper routines that are independent of the SCM core and
 hide platform-specific details from the core.
 """
 
-from i18n import _
+import i18n
+_ = i18n._
 import error, osutil, encoding
 import errno, shutil, sys, tempfile, traceback
 import re as remod
@@ -53,6 +54,7 @@ pconvert = platform.pconvert
 popen = platform.popen
 posixfile = platform.posixfile
 quotecommand = platform.quotecommand
+readpipe = platform.readpipe
 rename = platform.rename
 samedevice = platform.samedevice
 samefile = platform.samefile
@@ -250,6 +252,12 @@ class sortdict(dict):
     def __delitem__(self, key):
         dict.__delitem__(self, key)
         self._list.remove(key)
+    def pop(self, key, *args, **kwargs):
+        dict.pop(self, key, *args, **kwargs)
+        try:
+            self._list.remove(key)
+        except ValueError:
+            pass
     def keys(self):
         return self._list
     def iterkeys(self):
@@ -449,8 +457,6 @@ def pathto(root, n1, n2):
     b.reverse()
     return os.sep.join((['..'] * len(a)) + b) or '.'
 
-_hgexecutable = None
-
 def mainfrozen():
     """return True if we are a frozen executable.
 
@@ -460,6 +466,17 @@ def mainfrozen():
     return (safehasattr(sys, "frozen") or # new py2exe
             safehasattr(sys, "importers") or # old py2exe
             imp.is_frozen("__main__")) # tools/freeze
+
+# the location of data files matching the source code
+if mainfrozen():
+    # executable version (py2exe) doesn't support __file__
+    datapath = os.path.dirname(sys.executable)
+else:
+    datapath = os.path.dirname(__file__)
+
+i18n.setdatapath(datapath)
+
+_hgexecutable = None
 
 def hgexecutable():
     """return location of the 'hg' executable.

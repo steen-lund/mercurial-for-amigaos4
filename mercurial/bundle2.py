@@ -146,6 +146,7 @@ import util
 import struct
 import urllib
 import string
+import obsolete
 import pushkey
 
 import changegroup, error
@@ -446,7 +447,7 @@ class bundle20(object):
             for chunk in part.getchunks():
                 yield chunk
         self.ui.debug('end of bundle\n')
-        yield '\0\0'
+        yield _pack(_fpartheadersize, 0)
 
     def _paramchunk(self):
         """return a encoded version of all stream parameters"""
@@ -775,6 +776,23 @@ class unbundlepart(unpackermixin):
             self.consumed = True
         return data
 
+capabilities = {'HG2X': (),
+                'b2x:listkeys': (),
+                'b2x:pushkey': (),
+                'b2x:changegroup': (),
+               }
+
+def getrepocaps(repo):
+    """return the bundle2 capabilities for a given repo
+
+    Exists to allow extensions (like evolution) to mutate the capabilities.
+    """
+    caps = capabilities.copy()
+    if obsolete._enabled:
+        supportedformat = tuple('V%i' % v for v in obsolete.formats)
+        caps['b2x:obsmarkers'] = supportedformat
+    return caps
+
 def bundle2caps(remote):
     """return the bundlecapabilities of a peer as dict"""
     raw = remote.capable('bundle2-exp')
@@ -782,6 +800,12 @@ def bundle2caps(remote):
         return {}
     capsblob = urllib.unquote(remote.capable('bundle2-exp'))
     return decodecaps(capsblob)
+
+def obsmarkersversion(caps):
+    """extract the list of supported obsmarkers versions from a bundle2caps dict
+    """
+    obscaps = caps.get('b2x:obsmarkers', ())
+    return [int(c[1:]) for c in obscaps if c.startswith('V')]
 
 @parthandler('b2x:changegroup')
 def handlechangegroup(op, inpart):
@@ -796,7 +820,7 @@ def handlechangegroup(op, inpart):
     # we need to make sure we trigger the creation of a transaction object used
     # for the whole processing scope.
     op.gettransaction()
-    cg = changegroup.unbundle10(inpart, 'UN')
+    cg = changegroup.cg1unpacker(inpart, 'UN')
     ret = changegroup.addchangegroup(op.repo, cg, 'bundle2', 'bundle2')
     op.records.add('changegroup', {'return': ret})
     if op.reply is not None:
@@ -808,13 +832,13 @@ def handlechangegroup(op, inpart):
     assert not inpart.read()
 
 @parthandler('b2x:reply:changegroup', ('return', 'in-reply-to'))
-def handlechangegroup(op, inpart):
+def handlereplychangegroup(op, inpart):
     ret = int(inpart.params['return'])
     replyto = int(inpart.params['in-reply-to'])
     op.records.add('changegroup', {'return': ret}, replyto)
 
 @parthandler('b2x:check:heads')
-def handlechangegroup(op, inpart):
+def handlecheckheads(op, inpart):
     """check that head of the repo did not change
 
     This is used to detect a push race when using unbundle.
@@ -899,3 +923,24 @@ def handlepushkeyreply(op, inpart):
     ret = int(inpart.params['return'])
     partid = int(inpart.params['in-reply-to'])
     op.records.add('pushkey', {'return': ret}, partid)
+
+@parthandler('b2x:obsmarkers')
+def handleobsmarker(op, inpart):
+    """add a stream of obsmarkers to the repo"""
+    tr = op.gettransaction()
+    new = op.repo.obsstore.mergemarkers(tr, inpart.read())
+    if new:
+        op.repo.ui.status(_('%i new obsolescence markers\n') % new)
+    op.records.add('obsmarkers', {'new': new})
+    if op.reply is not None:
+        rpart = op.reply.newpart('b2x:reply:obsmarkers')
+        rpart.addparam('in-reply-to', str(inpart.id), mandatory=False)
+        rpart.addparam('new', '%i' % new, mandatory=False)
+
+
+@parthandler('b2x:reply:obsmarkers', ('new', 'in-reply-to'))
+def handlepushkeyreply(op, inpart):
+    """retrieve the result of a pushkey request"""
+    ret = int(inpart.params['new'])
+    partid = int(inpart.params['in-reply-to'])
+    op.records.add('obsmarkers', {'new': ret}, partid)

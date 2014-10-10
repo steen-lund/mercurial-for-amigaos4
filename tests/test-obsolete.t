@@ -2,6 +2,8 @@
   > [phases]
   > # public changeset are not obsolete
   > publish=false
+  > [ui]
+  > logtemplate="{rev}:{node|short} ({phase}) [{tags} {bookmarks}] {desc|firstline}\n"
   > EOF
   $ mkcommit() {
   >    echo "$1" > "$1"
@@ -52,17 +54,13 @@ Killing a single changeset without replacement
   [255]
   $ hg debugobsolete -d '0 0' `getid kill_me` -u babar
   $ hg debugobsolete
-  97b7c2d76b1845ed3eb988cd612611e72406cef0 0 {'date': '0 0', 'user': 'babar'}
+  97b7c2d76b1845ed3eb988cd612611e72406cef0 0 (Thu Jan 01 00:00:00 1970 +0000) {'user': 'babar'}
 
 (test that mercurial is not confused)
 
   $ hg up null --quiet # having 0 as parent prevents it to be hidden
   $ hg tip
-  changeset:   -1:000000000000
-  tag:         tip
-  user:        
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  
+  -1:000000000000 (public) [tip ] 
   $ hg up --hidden tip --quiet
 
 Killing a single changeset with itself should fail
@@ -90,13 +88,13 @@ Killing a single changeset with replacement
   $ hg log -r 'hidden()' --template '{rev}:{node|short} {desc}\n' --hidden
   2:245bde4270cd add original_c
   $ hg debugrevlog -cd
-  # rev p1rev p2rev start   end deltastart base   p1   p2 rawsize totalsize compression heads
-      0    -1    -1     0    59          0    0    0    0      58        58           0     1
-      1     0    -1    59   118         59   59    0    0      58       116           0     1
-      2     1    -1   118   204         59   59   59    0      76       192           0     1
-      3     1    -1   204   271        204  204   59    0      66       258           0     2
+  # rev p1rev p2rev start   end deltastart base   p1   p2 rawsize totalsize compression heads chainlen
+      0    -1    -1     0    59          0    0    0    0      58        58           0     1        0
+      1     0    -1    59   118         59   59    0    0      58       116           0     1        0
+      2     1    -1   118   204         59   59   59    0      76       192           0     1        1
+      3     1    -1   204   271        204  204   59    0      66       258           0     2        0
   $ hg debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
 
 do it again (it read the obsstore before adding new changeset)
 
@@ -106,8 +104,8 @@ do it again (it read the obsstore before adding new changeset)
   created new head
   $ hg debugobsolete -d '1337 0' `getid new_c` `getid new_2_c`
   $ hg debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
 
 Register two markers with a missing node
 
@@ -118,10 +116,10 @@ Register two markers with a missing node
   $ hg debugobsolete -d '1338 0' `getid new_2_c` 1337133713371337133713371337133713371337
   $ hg debugobsolete -d '1339 0' 1337133713371337133713371337133713371337 `getid new_3_c`
   $ hg debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
 
 Refuse pathological nullid successors
   $ hg debugobsolete -d '9001 0' 1337133713371337133713371337133713371337 0000000000000000000000000000000000000000
@@ -133,59 +131,22 @@ Refuse pathological nullid successors
 Check that graphlog detect that a changeset is obsolete:
 
   $ hg log -G
-  @  changeset:   5:5601fb93a350
-  |  tag:         tip
-  |  parent:      1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add new_3_c
+  @  5:5601fb93a350 (draft) [tip ] add new_3_c
   |
-  o  changeset:   1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add b
+  o  1:7c3bad9141dc (draft) [ ] add b
   |
-  o  changeset:   0:1f0dee641bb7
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     add a
+  o  0:1f0dee641bb7 (draft) [ ] add a
   
 
 check that heads does not report them
 
   $ hg heads
-  changeset:   5:5601fb93a350
-  tag:         tip
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add new_3_c
-  
+  5:5601fb93a350 (draft) [tip ] add new_3_c
   $ hg heads --hidden
-  changeset:   5:5601fb93a350
-  tag:         tip
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add new_3_c
-  
-  changeset:   4:ca819180edb9
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add new_2_c
-  
-  changeset:   3:cdbce2fbb163
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add new_c
-  
-  changeset:   2:245bde4270cd
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add original_c
-  
+  5:5601fb93a350 (draft) [tip ] add new_3_c
+  4:ca819180edb9 (draft) [ ] add new_2_c
+  3:cdbce2fbb163 (draft) [ ] add new_c
+  2:245bde4270cd (draft) [ ] add original_c
 
 
 check that summary does not report them
@@ -212,13 +173,7 @@ check that summary does not report them
 check that various commands work well with filtering
 
   $ hg tip
-  changeset:   5:5601fb93a350
-  tag:         tip
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add new_3_c
-  
+  5:5601fb93a350 (draft) [tip ] add new_3_c
   $ hg log -r 6
   abort: unknown revision '6'!
   [255]
@@ -230,27 +185,13 @@ Check that public changeset are not accounted as obsolete:
 
   $ hg --hidden phase --public 2
   $ hg log -G
-  @  changeset:   5:5601fb93a350
-  |  tag:         tip
-  |  parent:      1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add new_3_c
+  @  5:5601fb93a350 (draft) [tip ] add new_3_c
   |
-  | o  changeset:   2:245bde4270cd
-  |/   user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add original_c
+  | o  2:245bde4270cd (public) [ ] add original_c
+  |/
+  o  1:7c3bad9141dc (public) [ ] add b
   |
-  o  changeset:   1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add b
-  |
-  o  changeset:   0:1f0dee641bb7
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     add a
+  o  0:1f0dee641bb7 (public) [ ] add a
   
 
 And that bumped changeset are detected
@@ -261,13 +202,7 @@ note that the bumped changeset (5:5601fb93a350) is not a direct successor of
 the public changeset
 
   $ hg log --hidden -r 'bumped()'
-  changeset:   5:5601fb93a350
-  tag:         tip
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add new_3_c
-  
+  5:5601fb93a350 (draft) [tip ] add new_3_c
 
 And that we can't push bumped changeset
 
@@ -297,27 +232,13 @@ We need to create a clone of 5 and add a special marker with a flag
   $ hg debugobsolete -d '1338 0' --flags 1 `getid new_3_c` `getid n3w_3_c`
   $ hg log -r 'bumped()'
   $ hg log -G
-  @  changeset:   6:6f9641995072
-  |  tag:         tip
-  |  parent:      1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add n3w_3_c
+  @  6:6f9641995072 (draft) [tip ] add n3w_3_c
   |
-  | o  changeset:   2:245bde4270cd
-  |/   user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add original_c
+  | o  2:245bde4270cd (public) [ ] add original_c
+  |/
+  o  1:7c3bad9141dc (public) [ ] add b
   |
-  o  changeset:   1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add b
-  |
-  o  changeset:   0:1f0dee641bb7
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     add a
+  o  0:1f0dee641bb7 (public) [ ] add a
   
 
 
@@ -336,28 +257,10 @@ Simple incoming test
   $ cd tmpc
   $ hg incoming ../tmpb
   comparing with ../tmpb
-  changeset:   0:1f0dee641bb7
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add a
-  
-  changeset:   1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add b
-  
-  changeset:   2:245bde4270cd
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add original_c
-  
-  changeset:   6:6f9641995072
-  tag:         tip
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add n3w_3_c
-  
+  0:1f0dee641bb7 (public) [ ] add a
+  1:7c3bad9141dc (public) [ ] add b
+  2:245bde4270cd (public) [ ] add original_c
+  6:6f9641995072 (draft) [tip ] add n3w_3_c
 
 Try to pull markers
 (extinct changeset are excluded but marker are pushed)
@@ -371,32 +274,32 @@ Try to pull markers
   added 4 changesets with 4 changes to 4 files (+1 heads)
   (run 'hg heads' to see heads, 'hg merge' to merge)
   $ hg debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
-  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 {'date': '1338 0', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
 
 Rollback//Transaction support
 
   $ hg debugobsolete -d '1340 0' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   $ hg debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
-  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 {'date': '1338 0', 'user': 'test'}
-  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0 {'date': '1340 0', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0 (Thu Jan 01 00:22:20 1970 +0000) {'user': 'test'}
   $ hg rollback -n
   repository tip rolled back to revision 3 (undo debugobsolete)
   $ hg rollback
   repository tip rolled back to revision 3 (undo debugobsolete)
   $ hg debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
-  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 {'date': '1338 0', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
 
   $ cd ..
 
@@ -410,21 +313,22 @@ Try to push markers
   adding manifests
   adding file changes
   added 4 changesets with 4 changes to 4 files (+1 heads)
-  $ hg -R tmpd debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
-  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 {'date': '1338 0', 'user': 'test'}
+  $ hg -R tmpd debugobsolete | sort
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
 
 Check obsolete keys are exchanged only if source has an obsolete store
 
   $ hg init empty
   $ hg --config extensions.debugkeys=debugkeys.py -R empty push tmpd
   pushing to tmpd
-  no changes found
   listkeys phases
   listkeys bookmarks
+  no changes found
+  listkeys phases
   [1]
 
 clone support
@@ -434,52 +338,26 @@ clone support
   updating to branch default
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg -R clone-dest log -G --hidden
-  @  changeset:   6:6f9641995072
-  |  tag:         tip
-  |  parent:      1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add n3w_3_c
+  @  6:6f9641995072 (draft) [tip ] add n3w_3_c
   |
-  | x  changeset:   5:5601fb93a350
-  |/   parent:      1:7c3bad9141dc
-  |    user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add new_3_c
+  | x  5:5601fb93a350 (draft) [ ] add new_3_c
+  |/
+  | x  4:ca819180edb9 (draft) [ ] add new_2_c
+  |/
+  | x  3:cdbce2fbb163 (draft) [ ] add new_c
+  |/
+  | o  2:245bde4270cd (public) [ ] add original_c
+  |/
+  o  1:7c3bad9141dc (public) [ ] add b
   |
-  | x  changeset:   4:ca819180edb9
-  |/   parent:      1:7c3bad9141dc
-  |    user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add new_2_c
-  |
-  | x  changeset:   3:cdbce2fbb163
-  |/   parent:      1:7c3bad9141dc
-  |    user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add new_c
-  |
-  | o  changeset:   2:245bde4270cd
-  |/   user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add original_c
-  |
-  o  changeset:   1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add b
-  |
-  o  changeset:   0:1f0dee641bb7
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     add a
+  o  0:1f0dee641bb7 (public) [ ] add a
   
   $ hg -R clone-dest debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
-  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 {'date': '1338 0', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
 
 
 Destination repo have existing data
@@ -489,7 +367,7 @@ On pull
 
   $ hg init tmpe
   $ cd tmpe
-  $ hg debugobsolete -d '1339 0' 2448244824482448244824482448244824482448 1339133913391339133913391339133913391339
+  $ hg debugobsolete -d '1339 0' 1339133913391339133913391339133913391339 ca819180edb99ed25ceafb3e9584ac287e240b00
   $ hg pull ../tmpb
   pulling from ../tmpb
   requesting all changes
@@ -499,12 +377,12 @@ On pull
   added 4 changesets with 4 changes to 4 files (+1 heads)
   (run 'hg heads' to see heads, 'hg merge' to merge)
   $ hg debugobsolete
-  2448244824482448244824482448244824482448 1339133913391339133913391339133913391339 0 {'date': '1339 0', 'user': 'test'}
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
-  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 {'date': '1338 0', 'user': 'test'}
+  1339133913391339133913391339133913391339 ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
 
 
 On push
@@ -515,78 +393,45 @@ On push
   no changes found
   [1]
   $ hg -R ../tmpc debugobsolete
-  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C {'date': '56 12', 'user': 'test'}
-  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 {'date': '1337 0', 'user': 'test'}
-  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 {'date': '1338 0', 'user': 'test'}
-  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 {'date': '1339 0', 'user': 'test'}
-  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 {'date': '1338 0', 'user': 'test'}
-  2448244824482448244824482448244824482448 1339133913391339133913391339133913391339 0 {'date': '1339 0', 'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1339133913391339133913391339133913391339 ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
 
 detect outgoing obsolete and unstable
 ---------------------------------------
 
 
   $ hg log -G
-  o  changeset:   3:6f9641995072
-  |  tag:         tip
-  |  parent:      1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add n3w_3_c
+  o  3:6f9641995072 (draft) [tip ] add n3w_3_c
   |
-  | o  changeset:   2:245bde4270cd
-  |/   user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add original_c
+  | o  2:245bde4270cd (public) [ ] add original_c
+  |/
+  o  1:7c3bad9141dc (public) [ ] add b
   |
-  o  changeset:   1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add b
-  |
-  o  changeset:   0:1f0dee641bb7
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     add a
+  o  0:1f0dee641bb7 (public) [ ] add a
   
   $ hg up 'desc("n3w_3_c")'
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ mkcommit original_d
   $ mkcommit original_e
-  $ hg debugobsolete `getid original_d` -d '0 0'
+  $ hg debugobsolete --record-parents `getid original_d` -d '0 0'
+  $ hg debugobsolete | grep `getid original_d`
+  94b33453f93bdb8d457ef9b770851a618bf413e1 0 {6f96419950729f3671185b847352890f074f7557} (Thu Jan 01 00:00:00 1970 +0000) {'user': 'test'}
   $ hg log -r 'obsolete()'
-  changeset:   4:94b33453f93b
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add original_d
-  
+  4:94b33453f93b (draft) [ ] add original_d
   $ hg log -G -r '::unstable()'
-  @  changeset:   5:cda648ca50f5
-  |  tag:         tip
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add original_e
+  @  5:cda648ca50f5 (draft) [tip ] add original_e
   |
-  x  changeset:   4:94b33453f93b
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add original_d
+  x  4:94b33453f93b (draft) [ ] add original_d
   |
-  o  changeset:   3:6f9641995072
-  |  parent:      1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add n3w_3_c
+  o  3:6f9641995072 (draft) [ ] add n3w_3_c
   |
-  o  changeset:   1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add b
+  o  1:7c3bad9141dc (public) [ ] add b
   |
-  o  changeset:   0:1f0dee641bb7
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     add a
+  o  0:1f0dee641bb7 (public) [ ] add a
   
 
 refuse to push obsolete changeset
@@ -615,38 +460,12 @@ Don't try to push extinct changeset
   $ hg out  ../tmpf
   comparing with ../tmpf
   searching for changes
-  changeset:   0:1f0dee641bb7
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add a
-  
-  changeset:   1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add b
-  
-  changeset:   2:245bde4270cd
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add original_c
-  
-  changeset:   3:6f9641995072
-  parent:      1:7c3bad9141dc
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add n3w_3_c
-  
-  changeset:   4:94b33453f93b
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add original_d
-  
-  changeset:   5:cda648ca50f5
-  tag:         tip
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add original_e
-  
+  0:1f0dee641bb7 (public) [ ] add a
+  1:7c3bad9141dc (public) [ ] add b
+  2:245bde4270cd (public) [ ] add original_c
+  3:6f9641995072 (draft) [ ] add n3w_3_c
+  4:94b33453f93b (draft) [ ] add original_d
+  5:cda648ca50f5 (draft) [tip ] add original_e
   $ hg push ../tmpf -f # -f because be push unstable too
   pushing to ../tmpf
   searching for changes
@@ -666,37 +485,17 @@ no warning displayed
 Do not warn about new head when the new head is a successors of a remote one
 
   $ hg log -G
-  @  changeset:   5:cda648ca50f5
-  |  tag:         tip
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add original_e
+  @  5:cda648ca50f5 (draft) [tip ] add original_e
   |
-  x  changeset:   4:94b33453f93b
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add original_d
+  x  4:94b33453f93b (draft) [ ] add original_d
   |
-  o  changeset:   3:6f9641995072
-  |  parent:      1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add n3w_3_c
+  o  3:6f9641995072 (draft) [ ] add n3w_3_c
   |
-  | o  changeset:   2:245bde4270cd
-  |/   user:        test
-  |    date:        Thu Jan 01 00:00:00 1970 +0000
-  |    summary:     add original_c
+  | o  2:245bde4270cd (public) [ ] add original_c
+  |/
+  o  1:7c3bad9141dc (public) [ ] add b
   |
-  o  changeset:   1:7c3bad9141dc
-  |  user:        test
-  |  date:        Thu Jan 01 00:00:00 1970 +0000
-  |  summary:     add b
-  |
-  o  changeset:   0:1f0dee641bb7
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     add a
+  o  0:1f0dee641bb7 (public) [ ] add a
   
   $ hg up -q 'desc(n3w_3_c)'
   $ mkcommit obsolete_e
@@ -705,13 +504,7 @@ Do not warn about new head when the new head is a successors of a remote one
   $ hg outgoing ../tmpf # parasite hg outgoing testin
   comparing with ../tmpf
   searching for changes
-  changeset:   6:3de5eca88c00
-  tag:         tip
-  parent:      3:6f9641995072
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add obsolete_e
-  
+  6:3de5eca88c00 (draft) [tip ] add obsolete_e
   $ hg push ../tmpf
   pushing to ../tmpf
   searching for changes
@@ -719,6 +512,74 @@ Do not warn about new head when the new head is a successors of a remote one
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files (+1 heads)
+
+test relevance computation
+---------------------------------------
+
+Checking simple case of "marker relevance".
+
+
+Reminder of the repo situation
+
+  $ hg log --hidden --graph
+  @  6:3de5eca88c00 (draft) [tip ] add obsolete_e
+  |
+  | x  5:cda648ca50f5 (draft) [ ] add original_e
+  | |
+  | x  4:94b33453f93b (draft) [ ] add original_d
+  |/
+  o  3:6f9641995072 (draft) [ ] add n3w_3_c
+  |
+  | o  2:245bde4270cd (public) [ ] add original_c
+  |/
+  o  1:7c3bad9141dc (public) [ ] add b
+  |
+  o  0:1f0dee641bb7 (public) [ ] add a
+  
+
+List of all markers
+
+  $ hg debugobsolete
+  1339133913391339133913391339133913391339 ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  94b33453f93bdb8d457ef9b770851a618bf413e1 0 {6f96419950729f3671185b847352890f074f7557} (Thu Jan 01 00:00:00 1970 +0000) {'user': 'test'}
+  cda648ca50f50482b7055c0b0c4c117bba6733d9 3de5eca88c00aa039da7399a220f4a5221faa585 0 (*) {'user': 'test'} (glob)
+
+List of changesets with no chain
+
+  $ hg debugobsolete --hidden --rev ::2
+
+List of changesets that are included on marker chain
+
+  $ hg debugobsolete --hidden --rev 6
+  cda648ca50f50482b7055c0b0c4c117bba6733d9 3de5eca88c00aa039da7399a220f4a5221faa585 0 (*) {'user': 'test'} (glob)
+
+List of changesets with a longer chain, (including a pruned children)
+
+  $ hg debugobsolete --hidden --rev 3
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  1339133913391339133913391339133913391339 ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  94b33453f93bdb8d457ef9b770851a618bf413e1 0 {6f96419950729f3671185b847352890f074f7557} (Thu Jan 01 00:00:00 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
+
+List of both
+
+  $ hg debugobsolete --hidden --rev 3::6
+  1337133713371337133713371337133713371337 5601fb93a350734d935195fee37f4054c529ff39 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  1339133913391339133913391339133913391339 ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:19 1970 +0000) {'user': 'test'}
+  245bde4270cd1072a27757984f9cda8ba26f08ca cdbce2fbb16313928851e97e0d85413f3f7eb77f C (Thu Jan 01 00:00:44 1970 -0000) {'user': 'test'}
+  5601fb93a350734d935195fee37f4054c529ff39 6f96419950729f3671185b847352890f074f7557 1 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  94b33453f93bdb8d457ef9b770851a618bf413e1 0 {6f96419950729f3671185b847352890f074f7557} (Thu Jan 01 00:00:00 1970 +0000) {'user': 'test'}
+  ca819180edb99ed25ceafb3e9584ac287e240b00 1337133713371337133713371337133713371337 0 (Thu Jan 01 00:22:18 1970 +0000) {'user': 'test'}
+  cda648ca50f50482b7055c0b0c4c117bba6733d9 3de5eca88c00aa039da7399a220f4a5221faa585 0 (*) {'user': 'test'} (glob)
+  cdbce2fbb16313928851e97e0d85413f3f7eb77f ca819180edb99ed25ceafb3e9584ac287e240b00 0 (Thu Jan 01 00:22:17 1970 +0000) {'user': 'test'}
 
 #if serve
 
@@ -781,13 +642,7 @@ Checking _enable=False warning if obsolete marker exists
   $ echo "obs=!" >> $HGRCPATH
   $ hg log -r tip
   obsolete feature not enabled but 68 markers found!
-  changeset:   68:c15e9edfca13
-  tag:         tip
-  parent:      7:50c51b361e60
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add celestine
-  
+  68:c15e9edfca13 (draft) [tip ] add celestine
 
 reenable for later test
 
@@ -813,40 +668,19 @@ This test issue 3805
   $ hg ci --amend
   $ cd ../other-issue3805
   $ hg log -G
-  @  changeset:   0:193e9254ce7e
-     tag:         tip
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     A
+  @  0:193e9254ce7e (draft) [tip ] A
   
   $ hg log -G -R ../repo-issue3805
-  @  changeset:   2:3816541e5485
-     tag:         tip
-     parent:      -1:000000000000
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     A
+  @  2:3816541e5485 (draft) [tip ] A
   
   $ hg incoming
   comparing with $TESTTMP/tmpe/repo-issue3805 (glob)
   searching for changes
-  changeset:   2:3816541e5485
-  tag:         tip
-  parent:      -1:000000000000
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     A
-  
+  2:3816541e5485 (draft) [tip ] A
   $ hg incoming --bundle ../issue3805.hg
   comparing with $TESTTMP/tmpe/repo-issue3805 (glob)
   searching for changes
-  changeset:   2:3816541e5485
-  tag:         tip
-  parent:      -1:000000000000
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     A
-  
+  2:3816541e5485 (draft) [tip ] A
   $ hg outgoing
   comparing with $TESTTMP/tmpe/repo-issue3805 (glob)
   searching for changes
@@ -861,13 +695,7 @@ This test issue 3805
   $ hg incoming http://localhost:$HGPORT
   comparing with http://localhost:$HGPORT/
   searching for changes
-  changeset:   1:3816541e5485
-  tag:         tip
-  parent:      -1:000000000000
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     A
-  
+  1:3816541e5485 (public) [tip ] A
   $ hg outgoing http://localhost:$HGPORT
   comparing with http://localhost:$HGPORT/
   searching for changes
@@ -902,18 +730,9 @@ Test that a local tag blocks a changeset from being hidden
 
   $ hg tag -l visible -r 0 --hidden
   $ hg log -G
-  @  changeset:   2:3816541e5485
-     tag:         tip
-     parent:      -1:000000000000
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     A
+  @  2:3816541e5485 (draft) [tip ] A
   
-  x  changeset:   0:193e9254ce7e
-     tag:         visible
-     user:        test
-     date:        Thu Jan 01 00:00:00 1970 +0000
-     summary:     A
+  x  0:193e9254ce7e (draft) [visible ] A
   
 Test that removing a local tag does not cause some commands to fail
 
