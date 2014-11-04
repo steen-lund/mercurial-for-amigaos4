@@ -102,12 +102,12 @@ def reposetup(ui, repo):
                 except error.LockError:
                     pass
 
-                # First check if there were files specified on the
-                # command line.  If there were, and none of them were
+                # First check if paths or patterns were specified on the
+                # command line.  If there were, and they don't match any
                 # largefiles, we should just bail here and let super
                 # handle it -- thus gaining a big performance boost.
                 lfdirstate = lfutil.openlfdirstate(ui, self)
-                if match.files() and not match.anypats():
+                if not match.always():
                     for f in lfdirstate:
                         if match(f):
                             break
@@ -263,7 +263,7 @@ def reposetup(ui, repo):
                 # and so on), this code path is used to avoid:
                 # (1) updating standins, because standins should
                 #     be already updated at this point
-                # (2) aborting when stadnins are matched by "match",
+                # (2) aborting when standins are matched by "match",
                 #     because automated committing may specify them directly
                 #
                 if getattr(self, "_isrebasing", False) or \
@@ -284,8 +284,7 @@ def reposetup(ui, repo):
                 # Case 1: user calls commit with no specific files or
                 # include/exclude patterns: refresh and commit all files that
                 # are "dirty".
-                if ((match is None) or
-                    (not match.anypats() and not match.files())):
+                if match is None or match.always():
                     # Spend a bit of time here to get a list of files we know
                     # are modified so we can compare only against those.
                     # It can cost a lot of time (several seconds)
