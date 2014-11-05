@@ -265,9 +265,8 @@ def symbolset(repo, subset, x):
     return stringset(repo, subset, x)
 
 def rangeset(repo, subset, x, y):
-    cl = baseset(repo.changelog)
-    m = getset(repo, cl, x)
-    n = getset(repo, cl, y)
+    m = getset(repo, fullreposet(repo), x)
+    n = getset(repo, fullreposet(repo), y)
 
     if not m or not n:
         return baseset()
@@ -371,7 +370,7 @@ def ancestorspec(repo, subset, x, n):
         raise error.ParseError(_("~ expects a number"))
     ps = set()
     cl = repo.changelog
-    for r in getset(repo, baseset(cl), x):
+    for r in getset(repo, fullreposet(repo), x):
         for i in range(n):
             r = cl.parentrevs(r)[0]
         ps.add(r)
@@ -573,7 +572,7 @@ def children(repo, subset, x):
     """``children(set)``
     Child changesets of changesets in set.
     """
-    s = getset(repo, baseset(repo), x)
+    s = getset(repo, fullreposet(repo), x)
     cs = _children(repo, subset, s)
     return subset & cs
 
@@ -1258,7 +1257,7 @@ def parentspec(repo, subset, x, n):
         raise error.ParseError(_("^ expects a number 0, 1, or 2"))
     ps = set()
     cl = repo.changelog
-    for r in getset(repo, baseset(cl), x):
+    for r in getset(repo, fullreposet(repo), x):
         if n == 0:
             ps.add(r)
         elif n == 1:
@@ -1384,7 +1383,7 @@ def matching(repo, subset, x):
     # i18n: "matching" is a keyword
     l = getargs(x, 1, 2, _("matching takes 1 or 2 arguments"))
 
-    revs = getset(repo, baseset(repo.changelog), l[0])
+    revs = getset(repo, fullreposet(repo), l[0])
 
     fieldlist = ['metadata']
     if len(l) > 1:
@@ -2551,7 +2550,7 @@ class addset(abstractsmartset):
         return it()
 
     def _trysetasclist(self):
-        """populate the _asclist attribut if possible and necessary"""
+        """populate the _asclist attribute if possible and necessary"""
         if self._genlist is not None and self._asclist is None:
             self._asclist = sorted(self._genlist)
 
@@ -2744,7 +2743,7 @@ class generatorset(abstractsmartset):
 
         # We have to use this complex iteration strategy to allow multiple
         # iterations at the same time. We need to be able to catch revision
-        # removed from `consumegen` and added to genlist in another instance.
+        # removed from _consumegen and added to genlist in another instance.
         #
         # Getting rid of it would provide an about 15% speed up on this
         # iteration.
@@ -2939,17 +2938,15 @@ class _spanset(abstractsmartset):
 class fullreposet(_spanset):
     """a set containing all revisions in the repo
 
-    This class exists to host special optimisation.
+    This class exists to host special optimization.
     """
 
     def __init__(self, repo):
         super(fullreposet, self).__init__(repo)
 
     def __and__(self, other):
-        """fullrepo & other -> other
-
-        As self contains the whole repo, all of the other set should also be in
-        self. Therefor `self & other = other`.
+        """As self contains the whole repo, all of the other set should also be
+        in self. Therefore `self & other = other`.
 
         This boldly assumes the other contains valid revs only.
         """

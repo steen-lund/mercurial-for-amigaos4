@@ -16,11 +16,13 @@ Should diff cloned directories:
   Only in a: b
   [1]
 
-  $ echo "[extdiff]" >> $HGRCPATH
-  $ echo "cmd.falabala=echo" >> $HGRCPATH
-  $ echo "opts.falabala=diffing" >> $HGRCPATH
-  $ echo "cmd.edspace=echo" >> $HGRCPATH
-  $ echo 'opts.edspace="name  <user@example.com>"' >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extdiff]
+  > cmd.falabala = echo
+  > opts.falabala = diffing
+  > cmd.edspace = echo
+  > opts.edspace = "name  <user@example.com>"
+  > EOF
 
   $ hg falabala
   diffing a.000000000000 a
@@ -188,6 +190,26 @@ Test with revsets:
 
   $ hg extdif -p echo -r "0::1"
   */extdiff.*/a.8a5febb7f867/a a.34eed99112ab/a (glob)
+  [1]
+
+Fallback to merge-tools.tool.executable|regkey
+  $ mkdir dir
+  $ cat > 'dir/tool.sh' << EOF
+  > #!/bin/sh
+  > echo "** custom diff **"
+  > EOF
+  $ chmod +x dir/tool.sh
+  $ tool=`pwd`/dir/tool.sh
+  $ hg --debug tl --config extdiff.tl= --config merge-tools.tl.executable=$tool
+  making snapshot of 2 files from rev * (glob)
+    a
+    b
+  making snapshot of 2 files from working directory
+    a
+    b
+  running "'$TESTTMP/a/dir/tool.sh'  'a.*' 'a'" in */extdiff.* (glob)
+  ** custom diff **
+  cleaning up temp directory
   [1]
 
   $ cd ..

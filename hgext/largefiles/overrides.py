@@ -11,11 +11,10 @@
 import os
 import copy
 
-from mercurial import hg, commands, util, cmdutil, scmutil, match as match_, \
+from mercurial import hg, util, cmdutil, scmutil, match as match_, \
         archival, pathutil, revset
 from mercurial.i18n import _
 from mercurial.node import hex
-from hgext import rebase
 
 import lfutil
 import lfcommands
@@ -35,7 +34,7 @@ def installnormalfilesmatchfn(manifest):
         m._fmap = set(m._files)
         m._always = False
         origmatchfn = m.matchfn
-        m.matchfn = lambda f: notlfile(f) and origmatchfn(f) or None
+        m.matchfn = lambda f: notlfile(f) and origmatchfn(f)
         return m
     oldmatch = installmatchfn(overridematch)
 
@@ -63,10 +62,10 @@ def installmatchandpatsfn(f):
 
 def restorematchandpatsfn():
     '''restores scmutil.matchandpats to what it was before
-    installnormalfilesmatchandpatsfn was called.  no-op if scmutil.matchandpats
+    installmatchandpatsfn was called. No-op if scmutil.matchandpats
     is its original function.
 
-    Note that n calls to installnormalfilesmatchandpatsfn will require n calls
+    Note that n calls to installmatchandpatsfn will require n calls
     to restore matchfn to reverse'''
     scmutil.matchandpats = getattr(scmutil.matchandpats, 'oldmatchandpats',
             scmutil.matchandpats)
@@ -576,7 +575,6 @@ def overridecopy(orig, ui, repo, pats, opts, rename=False):
                 lfile = lambda f: lfutil.standin(f) in manifest
                 m._files = [lfutil.standin(f) for f in m._files if lfile(f)]
                 m._fmap = set(m._files)
-                m._always = False
                 origmatchfn = m.matchfn
                 m.matchfn = lambda f: (lfutil.isstandin(f) and
                                     (f in manifest) and
@@ -684,7 +682,6 @@ def overriderevert(orig, ui, repo, *pats, **opts):
             m._files = [tostandin(f) for f in m._files]
             m._files = [f for f in m._files if f is not None]
             m._fmap = set(m._files)
-            m._always = False
             origmatchfn = m.matchfn
             def matchfn(f):
                 if lfutil.isstandin(f):
@@ -712,37 +709,14 @@ def overriderevert(orig, ui, repo, *pats, **opts):
     finally:
         wlock.release()
 
-# When we rebase a repository with remotely changed largefiles, we need to
-# take some extra care so that the largefiles are correctly updated in the
-# working copy
+# after pulling changesets, we need to take some extra care to get
+# largefiles updated remotely
 def overridepull(orig, ui, repo, source=None, **opts):
     revsprepull = len(repo)
     if not source:
         source = 'default'
     repo.lfpullsource = source
-    if opts.get('rebase', False):
-        repo._isrebasing = True
-        try:
-            if opts.get('update'):
-                del opts['update']
-                ui.debug('--update and --rebase are not compatible, ignoring '
-                         'the update flag\n')
-            del opts['rebase']
-            origpostincoming = commands.postincoming
-            def _dummy(*args, **kwargs):
-                pass
-            commands.postincoming = _dummy
-            try:
-                result = commands.pull(ui, repo, source, **opts)
-            finally:
-                commands.postincoming = origpostincoming
-            revspostpull = len(repo)
-            if revspostpull > revsprepull:
-                result = result or rebase.rebase(ui, repo)
-        finally:
-            repo._isrebasing = False
-    else:
-        result = orig(ui, repo, source, **opts)
+    result = orig(ui, repo, source, **opts)
     revspostpull = len(repo)
     lfrevs = opts.get('lfrev', [])
     if opts.get('all_largefiles'):
@@ -816,11 +790,14 @@ def hgclone(orig, ui, opts, *args, **kwargs):
     return result
 
 def overriderebase(orig, ui, repo, **opts):
-    repo._isrebasing = True
+    resuming = opts.get('continue')
+    repo._lfcommithooks.append(lfutil.automatedcommithook(resuming))
+    repo._lfstatuswriters.append(lambda *msg, **opts: None)
     try:
         return orig(ui, repo, **opts)
     finally:
-        repo._isrebasing = False
+        repo._lfstatuswriters.pop()
+        repo._lfcommithooks.pop()
 
 def overridearchive(orig, repo, dest, node, kind, decode=True, matchfn=None,
             prefix=None, mtime=None, subrepos=None):
@@ -1302,9 +1279,10 @@ def mergeupdate(orig, repo, node, branchmerge, force, partial,
             newstandins = lfutil.getstandinsstate(repo)
             filelist = lfutil.getlfilestoupdate(oldstandins, newstandins)
 
-        # suppress status message while automated committing
-        printmessage = not (getattr(repo, "_isrebasing", False) or
-                            getattr(repo, "_istransplanting", False))
+        printmessage = None
+        if getattr(repo, "_istransplanting", False):
+            # suppress status message while automated committing
+            printmessage = False
         lfcommands.updatelfiles(repo.ui, repo, filelist=filelist,
                                 printmessage=printmessage,
                                 normallookup=partial)
