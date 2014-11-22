@@ -272,7 +272,7 @@ Test extension help:
        schemes       extend schemes with shortcuts to repository swarms
        share         share a common history between several working directories
        shelve        save and restore changes to the working directory
-       strip         strip changesets and their descendents from history
+       strip         strip changesets and their descendants from history
        transplant    command to transplant changesets from another branch
        win32mbcs     allow the use of MBCS paths with problematic encodings
        zeroconf      discover and advertise repositories on the local network
@@ -500,6 +500,7 @@ Test command without options
    -a --text                treat all files as text
    -g --git                 use git extended diff format
       --nodates             omit dates from diff headers
+      --noprefix            omit a/ and b/ prefixes from filenames
    -p --show-function       show which function each change is in
       --reverse             produce a diff that undoes the changes
    -w --ignore-all-space    ignore white space when comparing lines
@@ -1943,6 +1944,9 @@ Dish up an empty repo; serve it cold.
   <tr><td>-f</td>
   <td>--force</td>
   <td>remove (and delete) file even if added or modified</td></tr>
+  <tr><td>-S</td>
+  <td>--subrepos</td>
+  <td>recurse into subrepositories</td></tr>
   <tr><td>-I</td>
   <td>--include PATTERN [+]</td>
   <td>include names matching the given patterns</td></tr>

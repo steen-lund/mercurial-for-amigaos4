@@ -141,6 +141,7 @@ diffwsopts = [
     ]
 
 diffopts2 = [
+    ('', 'noprefix', None, _('omit a/ and b/ prefixes from filenames')),
     ('p', 'show-function', None, _('show which function each change is in')),
     ('', 'reverse', None, _('produce a diff that undoes the changes')),
     ] + diffwsopts + [
@@ -743,9 +744,7 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
                 # update state
                 state['current'] = [node]
                 hbisect.save_state(repo, state)
-                status = util.system(command,
-                                     environ={'HG_NODE': hex(node)},
-                                     out=ui.fout)
+                status = ui.system(command, environ={'HG_NODE': hex(node)})
                 if status == 125:
                     transition = "skip"
                 elif status == 0:
@@ -1573,9 +1572,8 @@ def config(ui, repo, *values, **opts):
             fp.close()
 
         editor = ui.geteditor()
-        util.system("%s \"%s\"" % (editor, f),
-                    onerr=util.Abort, errprefix=_("edit failed"),
-                    out=ui.fout)
+        ui.system("%s \"%s\"" % (editor, f),
+                  onerr=util.Abort, errprefix=_("edit failed"))
         return
 
     for f in scmutil.rcpath():
@@ -2653,22 +2651,13 @@ def debugrevlog(ui, repo, file_=None, **opts):
                  " rawsize totalsize compression heads chainlen\n")
         ts = 0
         heads = set()
-        rindex = r.index
-
-        def chainbaseandlen(rev):
-            clen = 0
-            base = rindex[rev][3]
-            while base != rev:
-                clen += 1
-                rev = base
-                base = rindex[rev][3]
-            return base, clen
 
         for rev in xrange(numrevs):
             dbase = r.deltaparent(rev)
             if dbase == -1:
                 dbase = rev
-            cbase, clen = chainbaseandlen(rev)
+            cbase = r.chainbase(rev)
+            clen = r.chainlen(rev)
             p1, p2 = r.parentrevs(rev)
             rs = r.rawsize(rev)
             ts = ts + rs
@@ -5097,7 +5086,7 @@ def recover(ui, repo):
     [('A', 'after', None, _('record delete for missing files')),
     ('f', 'force', None,
      _('remove (and delete) file even if added or modified')),
-    ] + walkopts,
+    ] + subrepoopts + walkopts,
     _('[OPTION]... FILE...'),
     inferrepo=True)
 def remove(ui, repo, *pats, **opts):
@@ -5137,62 +5126,13 @@ def remove(ui, repo, *pats, **opts):
     Returns 0 on success, 1 if any warnings encountered.
     """
 
-    ret = 0
     after, force = opts.get('after'), opts.get('force')
     if not pats and not after:
         raise util.Abort(_('no files specified'))
 
     m = scmutil.match(repo[None], pats, opts)
-    s = repo.status(match=m, clean=True)
-    modified, added, deleted, clean = s[0], s[1], s[3], s[6]
-
-    # warn about failure to delete explicit files/dirs
-    wctx = repo[None]
-    for f in m.files():
-        if f in repo.dirstate or f in wctx.dirs():
-            continue
-        if os.path.exists(m.rel(f)):
-            if os.path.isdir(m.rel(f)):
-                ui.warn(_('not removing %s: no tracked files\n') % m.rel(f))
-            else:
-                ui.warn(_('not removing %s: file is untracked\n') % m.rel(f))
-        # missing files will generate a warning elsewhere
-        ret = 1
-
-    if force:
-        list = modified + deleted + clean + added
-    elif after:
-        list = deleted
-        for f in modified + added + clean:
-            ui.warn(_('not removing %s: file still exists\n') % m.rel(f))
-            ret = 1
-    else:
-        list = deleted + clean
-        for f in modified:
-            ui.warn(_('not removing %s: file is modified (use -f'
-                      ' to force removal)\n') % m.rel(f))
-            ret = 1
-        for f in added:
-            ui.warn(_('not removing %s: file has been marked for add'
-                      ' (use forget to undo)\n') % m.rel(f))
-            ret = 1
-
-    for f in sorted(list):
-        if ui.verbose or not m.exact(f):
-            ui.status(_('removing %s\n') % m.rel(f))
-
-    wlock = repo.wlock()
-    try:
-        if not after:
-            for f in list:
-                if f in added:
-                    continue # we never unlink added files on remove
-                util.unlinkpath(repo.wjoin(f), ignoremissing=True)
-        repo[None].forget(list)
-    finally:
-        wlock.release()
-
-    return ret
+    subrepos = opts.get('subrepos')
+    return cmdutil.remove(ui, repo, m, "", after, force, subrepos)
 
 @command('rename|move|mv',
     [('A', 'after', None, _('record a rename that has already occurred')),
@@ -6245,7 +6185,6 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False,
             raise util.Abort(_("uncommitted changes"))
         if rev is None:
             rev = repo[repo[None].branch()].rev()
-        mergemod._checkunknown(repo, repo[None], repo[rev])
 
     repo.ui.setconfig('ui', 'forcemerge', tool, 'update')
 

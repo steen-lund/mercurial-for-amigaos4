@@ -1559,14 +1559,21 @@ class GitDiffRequired(Exception):
     pass
 
 def diffopts(ui, opts=None, untrusted=False, section='diff'):
-    def get(key, name=None, getter=ui.configbool):
-        return ((opts and opts.get(key)) or
-                getter(section, name or key, None, untrusted=untrusted))
+    def get(key, name=None, getter=ui.configbool, forceplain=None):
+        if opts:
+            v = opts.get(key)
+            if v:
+                return v
+        if forceplain is not None and ui.plain():
+            return forceplain
+        return getter(section, name or key, None, untrusted=untrusted)
+
     return mdiff.diffopts(
         text=opts and opts.get('text'),
         git=get('git'),
         nodates=get('nodates'),
         nobinary=get('nobinary'),
+        noprefix=get('noprefix', forceplain=False),
         showfunc=get('show_function', 'showfunc'),
         ignorews=get('ignore_all_space', 'ignorews'),
         ignorewsamount=get('ignore_space_change', 'ignorewsamount'),
@@ -1731,9 +1738,15 @@ def trydiff(repo, revs, ctx1, ctx2, modified, added, removed,
         s.update(text)
         return s.hexdigest()
 
+    if opts.noprefix:
+        aprefix = bprefix = ''
+    else:
+        aprefix = 'a/'
+        bprefix = 'b/'
+
     def diffline(a, b, revs):
         if opts.git:
-            line = 'diff --git a/%s b/%s\n' % (a, b)
+            line = 'diff --git %s%s %s%s\n' % (aprefix, a, bprefix, b)
         elif not repo.ui.quiet:
             if revs:
                 revinfo = ' '.join(["-r %s" % rev for rev in revs])

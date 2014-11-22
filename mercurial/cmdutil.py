@@ -113,7 +113,7 @@ def logmessage(ui, opts):
 def mergeeditform(ctxorbool, baseform):
     """build appropriate editform from ctxorbool and baseform
 
-    'cxtorbool' is one of a ctx to be committed, or a bool whether
+    'ctxorbool' is one of a ctx to be committed, or a bool whether
     merging is committed.
 
     This returns editform 'baseform' with '.merge' if merging is
@@ -1783,8 +1783,8 @@ def _makelogrevset(repo, pats, opts, revs):
         # If we're forced to take the slowpath it means we're following
         # at least one pattern/directory, so don't bother with rename tracking.
         if follow and not match.always() and not slowpath:
-            # _makelogfilematcher expects its files argument to be relative to
-            # the repo root, so use match.files(), not pats.
+            # _makefollowlogfilematcher expects its files argument to be
+            # relative to the repo root, so use match.files(), not pats.
             filematcher = _makefollowlogfilematcher(repo, match.files(),
                                                     followfirst)
         else:
@@ -1982,9 +1982,9 @@ def add(ui, repo, match, dryrun, listsubrepos, prefix, explicitonly):
     abort, warn = scmutil.checkportabilityalert(ui)
     if abort or warn:
         cca = scmutil.casecollisionauditor(ui, abort, repo.dirstate)
-    for f in repo.walk(match):
+    for f in wctx.walk(match):
         exact = match.exact(f)
-        if exact or not explicitonly and f not in repo.dirstate:
+        if exact or not explicitonly and f not in wctx:
             if cca:
                 cca(f)
             names.append(f)
@@ -2051,6 +2051,90 @@ def forget(ui, repo, match, prefix, explicitonly):
     bad.extend(f for f in rejected if f in match.files())
     forgot.extend(forget)
     return bad, forgot
+
+def remove(ui, repo, m, prefix, after, force, subrepos):
+    join = lambda f: os.path.join(prefix, f)
+    ret = 0
+    s = repo.status(match=m, clean=True)
+    modified, added, deleted, clean = s[0], s[1], s[3], s[6]
+
+    wctx = repo[None]
+
+    for subpath in sorted(wctx.substate):
+        def matchessubrepo(matcher, subpath):
+            if matcher.exact(subpath):
+                return True
+            for f in matcher.files():
+                if f.startswith(subpath):
+                    return True
+            return False
+
+        if subrepos or matchessubrepo(m, subpath):
+            sub = wctx.sub(subpath)
+            try:
+                submatch = matchmod.narrowmatcher(subpath, m)
+                if sub.removefiles(ui, submatch, prefix, after, force,
+                                   subrepos):
+                    ret = 1
+            except error.LookupError:
+                ui.status(_("skipping missing subrepository: %s\n")
+                               % join(subpath))
+
+    # warn about failure to delete explicit files/dirs
+    for f in m.files():
+        def insubrepo():
+            for subpath in wctx.substate:
+                if f.startswith(subpath):
+                    return True
+            return False
+
+        if f in repo.dirstate or f in wctx.dirs() or f == '.' or insubrepo():
+            continue
+
+        if os.path.exists(m.rel(join(f))):
+            if os.path.isdir(m.rel(join(f))):
+                ui.warn(_('not removing %s: no tracked files\n')
+                        % m.rel(join(f)))
+            else:
+                ui.warn(_('not removing %s: file is untracked\n')
+                        % m.rel(join(f)))
+        # missing files will generate a warning elsewhere
+        ret = 1
+
+    if force:
+        list = modified + deleted + clean + added
+    elif after:
+        list = deleted
+        for f in modified + added + clean:
+            ui.warn(_('not removing %s: file still exists\n') % m.rel(join(f)))
+            ret = 1
+    else:
+        list = deleted + clean
+        for f in modified:
+            ui.warn(_('not removing %s: file is modified (use -f'
+                      ' to force removal)\n') % m.rel(join(f)))
+            ret = 1
+        for f in added:
+            ui.warn(_('not removing %s: file has been marked for add'
+                      ' (use forget to undo)\n') % m.rel(join(f)))
+            ret = 1
+
+    for f in sorted(list):
+        if ui.verbose or not m.exact(f):
+            ui.status(_('removing %s\n') % m.rel(join(f)))
+
+    wlock = repo.wlock()
+    try:
+        if not after:
+            for f in list:
+                if f in added:
+                    continue # we never unlink added files on remove
+                util.unlinkpath(repo.wjoin(f), ignoremissing=True)
+        repo[None].forget(list)
+    finally:
+        wlock.release()
+
+    return ret
 
 def cat(ui, repo, ctx, matcher, prefix, **opts):
     err = 1
@@ -2506,13 +2590,13 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
 
             m = scmutil.matchfiles(repo, names)
 
-        modified = set(changes[0])
-        added    = set(changes[1])
-        removed  = set(changes[2])
-        _deleted = set(changes[3])
-        unknown  = set(changes[4])
-        unknown.update(changes[5])
-        clean    = set(changes[6])
+        modified = set(changes.modified)
+        added    = set(changes.added)
+        removed  = set(changes.removed)
+        _deleted = set(changes.deleted)
+        unknown  = set(changes.unknown)
+        unknown.update(changes.ignored)
+        clean    = set(changes.clean)
         modadded = set()
 
         # split between files known in target manifest and the others
@@ -2522,11 +2606,11 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
         deladded = _deleted - smf
         deleted = _deleted - deladded
 
-        # We need to account for the state of file in the dirstate
+        # We need to account for the state of file in the dirstate.
         #
-        # Even, when we revert agains something else than parent. this will
+        # Even, when we revert against something else than parent. This will
         # slightly alter the behavior of revert (doing back up or not, delete
-        # or just forget etc)
+        # or just forget etc).
         if parent == node:
             dsmodified = modified
             dsadded = added
@@ -2534,9 +2618,9 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
             modified, added, removed = set(), set(), set()
         else:
             changes = repo.status(node1=parent, match=m)
-            dsmodified = set(changes[0])
-            dsadded    = set(changes[1])
-            dsremoved  = set(changes[2])
+            dsmodified = set(changes.modified)
+            dsadded    = set(changes.added)
+            dsremoved  = set(changes.removed)
 
             # only take into account for removes between wc and target
             clean |= dsremoved - removed

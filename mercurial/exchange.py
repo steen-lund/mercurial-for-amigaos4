@@ -298,7 +298,7 @@ def _pushdiscoveryphase(pushop):
     else:
         # adds changeset we are going to push as draft
         #
-        # should not be necessary for pushblishing server, but because of an
+        # should not be necessary for publishing server, but because of an
         # issue fixed in xxxxx we have to do it anyway.
         fdroots = list(unfi.set('roots(%ln  + %ln::)',
                        outgoing.missing, droots))
@@ -445,10 +445,25 @@ def _pushb2ctx(pushop, bundler):
                                      pushop.outgoing)
     if not pushop.force:
         bundler.newpart('B2X:CHECK:HEADS', data=iter(pushop.remoteheads))
-    cg = changegroup.getlocalchangegroup(pushop.repo, 'push', pushop.outgoing)
-    cgpart = bundler.newpart('B2X:CHANGEGROUP', data=cg.getchunks())
+    b2caps = bundle2.bundle2caps(pushop.remote)
+    version = None
+    cgversions = b2caps.get('b2x:changegroup')
+    if not cgversions:  # 3.1 and 3.2 ship with an empty value
+        cg = changegroup.getlocalchangegroupraw(pushop.repo, 'push',
+                                                pushop.outgoing)
+    else:
+        cgversions = [v for v in cgversions if v in changegroup.packermap]
+        if not cgversions:
+            raise ValueError(_('no common changegroup version'))
+        version = max(cgversions)
+        cg = changegroup.getlocalchangegroupraw(pushop.repo, 'push',
+                                                pushop.outgoing,
+                                                version=version)
+    cgpart = bundler.newpart('B2X:CHANGEGROUP', data=cg)
+    if version is not None:
+        cgpart.addparam('version', version)
     def handlereply(op):
-        """extract addchangroup returns from server reply"""
+        """extract addchangegroup returns from server reply"""
         cgreplies = op.records.getreplies(cgpart.id)
         assert len(cgreplies['changegroup']) == 1
         pushop.cgresult = cgreplies['changegroup'][0]['return']
@@ -739,7 +754,7 @@ def _pushbookmark(pushop):
 class pulloperation(object):
     """A object that represent a single pull operation
 
-    It purpose is to carry push related state and very common operation.
+    It purpose is to carry pull related state and very common operation.
 
     A new should be created at the beginning of each pull and discarded
     afterward.
@@ -803,16 +818,15 @@ class pulloperation(object):
         """close transaction if created"""
         if self._tr is not None:
             repo = self.repo
-            cl = repo.unfiltered().changelog
-            p = cl.writepending() and repo.root or ""
-            p = cl.writepending() and repo.root or ""
+            p = lambda: self._tr.writepending() and repo.root or ""
             repo.hook('b2x-pretransactionclose', throw=True, pending=p,
                       **self._tr.hookargs)
-            self._tr.close()
             hookargs = dict(self._tr.hookargs)
             def runhooks():
                 repo.hook('b2x-transactionclose', **hookargs)
-            repo._afterlock(runhooks)
+            self._tr.addpostclose('b2x-hook-transactionclose',
+                                  lambda tr: repo._afterlock(runhooks))
+            self._tr.close()
 
     def releasetransaction(self):
         """release transaction if created"""
@@ -965,9 +979,9 @@ def _pullchangeset(pullop):
         return
     pullop.stepsdone.add('changegroup')
     if not pullop.fetch:
-            pullop.repo.ui.status(_("no changes found\n"))
-            pullop.cgresult = 0
-            return
+        pullop.repo.ui.status(_("no changes found\n"))
+        pullop.cgresult = 0
+        return
     pullop.gettransaction()
     if pullop.heads is None and list(pullop.common) == [nullid]:
         pullop.repo.ui.status(_("requesting all changes\n"))
@@ -1133,10 +1147,11 @@ def getbundle(repo, source, heads=None, common=None, bundlecaps=None,
             b2caps.update(bundle2.decodecaps(blob))
     bundler = bundle2.bundle20(repo.ui, b2caps)
 
+    kwargs['heads'] = heads
+    kwargs['common'] = common
+
     for name in getbundle2partsorder:
         func = getbundle2partsmapping[name]
-        kwargs['heads'] = heads
-        kwargs['common'] = common
         func(bundler, repo, source, bundlecaps=bundlecaps, b2caps=b2caps,
              **kwargs)
 
@@ -1149,11 +1164,26 @@ def _getbundlechangegrouppart(bundler, repo, source, bundlecaps=None,
     cg = None
     if kwargs.get('cg', True):
         # build changegroup bundle here.
-        cg = changegroup.getchangegroup(repo, source, heads=heads,
-                                        common=common, bundlecaps=bundlecaps)
+        version = None
+        cgversions = b2caps.get('b2x:changegroup')
+        if not cgversions:  # 3.1 and 3.2 ship with an empty value
+            cg = changegroup.getchangegroupraw(repo, source, heads=heads,
+                                               common=common,
+                                               bundlecaps=bundlecaps)
+        else:
+            cgversions = [v for v in cgversions if v in changegroup.packermap]
+            if not cgversions:
+                raise ValueError(_('no common changegroup version'))
+            version = max(cgversions)
+            cg = changegroup.getchangegroupraw(repo, source, heads=heads,
+                                               common=common,
+                                               bundlecaps=bundlecaps,
+                                               version=version)
 
     if cg:
-        bundler.newpart('b2x:changegroup', data=cg.getchunks())
+        part = bundler.newpart('b2x:changegroup', data=cg)
+        if version is not None:
+            part.addparam('version', version)
 
 @getbundle2partsgenerator('listkeys')
 def _getbundlelistkeysparts(bundler, repo, source, bundlecaps=None,
@@ -1213,15 +1243,15 @@ def unbundle(repo, cg, heads, source, url):
                 tr.hookargs['url'] = url
                 tr.hookargs['bundle2-exp'] = '1'
                 r = bundle2.processbundle(repo, cg, lambda: tr).reply
-                cl = repo.unfiltered().changelog
-                p = cl.writepending() and repo.root or ""
+                p = lambda: tr.writepending() and repo.root or ""
                 repo.hook('b2x-pretransactionclose', throw=True, pending=p,
                           **tr.hookargs)
-                tr.close()
                 hookargs = dict(tr.hookargs)
                 def runhooks():
                     repo.hook('b2x-transactionclose', **hookargs)
-                repo._afterlock(runhooks)
+                tr.addpostclose('b2x-hook-transactionclose',
+                                lambda tr: repo._afterlock(runhooks))
+                tr.close()
             except Exception, exc:
                 exc.duringunbundle2 = True
                 raise

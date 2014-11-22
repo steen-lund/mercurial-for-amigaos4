@@ -282,7 +282,7 @@ def rebase(ui, repo, **opts):
 
                 if not rebaseset:
                     # transform to list because smartsets are not comparable to
-                    # lists. This should be improved to honor lazyness of
+                    # lists. This should be improved to honor laziness of
                     # smartset.
                     if list(base) == [dest.rev()]:
                         if basef:

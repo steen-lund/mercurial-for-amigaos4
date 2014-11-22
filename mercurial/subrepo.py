@@ -32,16 +32,6 @@ def _getstorehashcachename(remotepath):
     '''get a unique filename for the store hash cache of a remote repository'''
     return util.sha1(_expandedabspath(remotepath)).hexdigest()[0:12]
 
-def _calcfilehash(filename):
-    data = ''
-    if os.path.exists(filename):
-        fd = open(filename, 'rb')
-        try:
-            data = fd.read()
-        finally:
-            fd.close()
-    return util.sha1(data).hexdigest()
-
 class SubrepoAbort(error.Abort):
     """Exception class used to avoid handling a subrepo error more than once"""
     def __init__(self, *args, **kw):
@@ -501,6 +491,13 @@ class abstractsubrepo(object):
     def forget(self, ui, match, prefix):
         return ([], [])
 
+    def removefiles(self, ui, matcher, prefix, after, force, subrepos):
+        """remove the matched files from the subrepository and the filesystem,
+        possibly by force and/or after the file has been removed from the
+        filesystem.  Return 0 on success, 1 on any warning.
+        """
+        return 1
+
     def revert(self, ui, substate, *pats, **opts):
         ui.warn('%s: reverting %s subrepos is unsupported\n' \
             % (substate[0], substate[2]))
@@ -515,10 +512,7 @@ class hgsubrepo(abstractsubrepo):
         self._state = state
         r = ctx._repo
         root = r.wjoin(path)
-        create = False
-        if not os.path.exists(os.path.join(root, '.hg')):
-            create = True
-            util.makedirs(root)
+        create = not r.wvfs.exists('%s/.hg' % path)
         self._repo = hg.repository(r.baseui, root, create=create)
         for s, k in [('ui', 'commitsubrepos')]:
             v = r.ui.config(s, k)
@@ -562,26 +556,19 @@ class hgsubrepo(abstractsubrepo):
         # sort the files that will be hashed in increasing (likely) file size
         filelist = ('bookmarks', 'store/phaseroots', 'store/00changelog.i')
         yield '# %s\n' % _expandedabspath(remotepath)
+        vfs = self._repo.vfs
         for relname in filelist:
-            absname = os.path.normpath(self._repo.join(relname))
-            yield '%s = %s\n' % (relname, _calcfilehash(absname))
+            filehash = util.sha1(vfs.tryread(relname)).hexdigest()
+            yield '%s = %s\n' % (relname, filehash)
 
-    def _getstorehashcachepath(self, remotepath):
-        '''get a unique path for the store hash cache'''
-        return self._repo.join(os.path.join(
-            'cache', 'storehash', _getstorehashcachename(remotepath)))
+    @propertycache
+    def _cachestorehashvfs(self):
+        return scmutil.vfs(self._repo.join('cache/storehash'))
 
     def _readstorehashcache(self, remotepath):
         '''read the store hash cache for a given remote repository'''
-        cachefile = self._getstorehashcachepath(remotepath)
-        if not os.path.exists(cachefile):
-            return ''
-        fd = open(cachefile, 'r')
-        try:
-            pullstate = fd.readlines()
-        finally:
-            fd.close()
-        return pullstate
+        cachefile = _getstorehashcachename(remotepath)
+        return self._cachestorehashvfs.tryreadlines(cachefile, 'r')
 
     def _cachestorehash(self, remotepath):
         '''cache the current store hash
@@ -589,18 +576,12 @@ class hgsubrepo(abstractsubrepo):
         Each remote repo requires its own store hash cache, because a subrepo
         store may be "clean" versus a given remote repo, but not versus another
         '''
-        cachefile = self._getstorehashcachepath(remotepath)
+        cachefile = _getstorehashcachename(remotepath)
         lock = self._repo.lock()
         try:
             storehash = list(self._calcstorehash(remotepath))
-            cachedir = os.path.dirname(cachefile)
-            if not os.path.exists(cachedir):
-                util.makedirs(cachedir, notindexed=True)
-            fd = open(cachefile, 'w')
-            try:
-                fd.writelines(storehash)
-            finally:
-                fd.close()
+            vfs = self._cachestorehashvfs
+            vfs.writelines(cachefile, storehash, mode='w', notindexed=True)
         finally:
             lock.release()
 
@@ -852,6 +833,12 @@ class hgsubrepo(abstractsubrepo):
     def forget(self, ui, match, prefix):
         return cmdutil.forget(ui, self._repo, match,
                               os.path.join(prefix, self._path), True)
+
+    @annotatesubrepoerror
+    def removefiles(self, ui, matcher, prefix, after, force, subrepos):
+        return cmdutil.remove(ui, self._repo, matcher,
+                              os.path.join(prefix, self._path), after, force,
+                              subrepos)
 
     @annotatesubrepoerror
     def revert(self, ui, substate, *pats, **opts):
