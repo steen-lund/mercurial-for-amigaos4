@@ -316,6 +316,9 @@ class localrepository(object):
         chunkcachesize = self.ui.configint('format', 'chunkcachesize')
         if chunkcachesize is not None:
             self.sopener.options['chunkcachesize'] = chunkcachesize
+        maxchainlen = self.ui.configint('format', 'maxchainlen')
+        if maxchainlen is not None:
+            self.sopener.options['maxchainlen'] = maxchainlen
 
     def _writerequirements(self):
         reqfile = self.opener("requires", "w")
@@ -862,9 +865,16 @@ class localrepository(object):
     def wwritedata(self, filename, data):
         return self._filter(self._decodefilterpats, filename, data)
 
-    def transaction(self, desc, report=None):
+    def currenttransaction(self):
+        """return the current transaction or None if non exists"""
         tr = self._transref and self._transref() or None
         if tr and tr.running():
+            return tr
+        return None
+
+    def transaction(self, desc, report=None):
+        tr = self.currenttransaction()
+        if tr is not None:
             return tr.nest()
 
         # abort here if the journal already exists
@@ -879,7 +889,8 @@ class localrepository(object):
         self._writejournal(desc)
         renames = [(vfs, x, undoname(x)) for vfs, x in self._journalfiles()]
         rp = report and report or self.ui.warn
-        tr = transaction.transaction(rp, self.sopener,
+        vfsmap = {'plain': self.opener} # root of .hg/
+        tr = transaction.transaction(rp, self.sopener, vfsmap,
                                      "journal",
                                      aftertrans(renames),
                                      self.store.createmode,
@@ -915,7 +926,9 @@ class localrepository(object):
         try:
             if self.svfs.exists("journal"):
                 self.ui.status(_("rolling back interrupted transaction\n"))
-                transaction.rollback(self.sopener, "journal",
+                vfsmap = {'': self.sopener,
+                          'plain': self.opener,}
+                transaction.rollback(self.sopener, vfsmap, "journal",
                                      self.ui.warn)
                 self.invalidate()
                 return True
@@ -971,7 +984,8 @@ class localrepository(object):
 
         parents = self.dirstate.parents()
         self.destroying()
-        transaction.rollback(self.sopener, 'undo', ui.warn)
+        vfsmap = {'plain': self.opener}
+        transaction.rollback(self.sopener, vfsmap, 'undo', ui.warn)
         if self.vfs.exists('undo.bookmarks'):
             self.vfs.rename('undo.bookmarks', 'bookmarks')
         if self.svfs.exists('undo.phaseroots'):
@@ -1437,15 +1451,14 @@ class localrepository(object):
                 files = []
 
             # update changelog
-            self.changelog.delayupdate()
+            self.changelog.delayupdate(tr)
             n = self.changelog.add(mn, files, ctx.description(),
                                    trp, p1.node(), p2.node(),
                                    user, ctx.date(), ctx.extra().copy())
-            p = lambda: self.changelog.writepending() and self.root or ""
+            p = lambda: tr.writepending() and self.root or ""
             xp1, xp2 = p1.hex(), p2 and p2.hex() or ''
             self.hook('pretxncommit', throw=True, node=hex(n), parent1=xp1,
                       parent2=xp2, pending=p)
-            self.changelog.finalize(trp)
             # set the new commit is proper phase
             targetphase = subrepo.newcommitphase(self.ui, ctx)
             if targetphase:

@@ -1172,12 +1172,11 @@ rebased or not.
   adding manifests
   adding file changes
   added 1 changesets with 2 changes to 2 files (+1 heads)
+  0 largefiles cached
   Invoking status precommit hook
   M sub/normal4
   M sub2/large6
   saved backup bundle to $TESTTMP/d/.hg/strip-backup/f574fb32bb45-backup.hg (glob)
-  0 largefiles cached
-  nothing to rebase - working directory parent is also destination
   $ [ -f .hg/largefiles/e166e74c7303192238d60af5a9c4ce9bef0b7928 ]
   $ hg log --template '{rev}:{node|short}  {desc|firstline}\n'
   9:598410d3eb9a  modify normal file largefile in repo d
@@ -1741,8 +1740,6 @@ Test that transplanting a largefile change works correctly.
   adding manifests
   adding file changes
   added 1 changesets with 2 changes to 2 files
-  getting changed largefiles
-  0 largefiles updated, 0 removed
   $ hg log --template '{rev}:{node|short}  {desc|firstline}\n'
   9:598410d3eb9a  modify normal file largefile in repo d
   8:a381d2c8c80e  modify normal file and largefile in repo b
@@ -1790,7 +1787,7 @@ Cat a standin
   $ hg cat .hglf/sub/large4
   e166e74c7303192238d60af5a9c4ce9bef0b7928
   $ hg cat .hglf/normal3
-  .hglf/normal3: no such file in rev 598410d3eb9a
+  .hglf/normal3: no such file in rev 598410d3eb9a (glob)
   [1]
 
 Test that renaming a largefile results in correct output for status

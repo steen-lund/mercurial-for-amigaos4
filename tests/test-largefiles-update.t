@@ -509,8 +509,25 @@ it is aborted by conflict.
   $ cat large1
   large1 in #1
 
-  $ hg rebase -q --abort
-  rebase aborted
+Test that rebase updates standins for manually modified largefiles at
+the 1st commit of resuming.
+
+  $ echo "manually modified before 'hg rebase --continue'" > large1
+  $ hg resolve -m normal1
+  (no more unresolved files)
+  $ hg rebase --continue --config ui.interactive=True <<EOF
+  > c
+  > EOF
+  local changed .hglf/large1 which remote deleted
+  use (c)hanged version or (d)elete? c
+
+  $ hg diff -c "tip~1" --nodates .hglf/large1 | grep '^[+-][0-9a-z]'
+  -e5bb990443d6a92aaf7223813720f7566c9dd05b
+  +8a4f783556e7dea21139ca0466eafce954c75c13
+  $ rm -f large1
+  $ hg update -q -C tip
+  $ cat large1
+  manually modified before 'hg rebase --continue'
 
 Test that transplant updates largefiles, of which standins are safely
 changed, even if it is aborted by conflict of other.
@@ -542,6 +559,20 @@ changed, even if it is aborted by conflict of other.
   fa44618ea25181aff4f48b70428294790cec9f61
   $ cat largeX
   largeX
+
+Test that transplant updates standins for manually modified largefiles
+at the 1st commit of resuming.
+
+  $ echo "manually modified before 'hg transplant --continue'" > large1
+  $ hg transplant --continue
+  07d6153b5c04 transplanted as f1bf30eb88cc
+  $ hg diff -c tip .hglf/large1 | grep '^[+-][0-9a-z]'
+  -e5bb990443d6a92aaf7223813720f7566c9dd05b
+  +6a4f36d4075fbe0f30ec1d26ca44e63c05903671
+  $ rm -f large1
+  $ hg update -q -C tip
+  $ cat large1
+  manually modified before 'hg transplant --continue'
 
 Test that "hg status" doesn't show removal of largefiles not managed
 in the target context.
@@ -605,3 +636,16 @@ bit correctly on the platform being unaware of it.
 #endif
 
   $ cd ..
+
+Test that "hg convert" avoids copying largefiles from the working
+directory into store, because "hg convert" doesn't update largefiles
+in the working directory (removing files under ".cache/largefiles"
+forces "hg convert" to copy corresponding largefiles)
+
+  $ cat >> $HGRCPATH <<EOF
+  > [extensions]
+  > convert =
+  > EOF
+
+  $ rm $TESTTMP/.cache/largefiles/6a4f36d4075fbe0f30ec1d26ca44e63c05903671
+  $ hg convert -q repo repo.converted

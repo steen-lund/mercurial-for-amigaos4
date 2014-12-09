@@ -8,7 +8,7 @@
 from node import nullid
 from i18n import _
 import scmutil, util, ignore, osutil, parsers, encoding, pathutil
-import os, stat, errno, gc
+import os, stat, errno
 
 propertycache = util.propertycache
 filecache = scmutil.filecache
@@ -317,13 +317,10 @@ class dirstate(object):
         # Depending on when in the process's lifetime the dirstate is parsed,
         # this can get very expensive. As a workaround, disable GC while
         # parsing the dirstate.
-        gcenabled = gc.isenabled()
-        gc.disable()
-        try:
-            p = parsers.parse_dirstate(self._map, self._copymap, st)
-        finally:
-            if gcenabled:
-                gc.enable()
+        #
+        # (we cannot decorate the function directly since it is in a C module)
+        parse_dirstate = util.nogc(parsers.parse_dirstate)
+        p = parse_dirstate(self._map, self._copymap, st)
         if not self._dirtypl:
             self._pl = p
 
@@ -629,6 +626,7 @@ class dirstate(object):
         results = dict.fromkeys(subrepos)
         results['.hg'] = None
 
+        alldirs = None
         for ff in files:
             if normalize:
                 nf = normalize(normpath(ff), False, True)
@@ -657,13 +655,12 @@ class dirstate(object):
                 if nf in dmap: # does it exactly match a missing file?
                     results[nf] = None
                 else: # does it match a missing directory?
-                    prefix = nf + "/"
-                    for fn in dmap:
-                        if fn.startswith(prefix):
-                            if matchedir:
-                                matchedir(nf)
-                            notfoundadd(nf)
-                            break
+                    if alldirs is None:
+                        alldirs = scmutil.dirs(dmap)
+                    if nf in alldirs:
+                        if matchedir:
+                            matchedir(nf)
+                        notfoundadd(nf)
                     else:
                         badfn(ff, inst.strerror)
 

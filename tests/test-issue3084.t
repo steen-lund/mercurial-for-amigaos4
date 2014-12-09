@@ -42,9 +42,7 @@ Normal file in the working copy, keeping the normal version:
   $ echo "n" | hg merge --config ui.interactive=Yes
   remote turned local normal file foo into a largefile
   use (l)argefile or keep (n)ormal file? n
-  getting changed largefiles
-  0 largefiles updated, 0 removed
-  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
 
   $ hg status
@@ -116,8 +114,8 @@ Largefile in the working copy, keeping the largefile version:
   remote turned local largefile foo into a normal file
   keep (l)argefile or use (n)ormal file? l
   getting changed largefiles
-  1 largefiles updated, 0 removed
-  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  0 largefiles updated, 0 removed
+  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
 
   $ hg status
@@ -302,9 +300,7 @@ Ancestor: normal  Parent: normal2  Parent: large   result: ?
   use (c)hanged version or (d)elete? c
   remote turned local normal file f into a largefile
   use (l)argefile or keep (n)ormal file? n
-  getting changed largefiles
-  0 largefiles updated, 0 removed
-  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
   $ cat f
   normal2
@@ -329,8 +325,8 @@ swap
   remote turned local largefile f into a normal file
   keep (l)argefile or use (n)ormal file? l
   getting changed largefiles
-  1 largefiles updated, 0 removed
-  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  0 largefiles updated, 0 removed
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
   $ cat f
   large
@@ -409,8 +405,8 @@ Ancestor: large   Parent: large2   Parent: normal  result: ?
   remote turned local largefile f into a normal file
   keep (l)argefile or use (n)ormal file? l
   getting changed largefiles
-  1 largefiles updated, 0 removed
-  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  0 largefiles updated, 0 removed
+  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
   $ cat f
   large2

@@ -141,6 +141,7 @@ diffwsopts = [
     ]
 
 diffopts2 = [
+    ('', 'noprefix', None, _('omit a/ and b/ prefixes from filenames')),
     ('p', 'show-function', None, _('show which function each change is in')),
     ('', 'reverse', None, _('produce a diff that undoes the changes')),
     ] + diffwsopts + [
@@ -315,7 +316,8 @@ def annotate(ui, repo, *pats, **opts):
     m = scmutil.match(ctx, pats, opts)
     m.bad = bad
     follow = not opts.get('no_follow')
-    diffopts = patch.diffopts(ui, opts, section='annotate')
+    diffopts = patch.difffeatureopts(ui, opts, section='annotate',
+                                     whitespace=True)
     for abs in ctx.walk(m):
         fctx = ctx[abs]
         if not opts.get('text') and util.binary(fctx.data()):
@@ -743,9 +745,7 @@ def bisect(ui, repo, rev=None, extra=None, command=None,
                 # update state
                 state['current'] = [node]
                 hbisect.save_state(repo, state)
-                status = util.system(command,
-                                     environ={'HG_NODE': hex(node)},
-                                     out=ui.fout)
+                status = ui.system(command, environ={'HG_NODE': hex(node)})
                 if status == 125:
                     transition = "skip"
                 elif status == 0:
@@ -1573,9 +1573,8 @@ def config(ui, repo, *values, **opts):
             fp.close()
 
         editor = ui.geteditor()
-        util.system("%s \"%s\"" % (editor, f),
-                    onerr=util.Abort, errprefix=_("edit failed"),
-                    out=ui.fout)
+        ui.system("%s \"%s\"" % (editor, f),
+                  onerr=util.Abort, errprefix=_("edit failed"))
         return
 
     for f in scmutil.rcpath():
@@ -2653,22 +2652,13 @@ def debugrevlog(ui, repo, file_=None, **opts):
                  " rawsize totalsize compression heads chainlen\n")
         ts = 0
         heads = set()
-        rindex = r.index
-
-        def chainbaseandlen(rev):
-            clen = 0
-            base = rindex[rev][3]
-            while base != rev:
-                clen += 1
-                rev = base
-                base = rindex[rev][3]
-            return base, clen
 
         for rev in xrange(numrevs):
             dbase = r.deltaparent(rev)
             if dbase == -1:
                 dbase = rev
-            cbase, clen = chainbaseandlen(rev)
+            cbase = r.chainbase(rev)
+            clen = r.chainlen(rev)
             p1, p2 = r.parentrevs(rev)
             rs = r.rawsize(rev)
             ts = ts + rs
@@ -3083,7 +3073,7 @@ def diff(ui, repo, *pats, **opts):
     if reverse:
         node1, node2 = node2, node1
 
-    diffopts = patch.diffopts(ui, opts)
+    diffopts = patch.diffallopts(ui, opts)
     m = scmutil.match(repo[node2], pats, opts)
     cmdutil.diffordiffstat(ui, repo, diffopts, node1, node2, m, stat=stat,
                            listsubrepos=opts.get('subrepos'))
@@ -3406,7 +3396,8 @@ def graft(ui, repo, *revs, **opts):
         # don't mutate while iterating, create a copy
         for rev in list(revs):
             if rev in ancestors:
-                ui.warn(_('skipping ancestor revision %s\n') % rev)
+                ui.warn(_('skipping ancestor revision %d:%s\n') %
+                        (rev, repo[rev]))
                 # XXX remove on list is slow
                 revs.remove(rev)
         if not revs:
@@ -3432,23 +3423,25 @@ def graft(ui, repo, *revs, **opts):
                 except error.RepoLookupError:
                     r = None
                 if r in revs:
-                    ui.warn(_('skipping revision %s (already grafted to %s)\n')
-                            % (r, rev))
+                    ui.warn(_('skipping revision %d:%s '
+                              '(already grafted to %d:%s)\n')
+                            % (r, repo[r], rev, ctx))
                     revs.remove(r)
                 elif ids[n] in revs:
                     if r is None:
-                        ui.warn(_('skipping already grafted revision %s '
-                                  '(%s also has unknown origin %s)\n')
-                                % (ids[n], rev, n))
+                        ui.warn(_('skipping already grafted revision %d:%s '
+                                  '(%d:%s also has unknown origin %s)\n')
+                                % (ids[n], repo[ids[n]], rev, ctx, n[:12]))
                     else:
-                        ui.warn(_('skipping already grafted revision %s '
-                                  '(%s also has origin %d)\n')
-                                % (ids[n], rev, r))
+                        ui.warn(_('skipping already grafted revision %d:%s '
+                                  '(%d:%s also has origin %d:%s)\n')
+                                % (ids[n], repo[ids[n]], rev, ctx, r, n[:12]))
                     revs.remove(ids[n])
             elif ctx.hex() in ids:
                 r = ids[ctx.hex()]
-                ui.warn(_('skipping already grafted revision %s '
-                                '(was grafted from %d)\n') % (r, rev))
+                ui.warn(_('skipping already grafted revision %d:%s '
+                          '(was grafted from %d:%s)\n') %
+                        (r, repo[r], rev, ctx))
                 revs.remove(r)
         if not revs:
             return -1
@@ -3456,8 +3449,12 @@ def graft(ui, repo, *revs, **opts):
     wlock = repo.wlock()
     try:
         for pos, ctx in enumerate(repo.set("%ld", revs)):
-
-            ui.status(_('grafting revision %s\n') % ctx.rev())
+            desc = '%d:%s "%s"' % (ctx.rev(), ctx,
+                                   ctx.description().split('\n', 1)[0])
+            names = repo.nodetags(ctx.node()) + repo.nodebookmarks(ctx.node())
+            if names:
+                desc += ' (%s)' % ' '.join(names)
+            ui.status(_('grafting %s\n') % desc)
             if opts.get('dry_run'):
                 continue
 
@@ -3501,7 +3498,9 @@ def graft(ui, repo, *revs, **opts):
             node = repo.commit(text=message, user=user,
                         date=date, extra=extra, editor=editor)
             if node is None:
-                ui.status(_('graft for revision %s is empty\n') % ctx.rev())
+                ui.warn(
+                    _('note: graft of %d:%s created no changes to commit\n') %
+                    (ctx.rev(), ctx))
     finally:
         wlock.release()
 
@@ -5097,7 +5096,7 @@ def recover(ui, repo):
     [('A', 'after', None, _('record delete for missing files')),
     ('f', 'force', None,
      _('remove (and delete) file even if added or modified')),
-    ] + walkopts,
+    ] + subrepoopts + walkopts,
     _('[OPTION]... FILE...'),
     inferrepo=True)
 def remove(ui, repo, *pats, **opts):
@@ -5137,62 +5136,13 @@ def remove(ui, repo, *pats, **opts):
     Returns 0 on success, 1 if any warnings encountered.
     """
 
-    ret = 0
     after, force = opts.get('after'), opts.get('force')
     if not pats and not after:
         raise util.Abort(_('no files specified'))
 
     m = scmutil.match(repo[None], pats, opts)
-    s = repo.status(match=m, clean=True)
-    modified, added, deleted, clean = s[0], s[1], s[3], s[6]
-
-    # warn about failure to delete explicit files/dirs
-    wctx = repo[None]
-    for f in m.files():
-        if f in repo.dirstate or f in wctx.dirs():
-            continue
-        if os.path.exists(m.rel(f)):
-            if os.path.isdir(m.rel(f)):
-                ui.warn(_('not removing %s: no tracked files\n') % m.rel(f))
-            else:
-                ui.warn(_('not removing %s: file is untracked\n') % m.rel(f))
-        # missing files will generate a warning elsewhere
-        ret = 1
-
-    if force:
-        list = modified + deleted + clean + added
-    elif after:
-        list = deleted
-        for f in modified + added + clean:
-            ui.warn(_('not removing %s: file still exists\n') % m.rel(f))
-            ret = 1
-    else:
-        list = deleted + clean
-        for f in modified:
-            ui.warn(_('not removing %s: file is modified (use -f'
-                      ' to force removal)\n') % m.rel(f))
-            ret = 1
-        for f in added:
-            ui.warn(_('not removing %s: file has been marked for add'
-                      ' (use forget to undo)\n') % m.rel(f))
-            ret = 1
-
-    for f in sorted(list):
-        if ui.verbose or not m.exact(f):
-            ui.status(_('removing %s\n') % m.rel(f))
-
-    wlock = repo.wlock()
-    try:
-        if not after:
-            for f in list:
-                if f in added:
-                    continue # we never unlink added files on remove
-                util.unlinkpath(repo.wjoin(f), ignoremissing=True)
-        repo[None].forget(list)
-    finally:
-        wlock.release()
-
-    return ret
+    subrepos = opts.get('subrepos')
+    return cmdutil.remove(ui, repo, m, "", after, force, subrepos)
 
 @command('rename|move|mv',
     [('A', 'after', None, _('record a rename that has already occurred')),
@@ -6245,7 +6195,6 @@ def update(ui, repo, node=None, rev=None, clean=False, date=None, check=False,
             raise util.Abort(_("uncommitted changes"))
         if rev is None:
             rev = repo[repo[None].branch()].rev()
-        mergemod._checkunknown(repo, repo[None], repo[rev])
 
     repo.ui.setconfig('ui', 'forcemerge', tool, 'update')
 
