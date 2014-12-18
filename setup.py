@@ -141,7 +141,8 @@ except ImportError:
     py2exeloaded = False
 
 def runcmd(cmd, env):
-    if sys.platform == 'plan9':
+    if (sys.platform == 'plan9'
+       and (sys.version_info[0] == 2 and sys.version_info[1] < 7)):
         # subprocess kludge to work around issues in half-baked Python
         # ports, notably bichued/python:
         _, out, err = os.popen3(cmd)
@@ -517,6 +518,7 @@ cygwinccompiler.Mingw32CCompiler = HackedMingw32CCompiler
 
 packagedata = {'mercurial': ['locale/*/LC_MESSAGES/hg.mo',
                              'help/*.txt',
+                             'default.d/*.rc',
                              'dummycert.pem']}
 
 def ordinarypath(p):

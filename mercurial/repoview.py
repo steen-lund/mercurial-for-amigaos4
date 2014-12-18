@@ -6,6 +6,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
+import types
 import copy
 import error
 import phases
@@ -72,6 +73,13 @@ def cachehash(repo, hideable):
     h.update(str(hash(frozenset(hideable))))
     return h.digest()
 
+def _writehiddencache(cachefile, cachehash, hidden):
+    """write hidden data to a cache file"""
+    data = struct.pack('>%ii' % len(hidden), *sorted(hidden))
+    cachefile.write(struct.pack(">H", cacheversion))
+    cachefile.write(cachehash)
+    cachefile.write(data)
+
 def trywritehiddencache(repo, hideable, hidden):
     """write cache of hidden changesets to disk
 
@@ -87,12 +95,8 @@ def trywritehiddencache(repo, hideable, hidden):
             wlock = repo.wlock(wait=False)
             # write cache to file
             newhash = cachehash(repo, hideable)
-            sortedset = sorted(hidden)
-            data = struct.pack('>%ii' % len(sortedset), *sortedset)
             fh = repo.vfs.open(cachefile, 'w+b', atomictemp=True)
-            fh.write(struct.pack(">H", cacheversion))
-            fh.write(newhash)
-            fh.write(data)
+            _writehiddencache(fh, newhash, hidden)
         except (IOError, OSError):
             repo.ui.debug('error writing hidden changesets cache')
         except error.LockHeld:
@@ -307,6 +311,10 @@ class repoview(object):
         return getattr(self._unfilteredrepo, attr)
 
     def __setattr__(self, attr, value):
+        # Allow method replacement on filtered repos, like status() in
+        # largefiles' purge override
+        if type(value) == types.FunctionType:
+            object.__setattr__(self, attr, value)
         return setattr(self._unfilteredrepo, attr, value)
 
     def __delattr__(self, attr):

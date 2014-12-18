@@ -23,10 +23,9 @@ you do not need to type :hg:`extdiff -p kdiff3` always. ::
   #cmd.cdiff = gdiff
   #opts.cdiff = -Nprc5
 
-  # add new command called vdiff, runs kdiff3
-  vdiff = kdiff3
-
-  # add new command called meld, runs meld (no need to name twice)
+  # add new command called meld, runs meld (no need to name twice).  If
+  # the meld executable is not available, the meld tool in [merge-tools]
+  # will be used, if available
   meld =
 
   # add new command called vimdiff, runs gvimdiff with DirDiff plugin
@@ -63,7 +62,7 @@ pretty fast (at least faster than having to compare the entire tree).
 
 from mercurial.i18n import _
 from mercurial.node import short, nullid
-from mercurial import cmdutil, scmutil, util, commands, encoding
+from mercurial import cmdutil, scmutil, util, commands, encoding, filemerge
 import os, shlex, shutil, tempfile, re
 
 cmdtable = {}
@@ -90,7 +89,7 @@ def snapshot(ui, repo, files, node, tmproot):
     wopener = scmutil.opener(base)
     fns_and_mtime = []
     ctx = repo[node]
-    for fn in files:
+    for fn in sorted(files):
         wfn = util.pconvert(fn)
         if wfn not in ctx:
             # File doesn't exist; could be a bogus modify
@@ -227,7 +226,7 @@ def dodiff(ui, repo, diffcmd, diffopts, pats, opts):
         cmdline = util.shellquote(diffcmd) + ' ' + args
 
         ui.debug('running %r in %s\n' % (cmdline, tmproot))
-        util.system(cmdline, cwd=tmproot, out=ui.fout)
+        ui.system(cmdline, cwd=tmproot)
 
         for copy_fn, working_fn, mtime in fns_and_mtime:
             if os.lstat(copy_fn).st_mtime != mtime:
@@ -279,7 +278,9 @@ def uisetup(ui):
         if cmd.startswith('cmd.'):
             cmd = cmd[4:]
             if not path:
-                path = cmd
+                path = util.findexe(cmd)
+                if path is None:
+                    path = filemerge.findexternaltool(ui, cmd) or cmd
             diffopts = shlex.split(ui.config('extdiff', 'opts.' + cmd, ''))
         elif cmd.startswith('opts.'):
             continue
@@ -289,7 +290,9 @@ def uisetup(ui):
                 diffopts = shlex.split(path)
                 path = diffopts.pop(0)
             else:
-                path, diffopts = cmd, []
+                path, diffopts = util.findexe(cmd), []
+                if path is None:
+                    path = filemerge.findexternaltool(ui, cmd) or cmd
         # look for diff arguments in [diff-tools] then [merge-tools]
         if diffopts == []:
             args = ui.config('diff-tools', cmd+'.diffargs') or \
