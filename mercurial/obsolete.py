@@ -68,7 +68,7 @@ comment associated with each format for details.
 
 """
 import struct
-import util, base85, node
+import util, base85, node, parsers
 import phases
 from i18n import _
 
@@ -146,7 +146,7 @@ _fm0node = '20s'
 _fm0fsize = _calcsize(_fm0fixed)
 _fm0fnodesize = _calcsize(_fm0node)
 
-def _fm0readmarkers(data, off=0):
+def _fm0readmarkers(data, off):
     # Loop on markers
     l = len(data)
     while off + _fm0fsize <= l:
@@ -285,7 +285,7 @@ _fm1parentmask = (_fm1parentnone << _fm1parentshift)
 _fm1metapair = 'BB'
 _fm1metapairsize = _calcsize('BB')
 
-def _fm1readmarkers(data, off=0):
+def _fm1purereadmarkers(data, off):
     # make some global constants local for performance
     noneflag = _fm1parentnone
     sha2flag = usingsha256
@@ -301,6 +301,7 @@ def _fm1readmarkers(data, off=0):
     # Loop on markers
     stop = len(data) - _fm1fsize
     ufixed = util.unpacker(_fm1fixed)
+
     while off <= stop:
         # read fixed part
         o1 = off + fsize
@@ -394,6 +395,13 @@ def _fm1encodeonemarker(marker):
         data.append(key)
         data.append(value)
     return ''.join(data)
+
+def _fm1readmarkers(data, off):
+    native = getattr(parsers, 'fm1readmarkers', None)
+    if not native:
+        return _fm1purereadmarkers(data, off)
+    stop = len(data) - _fm1fsize
+    return native(data, off, stop)
 
 # mapping to read/write various marker formats
 # <version> -> (decoder, encoder)
