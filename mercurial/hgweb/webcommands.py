@@ -13,27 +13,58 @@ from mercurial import util
 from common import paritygen, staticfile, get_contact, ErrorResponse
 from common import HTTP_OK, HTTP_FORBIDDEN, HTTP_NOT_FOUND
 from mercurial import graphmod, patch
-from mercurial import help as helpmod
 from mercurial import scmutil
 from mercurial.i18n import _
 from mercurial.error import ParseError, RepoLookupError, Abort
 from mercurial import revset
 
-# __all__ is populated with the allowed commands. Be sure to add to it if
-# you're adding a new command, or the new command won't work.
+__all__ = []
+commands = {}
 
-__all__ = [
-   'log', 'rawfile', 'file', 'changelog', 'shortlog', 'changeset', 'rev',
-   'manifest', 'tags', 'bookmarks', 'branches', 'summary', 'filediff', 'diff',
-   'comparison', 'annotate', 'filelog', 'archive', 'static', 'graph', 'help',
-]
+class webcommand(object):
+    """Decorator used to register a web command handler.
 
+    The decorator takes as its positional arguments the name/path the
+    command should be accessible under.
+
+    Usage:
+
+    @webcommand('mycommand')
+    def mycommand(web, req, tmpl):
+        pass
+    """
+
+    def __init__(self, name):
+        self.name = name
+
+    def __call__(self, func):
+        __all__.append(self.name)
+        commands[self.name] = func
+        return func
+
+@webcommand('log')
 def log(web, req, tmpl):
+    """
+    /log[/{revision}[/{path}]]
+    --------------------------
+
+    Show repository or file history.
+
+    For URLs of the form ``/log/{revision}``, a list of changesets starting at
+    the specified changeset identifier is shown. If ``{revision}`` is not
+    defined, the default is ``tip``. This form is equivalent to the
+    ``changelog`` handler.
+
+    For URLs of the form ``/log/{revision}/{file}``, the history for a specific
+    file will be shown. This form is equivalent to the ``filelog`` handler.
+    """
+
     if 'file' in req.form and req.form['file'][0]:
         return filelog(web, req, tmpl)
     else:
         return changelog(web, req, tmpl)
 
+@webcommand('rawfile')
 def rawfile(web, req, tmpl):
     guessmime = web.configbool('web', 'guessmime', False)
 
@@ -98,7 +129,26 @@ def _filerevision(web, tmpl, fctx):
                 rename=webutil.renamelink(fctx),
                 permissions=fctx.manifest().flags(f))
 
+@webcommand('file')
 def file(web, req, tmpl):
+    """
+    /file/{revision}[/{path}]
+    -------------------------
+
+    Show information about a directory or file in the repository.
+
+    Info about the ``path`` given as a URL parameter will be rendered.
+
+    If ``path`` is a directory, information about the entries in that
+    directory will be rendered. This form is equivalent to the ``manifest``
+    handler.
+
+    If ``path`` is a file, information about that file will be shown via
+    the ``filerevision`` template.
+
+    If ``path`` is not defined, information about the root directory will
+    be rendered.
+    """
     path = webutil.cleanpath(web.repo, req.form.get('file', [''])[0])
     if not path:
         return manifest(web, req, tmpl)
@@ -187,7 +237,7 @@ def _search(web, req, tmpl):
 
         mfunc = revset.match(web.repo.ui, revdef)
         try:
-            revs = mfunc(web.repo, revset.baseset(web.repo))
+            revs = mfunc(web.repo)
             return MODE_REVSET, revs
             # ParseError: wrongly placed tokens, wrongs arguments, etc
             # RepoLookupError: no such revision, e.g. in 'revision:'
@@ -267,7 +317,31 @@ def _search(web, req, tmpl):
                 modedesc=searchfunc[1],
                 showforcekw=showforcekw, showunforcekw=showunforcekw)
 
+@webcommand('changelog')
 def changelog(web, req, tmpl, shortlog=False):
+    """
+    /changelog[/{revision}]
+    -----------------------
+
+    Show information about multiple changesets.
+
+    If the optional ``revision`` URL argument is absent, information about
+    all changesets starting at ``tip`` will be rendered. If the ``revision``
+    argument is present, changesets will be shown starting from the specified
+    revision.
+
+    If ``revision`` is absent, the ``rev`` query string argument may be
+    defined. This will perform a search for changesets.
+
+    The argument for ``rev`` can be a single revision, a revision set,
+    or a literal keyword to search for in changeset data (equivalent to
+    :hg:`log -k`.
+
+    The ``revcount`` query string argument defines the maximum numbers of
+    changesets to render.
+
+    For non-searches, the ``changelog`` template will be rendered.
+    """
 
     query = ''
     if 'node' in req.form:
@@ -326,10 +400,36 @@ def changelog(web, req, tmpl, shortlog=False):
                 archives=web.archivelist("tip"), revcount=revcount,
                 morevars=morevars, lessvars=lessvars, query=query)
 
+@webcommand('shortlog')
 def shortlog(web, req, tmpl):
+    """
+    /shortlog
+    ---------
+
+    Show basic information about a set of changesets.
+
+    This accepts the same parameters as the ``changelog`` handler. The only
+    difference is the ``shortlog`` template will be rendered instead of the
+    ``changelog`` template.
+    """
     return changelog(web, req, tmpl, shortlog=True)
 
+@webcommand('changeset')
 def changeset(web, req, tmpl):
+    """
+    /changeset[/{revision}]
+    -----------------------
+
+    Show information about a single changeset.
+
+    A URL path argument is the changeset identifier to show. See ``hg help
+    revisions`` for possible values. If not defined, the ``tip`` changeset
+    will be shown.
+
+    The ``changeset`` template is rendered. Contents of the ``changesettag``,
+    ``changesetbookmark``, ``filenodelink``, ``filenolink``, and the many
+    templates related to diffs may all be used to produce the output.
+    """
     ctx = webutil.changectx(web.repo, req)
     basectx = webutil.basechangectx(web.repo, req)
     if basectx is None:
@@ -382,7 +482,7 @@ def changeset(web, req, tmpl):
                 inbranch=webutil.nodeinbranch(web.repo, ctx),
                 branches=webutil.nodebranchdict(web.repo, ctx))
 
-rev = changeset
+rev = webcommand('rev')(changeset)
 
 def decodepath(path):
     """Hook for mapping a path in the repository to a path in the
@@ -392,7 +492,23 @@ def decodepath(path):
     the virtual file system presented by the manifest command below."""
     return path
 
+@webcommand('manifest')
 def manifest(web, req, tmpl):
+    """
+    /manifest[/{revision}[/{path}]]
+    -------------------------------
+
+    Show information about a directory.
+
+    If the URL path arguments are defined, information about the root
+    directory for the ``tip`` changeset will be shown.
+
+    Because this handler can only show information for directories, it
+    is recommended to use the ``file`` handler instead, as it can handle both
+    directories and files.
+
+    The ``manifest`` template will be rendered for this handler.
+    """
     ctx = webutil.changectx(web.repo, req)
     path = webutil.cleanpath(web.repo, req.form.get('file', [''])[0])
     mf = ctx.manifest()
@@ -474,7 +590,18 @@ def manifest(web, req, tmpl):
                 inbranch=webutil.nodeinbranch(web.repo, ctx),
                 branches=webutil.nodebranchdict(web.repo, ctx))
 
+@webcommand('tags')
 def tags(web, req, tmpl):
+    """
+    /tags
+    -----
+
+    Show information about tags.
+
+    No arguments are accepted.
+
+    The ``tags`` template is rendered.
+    """
     i = list(reversed(web.repo.tagslist()))
     parity = paritygen(web.stripecount)
 
@@ -496,7 +623,18 @@ def tags(web, req, tmpl):
                 entriesnotip=lambda **x: entries(True, False, **x),
                 latestentry=lambda **x: entries(True, True, **x))
 
+@webcommand('bookmarks')
 def bookmarks(web, req, tmpl):
+    """
+    /bookmarks
+    ----------
+
+    Show information about bookmarks.
+
+    No arguments are accepted.
+
+    The ``bookmarks`` template is rendered.
+    """
     i = [b for b in web.repo._bookmarks.items() if b[1] in web.repo]
     parity = paritygen(web.stripecount)
 
@@ -516,7 +654,20 @@ def bookmarks(web, req, tmpl):
                 entries=lambda **x: entries(latestonly=False, **x),
                 latestentry=lambda **x: entries(latestonly=True, **x))
 
+@webcommand('branches')
 def branches(web, req, tmpl):
+    """
+    /branches
+    ---------
+
+    Show information about branches.
+
+    All known branches are contained in the output, even closed branches.
+
+    No arguments are accepted.
+
+    The ``branches`` template is rendered.
+    """
     tips = []
     heads = web.repo.heads()
     parity = paritygen(web.stripecount)
@@ -547,7 +698,19 @@ def branches(web, req, tmpl):
                 entries=lambda **x: entries(0, **x),
                 latestentry=lambda **x: entries(1, **x))
 
+@webcommand('summary')
 def summary(web, req, tmpl):
+    """
+    /summary
+    --------
+
+    Show a summary of repository state.
+
+    Information about the latest changesets, bookmarks, tags, and branches
+    is captured by this handler.
+
+    The ``summary`` template is rendered.
+    """
     i = reversed(web.repo.tagslist())
 
     def tagentries(**map):
@@ -632,7 +795,19 @@ def summary(web, req, tmpl):
                 node=tip.hex(),
                 archives=web.archivelist("tip"))
 
+@webcommand('filediff')
 def filediff(web, req, tmpl):
+    """
+    /diff/{revision}/{path}
+    -----------------------
+
+    Show how a file changed in a particular commit.
+
+    The ``filediff`` template is rendered.
+
+    This hander is registered under both the ``/diff`` and ``/filediff``
+    paths. ``/diff`` is used in modern code.
+    """
     fctx, ctx = None, None
     try:
         fctx = webutil.filectx(web.repo, req)
@@ -672,9 +847,25 @@ def filediff(web, req, tmpl):
                 child=webutil.children(ctx),
                 diff=diffs)
 
-diff = filediff
+diff = webcommand('diff')(filediff)
 
+@webcommand('comparison')
 def comparison(web, req, tmpl):
+    """
+    /comparison/{revision}/{path}
+    -----------------------------
+
+    Show a comparison between the old and new versions of a file from changes
+    made on a particular revision.
+
+    This is similar to the ``diff`` handler. However, this form features
+    a split or side-by-side diff rather than a unified diff.
+
+    The ``context`` query string argument can be used to control the lines of
+    context in the diff.
+
+    The ``filecomparison`` template is rendered.
+    """
     ctx = webutil.changectx(web.repo, req)
     if 'file' not in req.form:
         raise ErrorResponse(HTTP_NOT_FOUND, 'file not given')
@@ -732,7 +923,16 @@ def comparison(web, req, tmpl):
                 rightnode=hex(rightnode),
                 comparison=comparison)
 
+@webcommand('annotate')
 def annotate(web, req, tmpl):
+    """
+    /annotate/{revision}/{path}
+    ---------------------------
+
+    Show changeset information for each line in a file.
+
+    The ``fileannotate`` template is rendered.
+    """
     fctx = webutil.filectx(web.repo, req)
     f = fctx.path()
     parity = paritygen(web.stripecount)
@@ -784,7 +984,19 @@ def annotate(web, req, tmpl):
                 child=webutil.children(fctx),
                 permissions=fctx.manifest().flags(f))
 
+@webcommand('filelog')
 def filelog(web, req, tmpl):
+    """
+    /filelog/{revision}/{path}
+    --------------------------
+
+    Show information about the history of a file in the repository.
+
+    The ``revcount`` query string argument can be defined to control the
+    maximum number of entries to show.
+
+    The ``filelog`` template will be rendered.
+    """
 
     try:
         fctx = webutil.filectx(web.repo, req)
@@ -862,7 +1074,27 @@ def filelog(web, req, tmpl):
                 latestentry=latestentry,
                 revcount=revcount, morevars=morevars, lessvars=lessvars)
 
+@webcommand('archive')
 def archive(web, req, tmpl):
+    """
+    /archive/{revision}.{format}[/{path}]
+    -------------------------------------
+
+    Obtain an archive of repository content.
+
+    The content and type of the archive is defined by a URL path parameter.
+    ``format`` is the file extension of the archive type to be generated. e.g.
+    ``zip`` or ``tar.bz2``. Not all archive types may be allowed by your
+    server configuration.
+
+    The optional ``path`` URL parameter controls content to include in the
+    archive. If omitted, every file in the specified revision is present in the
+    archive. If included, only the specified file or contents of the specified
+    directory will be included in the archive.
+
+    No template is used for this handler. Raw, binary content is generated.
+    """
+
     type_ = req.form.get('type', [None])[0]
     allowed = web.configlist("web", "allow_archive")
     key = req.form['node'][0]
@@ -911,6 +1143,7 @@ def archive(web, req, tmpl):
     return []
 
 
+@webcommand('static')
 def static(web, req, tmpl):
     fname = req.form['file'][0]
     # a repo owner may set web.static in .hg/hgrc to get any file
@@ -924,7 +1157,24 @@ def static(web, req, tmpl):
     staticfile(static, fname, req)
     return []
 
+@webcommand('graph')
 def graph(web, req, tmpl):
+    """
+    /graph[/{revision}]
+    -------------------
+
+    Show information about the graphical topology of the repository.
+
+    Information rendered by this handler can be used to create visual
+    representations of repository topology.
+
+    The ``revision`` URL parameter controls the starting changeset.
+
+    The ``revcount`` query string argument can define the number of changesets
+    to show information for.
+
+    This handler will render the ``graph`` template.
+    """
 
     ctx = webutil.changectx(web.repo, req)
     rev = ctx.rev()
@@ -1047,8 +1297,23 @@ def _getdoc(e):
         doc = _('(no help text available)')
     return doc
 
+@webcommand('help')
 def help(web, req, tmpl):
+    """
+    /help[/{topic}]
+    ---------------
+
+    Render help documentation.
+
+    This web command is roughly equivalent to :hg:`help`. If a ``topic``
+    is defined, that help topic will be rendered. If not, an index of
+    available help topics will be rendered.
+
+    The ``help`` template will be rendered when requesting help for a topic.
+    ``helptopics`` will be rendered for the index of help topics.
+    """
     from mercurial import commands # avoid cycle
+    from mercurial import help as helpmod # avoid cycle
 
     topicname = req.form.get('node', [None])[0]
     if not topicname:

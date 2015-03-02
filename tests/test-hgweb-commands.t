@@ -726,7 +726,6 @@ Logs and changes
   <ul>
    <li><a href="/help">help</a></li>
   </ul>
-  <p></p>
   <div class="atom-logo">
   <a href="/atom-log" title="subscribe to atom feed">
   <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
@@ -752,11 +751,13 @@ Logs and changes
   </div>
   
   <table class="bigtable">
+  <thead>
    <tr>
     <th class="age">age</th>
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
+  </thead>
   <tbody class="stripes2">
    <tr>
     <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>
@@ -873,7 +874,8 @@ Logs and changes
   </tr>
   <tr>
    <th class="date">date</th>
-   <td class="date age">Thu, 01 Jan 1970 00:00:00 +0000</td></tr>
+   <td class="date age">Thu, 01 Jan 1970 00:00:00 +0000</td>
+  </tr>
   <tr>
    <th class="author">parents</th>
    <td class="author"></td>
@@ -894,8 +896,7 @@ Logs and changes
       <a id="diffstatexpand" href="javascript:toggleDiffstat()">[<tt>+</tt>]</a>
       <div id="diffstatdetails" style="display:none;">
         <a href="javascript:toggleDiffstat()">[<tt>-</tt>]</a>
-        <p></p>
-        <table class="stripes2">  <tr>
+        <table class="diffstat-table stripes2">  <tr>
       <td class="diffstat-file"><a href="#l1.1">da/foo</a></td>
       <td class="diffstat-total" align="right">1</td>
       <td class="diffstat-graph">
@@ -1012,11 +1013,13 @@ Logs and changes
   </div>
   
   <table class="bigtable">
+  <thead>
    <tr>
     <th class="age">age</th>
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
+  </thead>
   <tbody class="stripes2">
    <tr>
     <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>

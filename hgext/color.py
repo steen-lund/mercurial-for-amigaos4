@@ -140,6 +140,17 @@ emit codes that less doesn't understand. You can work around this by
 either using ansi mode (or auto mode), or by using less -r (which will
 pass through all terminal control codes, not just color control
 codes).
+
+On some systems (such as MSYS in Windows), the terminal may support
+a different color mode than the pager (activated via the "pager"
+extension). It is possible to define separate modes depending on whether
+the pager is active::
+
+  [color]
+  mode = auto
+  pagermode = ansi
+
+If ``pagermode`` is not defined, the ``mode`` will be used.
 '''
 
 import os
@@ -213,11 +224,30 @@ def _modesetup(ui, coloropt):
     formatted = always or (os.environ.get('TERM') != 'dumb' and ui.formatted())
 
     mode = ui.config('color', 'mode', 'auto')
+
+    # If pager is active, color.pagermode overrides color.mode.
+    if getattr(ui, 'pageractive', False):
+        mode = ui.config('color', 'pagermode', mode)
+
     realmode = mode
     if mode == 'auto':
-        if os.name == 'nt' and 'TERM' not in os.environ:
-            # looks line a cmd.exe console, use win32 API or nothing
-            realmode = 'win32'
+        if os.name == 'nt':
+            term = os.environ.get('TERM')
+            # TERM won't be defined in a vanilla cmd.exe environment.
+            if not term:
+                realmode = 'win32'
+
+            # UNIX-like environments on Windows such as Cygwin and MSYS will
+            # set TERM. They appear to make a best effort attempt at setting it
+            # to something appropriate. However, not all environments with TERM
+            # defined support ANSI. Since "ansi" could result in terminal
+            # gibberish, we error on the side of selecting "win32". However, if
+            # w32effects is not defined, we almost certainly don't support
+            # "win32", so don't even try.
+            if 'xterm' in term or not w32effects:
+                realmode = 'ansi'
+            else:
+                realmode = 'win32'
         else:
             realmode = 'ansi'
 
