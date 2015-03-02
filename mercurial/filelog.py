@@ -29,7 +29,7 @@ def packmeta(meta, text):
 
 def _censoredtext(text):
     m, offs = parsemeta(text)
-    return m and "censored" in m and not text[offs:]
+    return m and "censored" in m
 
 class filelog(revlog.revlog):
     def __init__(self, opener, path):
@@ -64,7 +64,7 @@ class filelog(revlog.revlog):
         node = self.node(rev)
         if self.renamed(node):
             return len(self.read(node))
-        if self._iscensored(rev):
+        if self.iscensored(rev):
             return 0
 
         # XXX if self.read(node).startswith("\1\n"), this returns (size+4)
@@ -85,7 +85,7 @@ class filelog(revlog.revlog):
             return False
 
         # censored files compare against the empty file
-        if self._iscensored(self.rev(node)):
+        if self.iscensored(self.rev(node)):
             return text != ''
 
         # renaming a file produces a different hash, even if the data
@@ -104,9 +104,6 @@ class filelog(revlog.revlog):
                 raise error.CensoredNodeError(self.indexfile, node)
             raise
 
-    def _file(self, f):
-        return filelog(self.opener, f)
-
-    def _iscensored(self, rev):
+    def iscensored(self, rev):
         """Check if a file revision is censored."""
         return self.flags(rev) & revlog.REVIDX_ISCENSORED

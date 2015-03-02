@@ -1541,6 +1541,9 @@ have 2 filelog topological heads in a linear changeset graph.
   $ testlog --follow
   []
   []
+  $ testlog -rnull
+  ['null']
+  []
   $ echo a > a
   $ echo aa > aa
   $ echo f > f
@@ -1763,6 +1766,13 @@ Test --follow and multiple files
   nodetag 2
   nodetag 1
   nodetag 0
+
+Test --follow null parent
+
+  $ hg up -q null
+  $ testlog -f
+  []
+  []
 
 Test --follow-first
 
