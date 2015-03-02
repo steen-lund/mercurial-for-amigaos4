@@ -559,16 +559,6 @@ def overridecopy(orig, ui, repo, pats, opts, rename=False):
         # this isn't legal, let the original function deal with it
         return orig(ui, repo, pats, opts, rename)
 
-    def makestandin(relpath):
-        path = pathutil.canonpath(repo.root, repo.getcwd(), relpath)
-        return os.path.join(repo.wjoin(lfutil.standin(path)))
-
-    fullpats = scmutil.expandpats(pats)
-    dest = fullpats[-1]
-
-    if os.path.isdir(dest):
-        if not os.path.isdir(makestandin(dest)):
-            os.makedirs(makestandin(dest))
     # This could copy both lfiles and normal files in one command,
     # but we don't want to do that. First replace their matcher to
     # only match normal files and run it, then replace it to just
@@ -594,6 +584,17 @@ def overridecopy(orig, ui, repo, pats, opts, rename=False):
         repo.getcwd()
     except OSError:
         return result
+
+    def makestandin(relpath):
+        path = pathutil.canonpath(repo.root, repo.getcwd(), relpath)
+        return os.path.join(repo.wjoin(lfutil.standin(path)))
+
+    fullpats = scmutil.expandpats(pats)
+    dest = fullpats[-1]
+
+    if os.path.isdir(dest):
+        if not os.path.isdir(makestandin(dest)):
+            os.makedirs(makestandin(dest))
 
     try:
         try:
@@ -715,10 +716,17 @@ def overriderevert(orig, ui, repo, *pats, **opts):
                 default='relpath'):
             match = oldmatch(ctx, pats, opts, globbed, default)
             m = copy.copy(match)
+
+            # revert supports recursing into subrepos, and though largefiles
+            # currently doesn't work correctly in that case, this match is
+            # called, so the lfdirstate above may not be the correct one for
+            # this invocation of match.
+            lfdirstate = lfutil.openlfdirstate(ctx._repo.ui, ctx._repo)
+
             def tostandin(f):
                 if lfutil.standin(f) in ctx:
                     return lfutil.standin(f)
-                elif lfutil.standin(f) in repo[None]:
+                elif lfutil.standin(f) in repo[None] or lfdirstate[f] == 'r':
                     return None
                 return f
             m._files = [tostandin(f) for f in m._files]
@@ -819,6 +827,14 @@ def hgclone(orig, ui, opts, *args, **kwargs):
     if result is not None:
         sourcerepo, destrepo = result
         repo = destrepo.local()
+
+        # If largefiles is required for this repo, permanently enable it locally
+        if 'largefiles' in repo.requirements:
+            fp = repo.vfs('hgrc', 'a', text=True)
+            try:
+                fp.write('\n[extensions]\nlargefiles=\n')
+            finally:
+                fp.close()
 
         # Caching is implicitly limited to 'rev' option, since the dest repo was
         # truncated at that point.  The user may expect a download count with

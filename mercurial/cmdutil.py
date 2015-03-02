@@ -1473,14 +1473,7 @@ def walkchangerevs(repo, match, opts, prepare):
     function on each context in the window in forward order.'''
 
     follow = opts.get('follow') or opts.get('follow_first')
-
-    if opts.get('rev'):
-        revs = scmutil.revrange(repo, opts.get('rev'))
-    elif follow:
-        revs = repo.revs('reverse(:.)')
-    else:
-        revs = revset.spanset(repo)
-        revs.reverse()
+    revs = _logrevs(repo, opts)
     if not revs:
         return []
     wanted = set()
@@ -1822,6 +1815,21 @@ def _makelogrevset(repo, pats, opts, revs):
         expr = None
     return expr, filematcher
 
+def _logrevs(repo, opts):
+    # Default --rev value depends on --follow but --follow behaviour
+    # depends on revisions resolved from --rev...
+    follow = opts.get('follow') or opts.get('follow_first')
+    if opts.get('rev'):
+        revs = scmutil.revrange(repo, opts['rev'])
+    elif follow and repo.dirstate.p1() == nullid:
+        revs = revset.baseset()
+    elif follow:
+        revs = repo.revs('reverse(:.)')
+    else:
+        revs = revset.spanset(repo)
+        revs.reverse()
+    return revs
+
 def getgraphlogrevs(repo, pats, opts):
     """Return (revs, expr, filematcher) where revs is an iterable of
     revision numbers, expr is a revset string built from log options
@@ -1830,28 +1838,14 @@ def getgraphlogrevs(repo, pats, opts):
     callable taking a revision number and returning a match objects
     filtering the files to be detailed when displaying the revision.
     """
-    if not len(repo):
-        return [], None, None
     limit = loglimit(opts)
-    # Default --rev value depends on --follow but --follow behaviour
-    # depends on revisions resolved from --rev...
-    follow = opts.get('follow') or opts.get('follow_first')
-    possiblyunsorted = False # whether revs might need sorting
-    if opts.get('rev'):
-        revs = scmutil.revrange(repo, opts['rev'])
-        # Don't sort here because _makelogrevset might depend on the
-        # order of revs
-        possiblyunsorted = True
-    else:
-        if follow and len(repo) > 0:
-            revs = repo.revs('reverse(:.)')
-        else:
-            revs = revset.spanset(repo)
-            revs.reverse()
+    revs = _logrevs(repo, opts)
     if not revs:
         return revset.baseset(), None, None
     expr, filematcher = _makelogrevset(repo, pats, opts, revs)
-    if possiblyunsorted:
+    if opts.get('rev'):
+        # User-specified revs might be unsorted, but don't sort before
+        # _makelogrevset because it might depend on the order of revs
         revs.sort(reverse=True)
     if expr:
         # Revset matchers often operate faster on revisions in changelog
@@ -1882,16 +1876,7 @@ def getlogrevs(repo, pats, opts):
     filtering the files to be detailed when displaying the revision.
     """
     limit = loglimit(opts)
-    # Default --rev value depends on --follow but --follow behaviour
-    # depends on revisions resolved from --rev...
-    follow = opts.get('follow') or opts.get('follow_first')
-    if opts.get('rev'):
-        revs = scmutil.revrange(repo, opts['rev'])
-    elif follow:
-        revs = repo.revs('reverse(:.)')
-    else:
-        revs = revset.spanset(repo)
-        revs.reverse()
+    revs = _logrevs(repo, opts)
     if not revs:
         return revset.baseset([]), None, None
     expr, filematcher = _makelogrevset(repo, pats, opts, revs)
@@ -2798,14 +2783,14 @@ def revert(ui, repo, ctx, parents, *pats, **opts):
 
             _performrevert(repo, parents, ctx, actions)
 
-            # get the list of subrepos that must be reverted
-            subrepomatch = scmutil.match(ctx, pats, opts)
-            targetsubs = sorted(s for s in ctx.substate if subrepomatch(s))
+        # get the list of subrepos that must be reverted
+        subrepomatch = scmutil.match(ctx, pats, opts)
+        targetsubs = sorted(s for s in ctx.substate if subrepomatch(s))
 
-            if targetsubs:
-                # Revert the subrepos on the revert list
-                for sub in targetsubs:
-                    ctx.sub(sub).revert(ctx.substate[sub], *pats, **opts)
+        if targetsubs:
+            # Revert the subrepos on the revert list
+            for sub in targetsubs:
+                ctx.sub(sub).revert(ctx.substate[sub], *pats, **opts)
     finally:
         wlock.release()
 
