@@ -626,6 +626,7 @@ class hgsubrepo(abstractsubrepo):
                            os.path.join(prefix, self._path), explicitonly,
                            **opts)
 
+    @annotatesubrepoerror
     def addremove(self, m, prefix, opts, dry_run, similarity):
         # In the same way as sub directories are processed, once in a subrepo,
         # always entry any of its subrepos.  Don't corrupt the options that will
@@ -835,7 +836,7 @@ class hgsubrepo(abstractsubrepo):
     def files(self):
         rev = self._state[1]
         ctx = self._repo[rev]
-        return ctx.manifest()
+        return ctx.manifest().keys()
 
     def filedata(self, name):
         rev = self._state[1]
@@ -877,13 +878,11 @@ class hgsubrepo(abstractsubrepo):
             opts['date'] = None
             opts['rev'] = substate[1]
 
-            pats = []
-            if not opts.get('all'):
-                pats = ['set:modified()']
             self.filerevert(*pats, **opts)
 
         # Update the repo to the revision specified in the given substate
-        self.get(substate, overwrite=True)
+        if not opts.get('dry_run'):
+            self.get(substate, overwrite=True)
 
     def filerevert(self, *pats, **opts):
         ctx = self._repo[opts['rev']]
@@ -1524,6 +1523,47 @@ class gitsubrepo(abstractsubrepo):
             return False
 
     @annotatesubrepoerror
+    def add(self, ui, match, prefix, explicitonly, **opts):
+        if self._gitmissing():
+            return []
+
+        (modified, added, removed,
+         deleted, unknown, ignored, clean) = self.status(None, unknown=True,
+                                                         clean=True)
+
+        tracked = set()
+        # dirstates 'amn' warn, 'r' is added again
+        for l in (modified, added, deleted, clean):
+            tracked.update(l)
+
+        # Unknown files not of interest will be rejected by the matcher
+        files = unknown
+        files.extend(match.files())
+
+        rejected = []
+
+        files = [f for f in sorted(set(files)) if match(f)]
+        for f in files:
+            exact = match.exact(f)
+            command = ["add"]
+            if exact:
+                command.append("-f") #should be added, even if ignored
+            if ui.verbose or not exact:
+                ui.status(_('adding %s\n') % match.rel(f))
+
+            if f in tracked:  # hg prints 'adding' even if already tracked
+                if exact:
+                    rejected.append(f)
+                continue
+            if not opts.get('dry_run'):
+                self._gitcommand(command + [f])
+
+        for f in rejected:
+            ui.warn(_("%s already tracked!\n") % match.abs(f))
+
+        return rejected
+
+    @annotatesubrepoerror
     def remove(self):
         if self._gitmissing():
             return
@@ -1577,11 +1617,30 @@ class gitsubrepo(abstractsubrepo):
 
 
     @annotatesubrepoerror
+    def cat(self, match, prefix, **opts):
+        rev = self._state[1]
+        if match.anypats():
+            return 1 #No support for include/exclude yet
+
+        if not match.files():
+            return 1
+
+        for f in match.files():
+            output = self._gitcommand(["show", "%s:%s" % (rev, f)])
+            fp = cmdutil.makefileobj(self._subparent, opts.get('output'),
+                                     self._ctx.node(),
+                                     pathname=os.path.join(prefix, f))
+            fp.write(output)
+            fp.close()
+        return 0
+
+
+    @annotatesubrepoerror
     def status(self, rev2, **opts):
         rev1 = self._state[1]
         if self._gitmissing() or not rev1:
             # if the repo is missing, return no results
-            return [], [], [], [], [], [], []
+            return scmutil.status([], [], [], [], [], [], [])
         modified, added, removed = [], [], []
         self._gitupdatestat()
         if rev2:
@@ -1603,7 +1662,7 @@ class gitsubrepo(abstractsubrepo):
 
         deleted, unknown, ignored, clean = [], [], [], []
 
-        if not rev2:
+        if opts.get('unknown'):
             command = ['ls-files', '--others', '--exclude-standard']
             out = self._gitcommand(command)
             for line in out.split('\n'):
@@ -1673,7 +1732,8 @@ class gitsubrepo(abstractsubrepo):
                 util.rename(os.path.join(self._abspath, name),
                             os.path.join(self._abspath, bakname))
 
-        self.get(substate, overwrite=True)
+        if not opts.get('dry_run'):
+            self.get(substate, overwrite=True)
         return []
 
     def shortid(self, revid):

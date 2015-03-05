@@ -8,10 +8,6 @@
 import util
 import heapq
 
-def _nonoverlap(d1, d2, d3):
-    "Return list of elements in d1 not in d2 or d3"
-    return sorted([d for d in d1 if d not in d3 and d not in d2])
-
 def _dirname(f):
     s = f.rfind("/")
     if s == -1:
@@ -144,6 +140,13 @@ def _dirstatecopies(d):
             del c[k]
     return c
 
+def _computeforwardmissing(a, b):
+    """Computes which files are in b but not a.
+    This is its own function so extensions can easily wrap this call to see what
+    files _forwardcopies is about to process.
+    """
+    return b.manifest().filesnotin(a.manifest())
+
 def _forwardcopies(a, b):
     '''find {dst@b: src@a} copy mapping where a is an ancestor of b'''
 
@@ -167,9 +170,7 @@ def _forwardcopies(a, b):
     # we currently don't try to find where old files went, too expensive
     # this means we can miss a case like 'hg rm b; hg cp a b'
     cm = {}
-    missing = set(b.manifest().iterkeys())
-    missing.difference_update(a.manifest().iterkeys())
-
+    missing = _computeforwardmissing(a, b)
     ancestrycontext = a._repo.changelog.ancestors([b.rev()], inclusive=True)
     for f in missing:
         fctx = b[f]
@@ -207,6 +208,22 @@ def pathcopies(x, y):
     if a == y:
         return _backwardrenames(x, y)
     return _chain(x, y, _backwardrenames(x, a), _forwardcopies(a, y))
+
+def _computenonoverlap(repo, addedinm1, addedinm2):
+    """Computes, based on addedinm1 and addedinm2, the files exclusive to m1
+    and m2. This is its own function so extensions can easily wrap this call
+    to see what files mergecopies is about to process.
+    """
+    u1 = sorted(addedinm1 - addedinm2)
+    u2 = sorted(addedinm2 - addedinm1)
+
+    if u1:
+        repo.ui.debug("  unmatched files in local:\n   %s\n"
+                      % "\n   ".join(u1))
+    if u2:
+        repo.ui.debug("  unmatched files in other:\n   %s\n"
+                      % "\n   ".join(u2))
+    return u1, u2
 
 def mergecopies(repo, c1, c2, ca):
     """
@@ -261,15 +278,9 @@ def mergecopies(repo, c1, c2, ca):
 
     repo.ui.debug("  searching for copies back to rev %d\n" % limit)
 
-    u1 = _nonoverlap(m1, m2, ma)
-    u2 = _nonoverlap(m2, m1, ma)
-
-    if u1:
-        repo.ui.debug("  unmatched files in local:\n   %s\n"
-                      % "\n   ".join(u1))
-    if u2:
-        repo.ui.debug("  unmatched files in other:\n   %s\n"
-                      % "\n   ".join(u2))
+    addedinm1 = m1.filesnotin(ma)
+    addedinm2 = m2.filesnotin(ma)
+    u1, u2 = _computenonoverlap(repo, addedinm1, addedinm2)
 
     for f in u1:
         checkcopies(ctx, f, m1, m2, ca, limit, diverge, copy, fullcopy)
@@ -291,7 +302,7 @@ def mergecopies(repo, c1, c2, ca):
         else:
             diverge2.update(fl) # reverse map for below
 
-    bothnew = sorted([d for d in m1 if d in m2 and d not in ma])
+    bothnew = sorted(addedinm1 & addedinm2)
     if bothnew:
         repo.ui.debug("  unmatched files new in both:\n   %s\n"
                       % "\n   ".join(bothnew))

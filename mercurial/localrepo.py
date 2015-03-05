@@ -323,6 +323,9 @@ class localrepository(object):
         maxchainlen = self.ui.configint('format', 'maxchainlen')
         if maxchainlen is not None:
             self.svfs.options['maxchainlen'] = maxchainlen
+        manifestcachesize = self.ui.configint('format', 'manifestcachesize')
+        if manifestcachesize is not None:
+            self.svfs.options['manifestcachesize'] = manifestcachesize
 
     def _writerequirements(self):
         reqfile = self.vfs("requires", "w")
@@ -479,7 +482,7 @@ class localrepository(object):
         '''Return a list of revisions matching the given revset'''
         expr = revset.formatspec(expr, *args)
         m = revset.match(None, expr)
-        return m(self, revset.spanset(self))
+        return m(self)
 
     def set(self, expr, *args):
         '''
@@ -501,7 +504,6 @@ class localrepository(object):
         """
         return hook.hook(self.ui, self, name, throw, **args)
 
-    @unfilteredmethod
     def _tag(self, names, node, message, local, user, date, extra={},
              editor=False):
         if isinstance(names, str):
@@ -1208,7 +1210,7 @@ class localrepository(object):
 
             # Here, we used to search backwards through history to try to find
             # where the file copy came from if the source of a copy was not in
-            # the parent diretory. However, this doesn't actually make sense to
+            # the parent directory. However, this doesn't actually make sense to
             # do (what does a copy from something not in your working copy even
             # mean?) and it causes bugs (eg, issue4476). Instead, we will warn
             # the user that copy information was dropped, so if they didn't

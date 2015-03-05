@@ -111,7 +111,8 @@ def writebundle(ui, cg, filename, bundletype, vfs=None):
             chunkiter = bundle.getchunks()
         else:
             if cg.version != '01':
-                raise util.Abort(_('Bundle1 only supports v1 changegroups\n'))
+                raise util.Abort(_('old bundle types only supports v1 '
+                                   'changegroups'))
             header, compressor = bundletypes[bundletype]
             fh.write(header)
             z = compressor()
@@ -481,7 +482,17 @@ class cg1packer(object):
         base = self.deltaparent(revlog, rev, p1, p2, prev)
 
         prefix = ''
-        if base == nullrev:
+        if revlog.iscensored(base) or revlog.iscensored(rev):
+            try:
+                delta = revlog.revision(node)
+            except error.CensoredNodeError, e:
+                delta = e.tombstone
+            if base == nullrev:
+                prefix = mdiff.trivialdiffheader(len(delta))
+            else:
+                baselen = revlog.rawsize(base)
+                prefix = mdiff.replacediffheader(baselen, len(delta))
+        elif base == nullrev:
             delta = revlog.revision(node)
             prefix = mdiff.trivialdiffheader(len(delta))
         else:
@@ -659,8 +670,11 @@ def addchangegroupfiles(repo, source, revmap, trp, pr, needfiles):
         pr()
         fl = repo.file(f)
         o = len(fl)
-        if not fl.addgroup(source, revmap, trp):
-            raise util.Abort(_("received file revlog group is empty"))
+        try:
+            if not fl.addgroup(source, revmap, trp):
+                raise util.Abort(_("received file revlog group is empty"))
+        except error.CensoredBaseError, e:
+            raise util.Abort(_("received delta base is censored: %s") % e)
         revisions += len(fl) - o
         files += 1
         if f in needfiles:

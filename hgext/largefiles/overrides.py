@@ -304,17 +304,47 @@ def overridelog(orig, ui, repo, *pats, **opts):
             return matchandpats
 
         pats = set(p)
-        # TODO: handling of patterns in both cases below
+
+        def fixpats(pat, tostandin=lfutil.standin):
+            kindpat = match_._patsplit(pat, None)
+
+            if kindpat[0] is not None:
+                return kindpat[0] + ':' + tostandin(kindpat[1])
+            return tostandin(kindpat[1])
+
         if m._cwd:
-            if os.path.isabs(m._cwd):
-                # TODO: handle largefile magic when invoked from other cwd
-                return matchandpats
-            back = (m._cwd.count('/') + 1) * '../'
-            pats.update(back + lfutil.standin(m._cwd + '/' + f) for f in p)
+            hglf = lfutil.shortname
+            back = util.pconvert(m.rel(hglf)[:-len(hglf)])
+
+            def tostandin(f):
+                # The file may already be a standin, so trucate the back
+                # prefix and test before mangling it.  This avoids turning
+                # 'glob:../.hglf/foo*' into 'glob:../.hglf/../.hglf/foo*'.
+                if f.startswith(back) and lfutil.splitstandin(f[len(back):]):
+                    return f
+
+                # An absolute path is from outside the repo, so truncate the
+                # path to the root before building the standin.  Otherwise cwd
+                # is somewhere in the repo, relative to root, and needs to be
+                # prepended before building the standin.
+                if os.path.isabs(m._cwd):
+                    f = f[len(back):]
+                else:
+                    f = m._cwd + '/' + f
+                return back + lfutil.standin(f)
+
+            pats.update(fixpats(f, tostandin) for f in p)
         else:
-            pats.update(lfutil.standin(f) for f in p)
+            def tostandin(f):
+                if lfutil.splitstandin(f):
+                    return f
+                return lfutil.standin(f)
+            pats.update(fixpats(f, tostandin) for f in p)
 
         for i in range(0, len(m._files)):
+            # Don't add '.hglf' to m.files, since that is already covered by '.'
+            if m._files[i] == '.':
+                continue
             standin = lfutil.standin(m._files[i])
             # If the "standin" is a directory, append instead of replace to
             # support naming a directory on the command line with only
@@ -325,7 +355,6 @@ def overridelog(orig, ui, repo, *pats, **opts):
             elif m._files[i] not in repo[ctx.node()] \
                     and repo.wvfs.isdir(standin):
                 m._files.append(standin)
-            pats.add(standin)
 
         m._fmap = set(m._files)
         m._always = False
@@ -338,6 +367,7 @@ def overridelog(orig, ui, repo, *pats, **opts):
             return r
         m.matchfn = lfmatchfn
 
+        ui.debug('updated patterns: %s\n' % sorted(pats))
         return m, pats
 
     # For hg log --patch, the match object is used in two different senses:
@@ -559,16 +589,6 @@ def overridecopy(orig, ui, repo, pats, opts, rename=False):
         # this isn't legal, let the original function deal with it
         return orig(ui, repo, pats, opts, rename)
 
-    def makestandin(relpath):
-        path = pathutil.canonpath(repo.root, repo.getcwd(), relpath)
-        return os.path.join(repo.wjoin(lfutil.standin(path)))
-
-    fullpats = scmutil.expandpats(pats)
-    dest = fullpats[-1]
-
-    if os.path.isdir(dest):
-        if not os.path.isdir(makestandin(dest)):
-            os.makedirs(makestandin(dest))
     # This could copy both lfiles and normal files in one command,
     # but we don't want to do that. First replace their matcher to
     # only match normal files and run it, then replace it to just
@@ -594,6 +614,17 @@ def overridecopy(orig, ui, repo, pats, opts, rename=False):
         repo.getcwd()
     except OSError:
         return result
+
+    def makestandin(relpath):
+        path = pathutil.canonpath(repo.root, repo.getcwd(), relpath)
+        return os.path.join(repo.wjoin(lfutil.standin(path)))
+
+    fullpats = scmutil.expandpats(pats)
+    dest = fullpats[-1]
+
+    if os.path.isdir(dest):
+        if not os.path.isdir(makestandin(dest)):
+            os.makedirs(makestandin(dest))
 
     try:
         try:
@@ -715,10 +746,17 @@ def overriderevert(orig, ui, repo, *pats, **opts):
                 default='relpath'):
             match = oldmatch(ctx, pats, opts, globbed, default)
             m = copy.copy(match)
+
+            # revert supports recursing into subrepos, and though largefiles
+            # currently doesn't work correctly in that case, this match is
+            # called, so the lfdirstate above may not be the correct one for
+            # this invocation of match.
+            lfdirstate = lfutil.openlfdirstate(ctx._repo.ui, ctx._repo, False)
+
             def tostandin(f):
                 if lfutil.standin(f) in ctx:
                     return lfutil.standin(f)
-                elif lfutil.standin(f) in repo[None]:
+                elif lfutil.standin(f) in repo[None] or lfdirstate[f] == 'r':
                     return None
                 return f
             m._files = [tostandin(f) for f in m._files]
@@ -820,6 +858,14 @@ def hgclone(orig, ui, opts, *args, **kwargs):
         sourcerepo, destrepo = result
         repo = destrepo.local()
 
+        # If largefiles is required for this repo, permanently enable it locally
+        if 'largefiles' in repo.requirements:
+            fp = repo.vfs('hgrc', 'a', text=True)
+            try:
+                fp.write('\n[extensions]\nlargefiles=\n')
+            finally:
+                fp.close()
+
         # Caching is implicitly limited to 'rev' option, since the dest repo was
         # truncated at that point.  The user may expect a download count with
         # this option, so attempt whether or not this is a largefile repo.
@@ -845,7 +891,7 @@ def overriderebase(orig, ui, repo, **opts):
         repo._lfcommithooks.pop()
 
 def overridearchive(orig, repo, dest, node, kind, decode=True, matchfn=None,
-            prefix=None, mtime=None, subrepos=None):
+            prefix='', mtime=None, subrepos=None):
     # No need to lock because we are only reading history and
     # largefile caches, neither of which are modified.
     lfcommands.cachelfiles(repo.ui, repo, node)

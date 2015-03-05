@@ -145,6 +145,7 @@ future, dropping the stream may become an option for channel we do not care to
 preserve.
 """
 
+import errno
 import sys
 import util
 import struct
@@ -312,7 +313,7 @@ def processbundle(repo, unbundler, transactiongetter=None):
     except Exception, exc:
         for part in iterparts:
             # consume the bundle content
-            part.read()
+            part.seek(0, 2)
         # Small hack to let caller code distinguish exceptions from bundle2
         # processing from processing the old format. This is mostly
         # needed to handle different return codes to unbundle according to the
@@ -364,7 +365,7 @@ def _processpart(op, part):
             outpart.addparam('in-reply-to', str(part.id), mandatory=False)
     finally:
         # consume the part content to not corrupt the stream.
-        part.read()
+        part.seek(0, 2)
 
 
 def decodecaps(blob):
@@ -484,6 +485,8 @@ class unpackermixin(object):
 
     def __init__(self, fp):
         self._fp = fp
+        self._seekable = (util.safehasattr(fp, 'seek') and
+                          util.safehasattr(fp, 'tell'))
 
     def _unpack(self, format):
         """unpack this struct format from the stream"""
@@ -494,6 +497,29 @@ class unpackermixin(object):
         """read exactly <size> bytes from the stream"""
         return changegroup.readexactly(self._fp, size)
 
+    def seek(self, offset, whence=0):
+        """move the underlying file pointer"""
+        if self._seekable:
+            return self._fp.seek(offset, whence)
+        else:
+            raise NotImplementedError(_('File pointer is not seekable'))
+
+    def tell(self):
+        """return the file offset, or None if file is not seekable"""
+        if self._seekable:
+            try:
+                return self._fp.tell()
+            except IOError, e:
+                if e.errno == errno.ESPIPE:
+                    self._seekable = False
+                else:
+                    raise
+        return None
+
+    def close(self):
+        """close underlying file"""
+        if util.safehasattr(self._fp, 'close'):
+            return self._fp.close()
 
 class unbundle20(unpackermixin):
     """interpret a bundle2 stream
@@ -564,6 +590,7 @@ class unbundle20(unpackermixin):
         while headerblock is not None:
             part = unbundlepart(self.ui, headerblock, self._fp)
             yield part
+            part.seek(0, 2)
             headerblock = self._readpartheader()
         self.ui.debug('end of bundle2 stream\n')
 
@@ -580,6 +607,8 @@ class unbundle20(unpackermixin):
             return self._readexact(headersize)
         return None
 
+    def compressed(self):
+        return False
 
 class bundlepart(object):
     """A bundle2 part contains application level payload
@@ -801,6 +830,8 @@ class unbundlepart(unpackermixin):
         self._payloadstream = None
         self._readheader()
         self._mandatory = None
+        self._chunkindex = [] #(payload, file) position tuples for chunk starts
+        self._pos = 0
 
     def _fromheader(self, size):
         """return the next <size> byte from the header"""
@@ -825,6 +856,47 @@ class unbundlepart(unpackermixin):
         self.params = dict(self.mandatoryparams)
         self.params.update(dict(self.advisoryparams))
         self.mandatorykeys = frozenset(p[0] for p in mandatoryparams)
+
+    def _payloadchunks(self, chunknum=0):
+        '''seek to specified chunk and start yielding data'''
+        if len(self._chunkindex) == 0:
+            assert chunknum == 0, 'Must start with chunk 0'
+            self._chunkindex.append((0, super(unbundlepart, self).tell()))
+        else:
+            assert chunknum < len(self._chunkindex), \
+                   'Unknown chunk %d' % chunknum
+            super(unbundlepart, self).seek(self._chunkindex[chunknum][1])
+
+        pos = self._chunkindex[chunknum][0]
+        payloadsize = self._unpack(_fpayloadsize)[0]
+        self.ui.debug('payload chunk size: %i\n' % payloadsize)
+        while payloadsize:
+            if payloadsize == flaginterrupt:
+                # interruption detection, the handler will now read a
+                # single part and process it.
+                interrupthandler(self.ui, self._fp)()
+            elif payloadsize < 0:
+                msg = 'negative payload chunk size: %i' %  payloadsize
+                raise error.BundleValueError(msg)
+            else:
+                result = self._readexact(payloadsize)
+                chunknum += 1
+                pos += payloadsize
+                if chunknum == len(self._chunkindex):
+                    self._chunkindex.append((pos,
+                                             super(unbundlepart, self).tell()))
+                yield result
+            payloadsize = self._unpack(_fpayloadsize)[0]
+            self.ui.debug('payload chunk size: %i\n' % payloadsize)
+
+    def _findchunk(self, pos):
+        '''for a given payload position, return a chunk number and offset'''
+        for chunk, (ppos, fpos) in enumerate(self._chunkindex):
+            if ppos == pos:
+                return chunk, 0
+            elif ppos > pos:
+                return chunk - 1, pos - self._chunkindex[chunk - 1][0]
+        raise ValueError('Unknown chunk')
 
     def _readheader(self):
         """read the header and setup the object"""
@@ -857,22 +929,7 @@ class unbundlepart(unpackermixin):
             advparams.append((self._fromheader(key), self._fromheader(value)))
         self._initparams(manparams, advparams)
         ## part payload
-        def payloadchunks():
-            payloadsize = self._unpack(_fpayloadsize)[0]
-            self.ui.debug('payload chunk size: %i\n' % payloadsize)
-            while payloadsize:
-                if payloadsize == flaginterrupt:
-                    # interruption detection, the handler will now read a
-                    # single part and process it.
-                    interrupthandler(self.ui, self._fp)()
-                elif payloadsize < 0:
-                    msg = 'negative payload chunk size: %i' %  payloadsize
-                    raise error.BundleValueError(msg)
-                else:
-                    yield self._readexact(payloadsize)
-                payloadsize = self._unpack(_fpayloadsize)[0]
-                self.ui.debug('payload chunk size: %i\n' % payloadsize)
-        self._payloadstream = util.chunkbuffer(payloadchunks())
+        self._payloadstream = util.chunkbuffer(self._payloadchunks())
         # we read the data, tell it
         self._initialized = True
 
@@ -886,7 +943,36 @@ class unbundlepart(unpackermixin):
             data = self._payloadstream.read(size)
         if size is None or len(data) < size:
             self.consumed = True
+        self._pos += len(data)
         return data
+
+    def tell(self):
+        return self._pos
+
+    def seek(self, offset, whence=0):
+        if whence == 0:
+            newpos = offset
+        elif whence == 1:
+            newpos = self._pos + offset
+        elif whence == 2:
+            if not self.consumed:
+                self.read()
+            newpos = self._chunkindex[-1][0] - offset
+        else:
+            raise ValueError('Unknown whence value: %r' % (whence,))
+
+        if newpos > self._chunkindex[-1][0] and not self.consumed:
+            self.read()
+        if not 0 <= newpos <= self._chunkindex[-1][0]:
+            raise ValueError('Offset out of range')
+
+        if self._pos != newpos:
+            chunk, internaloffset = self._findchunk(newpos)
+            self._payloadstream = util.chunkbuffer(self._payloadchunks(chunk))
+            adjust = self.read(internaloffset)
+            if len(adjust) != internaloffset:
+                raise util.Abort(_('Seek failed\n'))
+            self._pos = newpos
 
 capabilities = {'HG2Y': (),
                 'b2x:listkeys': (),

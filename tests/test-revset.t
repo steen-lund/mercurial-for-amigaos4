@@ -478,8 +478,36 @@ Test explicit numeric revision
   [255]
 
 Test null revision
+  $ log '(null)'
+  -1
+  $ log '(null:0)'
+  -1
+  0
+  $ log '(0:null)'
+  0
+  -1
+  $ log 'null::0'
+  -1
+  0
+  $ log 'null:tip - 0:'
+  -1
+  $ log 'null: and null::' | head -1
+  -1
+  $ log 'null: or 0:' | head -2
+  -1
+  0
   $ log 'ancestors(null)'
   -1
+  $ log 'reverse(null:)' | tail -2
+  0
+  -1
+  $ log 'first(null:)'
+  -1
+  $ log 'min(null:)'
+  -1
+  $ log 'tip:null and all()' | tail -2
+  1
+  0
 
   $ log 'outgoing()'
   8
@@ -1029,6 +1057,19 @@ far away.
   ('symbol', 'tip')
   warning: failed to parse the declaration of revset alias "bad name": at 4: invalid token
   9
+  $ echo 'strictreplacing($1, $10) = $10 or desc("$1")' >> .hg/hgrc
+  $ try 'strictreplacing("foo", tip)'
+  (func
+    ('symbol', 'strictreplacing')
+    (list
+      ('string', 'foo')
+      ('symbol', 'tip')))
+  (or
+    ('symbol', 'tip')
+    (func
+      ('symbol', 'desc')
+      ('string', '$1')))
+  9
 
   $ try 'd(2:5)'
   (func
@@ -1113,6 +1154,62 @@ far away.
         ('symbol', 'date'))))
   3
   2
+
+issue4553: check that revset aliases override existing hash prefix
+
+  $ hg log -qr e
+  6:e0cc66ef77e8
+
+  $ hg log -qr e --config revsetalias.e="all()"
+  0:2785f51eece5
+  1:d75937da8da0
+  2:5ed5505e9f1c
+  3:8528aa5637f2
+  4:2326846efdab
+  5:904fa392b941
+  6:e0cc66ef77e8
+  7:013af1973af4
+  8:d5d0dcbdc4d9
+  9:24286f4ae135
+
+  $ hg log -qr e: --config revsetalias.e="0"
+  0:2785f51eece5
+  1:d75937da8da0
+  2:5ed5505e9f1c
+  3:8528aa5637f2
+  4:2326846efdab
+  5:904fa392b941
+  6:e0cc66ef77e8
+  7:013af1973af4
+  8:d5d0dcbdc4d9
+  9:24286f4ae135
+
+  $ hg log -qr :e --config revsetalias.e="9"
+  0:2785f51eece5
+  1:d75937da8da0
+  2:5ed5505e9f1c
+  3:8528aa5637f2
+  4:2326846efdab
+  5:904fa392b941
+  6:e0cc66ef77e8
+  7:013af1973af4
+  8:d5d0dcbdc4d9
+  9:24286f4ae135
+
+  $ hg log -qr e:
+  6:e0cc66ef77e8
+  7:013af1973af4
+  8:d5d0dcbdc4d9
+  9:24286f4ae135
+
+  $ hg log -qr :e
+  0:2785f51eece5
+  1:d75937da8da0
+  2:5ed5505e9f1c
+  3:8528aa5637f2
+  4:2326846efdab
+  5:904fa392b941
+  6:e0cc66ef77e8
 
 issue2549 - correct optimizations
 

@@ -11,7 +11,7 @@
   >    hg ci -m "add $1"
   > }
   $ getid() {
-  >    hg id --debug --hidden -ir "desc('$1')"
+  >    hg log -T "{node}\n" --hidden -r "desc('$1')"
   > }
 
   $ cat > debugkeys.py <<EOF
@@ -187,6 +187,8 @@ check that various commands work well with filtering
   [255]
   $ hg debugrevspec 'rev(6)'
   $ hg debugrevspec 'rev(4)'
+  $ hg debugrevspec 'null'
+  -1
 
 Check that public changeset are not accounted as obsolete:
 
@@ -621,7 +623,7 @@ check graph view
 
 check filelog view
 
-  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'log/'`hg id --debug --id`/'babar'
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'log/'`hg log -r . -T "{node}"`/'babar'
   200 Script output follows
 
   $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'rev/68'
@@ -753,3 +755,84 @@ Test that removing a local tag does not cause some commands to fail
   $ hg tags
   visible                            0:193e9254ce7e
   tip                                0:193e9254ce7e
+
+#if serve
+
+Test issue 4506
+
+  $ cd ..
+  $ hg init repo-issue4506
+  $ cd repo-issue4506
+  $ echo "0" > foo
+  $ hg add foo
+  $ hg ci -m "content-0"
+
+  $ hg up null
+  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ echo "1" > bar
+  $ hg add bar
+  $ hg ci -m "content-1"
+  created new head
+  $ hg up 0
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg graft 1
+  grafting 1:1c9eddb02162 "content-1" (tip)
+
+  $ hg debugobsolete `hg log -r1 -T'{node}'` `hg log -r2 -T'{node}'`
+
+  $ hg serve -n test -p $HGPORT -d --pid-file=hg.pid -A access.log -E errors.log
+  $ cat hg.pid >> $DAEMON_PIDS
+
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'rev/1'
+  404 Not Found
+  [1]
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'file/tip/bar'
+  200 Script output follows
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'annotate/tip/bar'
+  200 Script output follows
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
+
+#endif
+
+  $ hg init a
+  $ cd a
+  $ touch foo
+  $ hg add foo
+  $ hg ci -mfoo
+  $ touch bar
+  $ hg add bar
+  $ hg ci -mbar
+  $ hg up 0
+  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ touch quux
+  $ hg add quux
+  $ hg ci -m quux
+  created new head
+  $ hg up 1
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg tag 1.0
+
+  $ hg up 2
+  1 files updated, 0 files merged, 2 files removed, 0 files unresolved
+  $ hg log -G
+  o  3:bc47fc7e1c1d (draft) [tip ] Added tag 1.0 for changeset 50c889141114
+  |
+  | @  2:3d7f255a0081 (draft) [ ] quux
+  | |
+  o |  1:50c889141114 (draft) [1.0 ] bar
+  |/
+  o  0:1f7b0de80e11 (draft) [ ] foo
+  
+  $ hg debugobsolete `getid bar`
+  $ hg debugobsolete `getid 1.0`
+  $ hg tag 1.0
+  $ hg log -G
+  @  4:f9f2ab71ffd5 (draft) [tip ] Added tag 1.0 for changeset 3d7f255a0081
+  |
+  o  2:3d7f255a0081 (draft) [1.0 ] quux
+  |
+  o  0:1f7b0de80e11 (draft) [ ] foo
+  
+  $ cat .hgtags
+  3d7f255a008103380aeb2a7d581fe257f40969e7 1.0

@@ -2885,7 +2885,7 @@ def debugrevspec(ui, repo, expr, **opts):
             weight, optimizedtree = revset.optimize(newtree, True)
             ui.note("* optimized:\n", revset.prettyformat(optimizedtree), "\n")
     func = revset.match(ui, expr)
-    for c in func(repo, revset.spanset(repo)):
+    for c in func(repo):
         ui.write("%s\n" % c)
 
 @command('debugsetparents', [], _('REV1 [REV2]'))
@@ -2893,7 +2893,8 @@ def debugsetparents(ui, repo, rev1, rev2=None):
     """manually set the parents of the current working directory
 
     This is useful for writing repository conversion tools, but should
-    be used with care.
+    be used with care. For example, neither the working copy nor the dirstate
+    is updated, so file status may be incorrect after running this command.
 
     Returns 0 on success.
     """
@@ -4477,6 +4478,10 @@ def log(ui, repo, *pats, **opts):
     Returns 0 on success.
 
     """
+    if opts.get('follow') and opts.get('rev'):
+        opts['rev'] = [revset.formatspec('reverse(::%lr)', opts.get('rev'))]
+        del opts['follow']
+
     if opts.get('graph'):
         return cmdutil.graphlog(ui, repo, *pats, **opts)
 
@@ -4984,9 +4989,9 @@ def pull(ui, repo, source="default", **opts):
     Returns 0 on success, 1 if an update had unresolved files.
     """
     source, branches = hg.parseurl(ui.expandpath(source), opts.get('branch'))
+    ui.status(_('pulling from %s\n') % util.hidepassword(source))
     other = hg.peer(repo, opts, source)
     try:
-        ui.status(_('pulling from %s\n') % util.hidepassword(source))
         revs, checkout = hg.addbranchrevs(repo, other, branches,
                                           opts.get('rev'))
 
@@ -5225,7 +5230,7 @@ def rename(ui, repo, *pats, **opts):
     ('m', 'mark', None, _('mark files as resolved')),
     ('u', 'unmark', None, _('mark files as unresolved')),
     ('n', 'no-status', None, _('hide status prefix'))]
-    + mergetoolopts + walkopts,
+    + mergetoolopts + walkopts + formatteropts,
     _('[OPTION]... [FILE]...'),
     inferrepo=True)
 def resolve(ui, repo, *pats, **opts):
@@ -5277,11 +5282,25 @@ def resolve(ui, repo, *pats, **opts):
         raise util.Abort(_('no files or directories specified'),
                          hint=('use --all to remerge all files'))
 
+    if show:
+        fm = ui.formatter('resolve', opts)
+        ms = mergemod.mergestate(repo)
+        m = scmutil.match(repo[None], pats, opts)
+        for f in ms:
+            if not m(f):
+                continue
+            l = 'resolve.' + {'u': 'unresolved', 'r': 'resolved'}[ms[f]]
+            fm.startitem()
+            fm.condwrite(not nostatus, 'status', '%s ', ms[f].upper(), label=l)
+            fm.write('path', '%s\n', f, label=l)
+        fm.end()
+        return 0
+
     wlock = repo.wlock()
     try:
         ms = mergemod.mergestate(repo)
 
-        if not (ms.active() or repo.dirstate.p2() != nullid) and not show:
+        if not (ms.active() or repo.dirstate.p2() != nullid):
             raise util.Abort(
                 _('resolve command not applicable when not merging'))
 
@@ -5295,14 +5314,7 @@ def resolve(ui, repo, *pats, **opts):
 
             didwork = True
 
-            if show:
-                if nostatus:
-                    ui.write("%s\n" % f)
-                else:
-                    ui.write("%s %s\n" % (ms[f].upper(), f),
-                             label='resolve.' +
-                             {'u': 'unresolved', 'r': 'resolved'}[ms[f]])
-            elif mark:
+            if mark:
                 ms.mark(f, "r")
             elif unmark:
                 ms.mark(f, "u")
@@ -5334,10 +5346,8 @@ def resolve(ui, repo, *pats, **opts):
     finally:
         wlock.release()
 
-    # Nudge users into finishing an unfinished operation. We don't print
-    # this with the list/show operation because we want list/show to remain
-    # machine readable.
-    if not list(ms.unresolved()) and not show:
+    # Nudge users into finishing an unfinished operation
+    if not list(ms.unresolved()):
         ui.status(_('(no more unresolved files)\n'))
 
     return ret
@@ -6303,7 +6313,7 @@ def version_(ui):
              % util.version())
     ui.status(_(
         "(see http://mercurial.selenic.com for more information)\n"
-        "\nCopyright (C) 2005-2014 Matt Mackall and others\n"
+        "\nCopyright (C) 2005-2015 Matt Mackall and others\n"
         "This is free software; see the source for copying conditions. "
         "There is NO\nwarranty; "
         "not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n"
