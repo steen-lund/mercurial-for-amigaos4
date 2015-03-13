@@ -11,7 +11,7 @@
   >    hg ci -m "add $1"
   > }
   $ getid() {
-  >    hg id --debug --hidden -ir "desc('$1')"
+  >    hg log -T "{node}\n" --hidden -r "desc('$1')"
   > }
 
   $ cat > debugkeys.py <<EOF
@@ -187,6 +187,8 @@ check that various commands work well with filtering
   [255]
   $ hg debugrevspec 'rev(6)'
   $ hg debugrevspec 'rev(4)'
+  $ hg debugrevspec 'null'
+  -1
 
 Check that public changeset are not accounted as obsolete:
 
@@ -621,7 +623,7 @@ check graph view
 
 check filelog view
 
-  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'log/'`hg id --debug --id`/'babar'
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'log/'`hg log -r . -T "{node}"`/'babar'
   200 Script output follows
 
   $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'rev/68'
@@ -753,3 +755,43 @@ Test that removing a local tag does not cause some commands to fail
   $ hg tags
   visible                            0:193e9254ce7e
   tip                                0:193e9254ce7e
+
+#if serve
+
+Test issue 4506
+
+  $ cd ..
+  $ hg init repo-issue4506
+  $ cd repo-issue4506
+  $ echo "0" > foo
+  $ hg add foo
+  $ hg ci -m "content-0"
+
+  $ hg up null
+  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ echo "1" > bar
+  $ hg add bar
+  $ hg ci -m "content-1"
+  created new head
+  $ hg up 0
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg graft 1
+  grafting 1:1c9eddb02162 "content-1" (tip)
+
+  $ hg debugobsolete `hg log -r1 -T'{node}'` `hg log -r2 -T'{node}'`
+
+  $ hg serve -n test -p $HGPORT -d --pid-file=hg.pid -A access.log -E errors.log
+  $ cat hg.pid >> $DAEMON_PIDS
+
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'rev/1'
+  404 Not Found
+  [1]
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'file/tip/bar'
+  200 Script output follows
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'annotate/tip/bar'
+  200 Script output follows
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
+
+#endif
+

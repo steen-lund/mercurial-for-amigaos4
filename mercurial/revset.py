@@ -323,8 +323,6 @@ def _getrevsource(repo, r):
 
 def stringset(repo, subset, x):
     x = repo[x].rev()
-    if x == -1 and len(subset) == len(repo):
-        return baseset([-1])
     if x in subset:
         return baseset([x])
     return baseset()
@@ -349,7 +347,7 @@ def rangeset(repo, subset, x, y):
     return r & subset
 
 def dagrange(repo, subset, x, y):
-    r = spanset(repo)
+    r = fullreposet(repo)
     xs = _revsbetween(repo, getset(repo, r, x), getset(repo, r, y))
     return xs & subset
 
@@ -370,7 +368,7 @@ def listset(repo, subset, a, b):
 def func(repo, subset, a, b):
     if a[0] == 'symbol' and a[1] in symbols:
         return symbols[a[1]](repo, subset, b)
-    raise error.ParseError(_("not a function: %s") % a[1])
+    raise error.UnknownIdentifier(a[1], symbols.keys())
 
 # functions
 
@@ -396,7 +394,7 @@ def ancestor(repo, subset, x):
     """
     # i18n: "ancestor" is a keyword
     l = getlist(x)
-    rl = spanset(repo)
+    rl = fullreposet(repo)
     anc = None
 
     # (getset(repo, rl, i) for i in l) generates a list of lists
@@ -412,7 +410,7 @@ def ancestor(repo, subset, x):
     return baseset()
 
 def _ancestors(repo, subset, x, followfirst=False):
-    heads = getset(repo, spanset(repo), x)
+    heads = getset(repo, fullreposet(repo), x)
     if not heads:
         return baseset()
     s = _revancestors(repo, heads, followfirst)
@@ -544,7 +542,7 @@ def branch(repo, subset, x):
         else:
             return subset.filter(lambda r: matcher(getbi(ucl, r)[0]))
 
-    s = getset(repo, spanset(repo), x)
+    s = getset(repo, fullreposet(repo), x)
     b = set()
     for r in s:
         b.add(getbi(ucl, r)[0])
@@ -708,7 +706,7 @@ def desc(repo, subset, x):
     return subset.filter(matches)
 
 def _descendants(repo, subset, x, followfirst=False):
-    roots = getset(repo, spanset(repo), x)
+    roots = getset(repo, fullreposet(repo), x)
     if not roots:
         return baseset()
     s = _revdescendants(repo, roots, followfirst)
@@ -744,9 +742,9 @@ def destination(repo, subset, x):
     is the same as passing all().
     """
     if x is not None:
-        sources = getset(repo, spanset(repo), x)
+        sources = getset(repo, fullreposet(repo), x)
     else:
-        sources = getall(repo, spanset(repo), x)
+        sources = fullreposet(repo)
 
     dests = set()
 
@@ -994,7 +992,7 @@ def getall(repo, subset, x):
     """
     # i18n: "all" is a keyword
     getargs(x, 0, 0, _("all takes no arguments"))
-    return subset
+    return subset & spanset(repo)  # drop "null" if any
 
 def grep(repo, subset, x):
     """``grep(regex)``
@@ -1145,7 +1143,7 @@ def limit(repo, subset, x):
         # i18n: "limit" is a keyword
         raise error.ParseError(_("limit expects a number"))
     ss = subset
-    os = getset(repo, spanset(repo), l[0])
+    os = getset(repo, fullreposet(repo), l[0])
     result = []
     it = iter(os)
     for x in xrange(lim):
@@ -1172,7 +1170,7 @@ def last(repo, subset, x):
         # i18n: "last" is a keyword
         raise error.ParseError(_("last expects a number"))
     ss = subset
-    os = getset(repo, spanset(repo), l[0])
+    os = getset(repo, fullreposet(repo), l[0])
     os.reverse()
     result = []
     it = iter(os)
@@ -1189,7 +1187,7 @@ def maxrev(repo, subset, x):
     """``max(set)``
     Changeset with highest revision number in set.
     """
-    os = getset(repo, spanset(repo), x)
+    os = getset(repo, fullreposet(repo), x)
     if os:
         m = os.max()
         if m in subset:
@@ -1226,7 +1224,7 @@ def minrev(repo, subset, x):
     """``min(set)``
     Changeset with lowest revision number in set.
     """
-    os = getset(repo, spanset(repo), x)
+    os = getset(repo, fullreposet(repo), x)
     if os:
         m = os.min()
         if m in subset:
@@ -1322,7 +1320,7 @@ def only(repo, subset, x):
     cl = repo.changelog
     # i18n: "only" is a keyword
     args = getargs(x, 1, 2, _('only takes one or two arguments'))
-    include = getset(repo, spanset(repo), args[0])
+    include = getset(repo, fullreposet(repo), args[0])
     if len(args) == 1:
         if not include:
             return baseset()
@@ -1331,7 +1329,7 @@ def only(repo, subset, x):
         exclude = [rev for rev in cl.headrevs()
             if not rev in descendants and not rev in include]
     else:
-        exclude = getset(repo, spanset(repo), args[1])
+        exclude = getset(repo, fullreposet(repo), args[1])
 
     results = set(cl.findmissingrevs(common=exclude, heads=include))
     return subset & results
@@ -1345,9 +1343,9 @@ def origin(repo, subset, x):
     for the first operation is selected.
     """
     if x is not None:
-        dests = getset(repo, spanset(repo), x)
+        dests = getset(repo, fullreposet(repo), x)
     else:
-        dests = getall(repo, spanset(repo), x)
+        dests = fullreposet(repo)
 
     def _firstsrc(rev):
         src = _getrevsource(repo, rev)
@@ -1400,7 +1398,7 @@ def p1(repo, subset, x):
 
     ps = set()
     cl = repo.changelog
-    for r in getset(repo, spanset(repo), x):
+    for r in getset(repo, fullreposet(repo), x):
         ps.add(cl.parentrevs(r)[0])
     ps -= set([node.nullrev])
     return subset & ps
@@ -1421,7 +1419,7 @@ def p2(repo, subset, x):
 
     ps = set()
     cl = repo.changelog
-    for r in getset(repo, spanset(repo), x):
+    for r in getset(repo, fullreposet(repo), x):
         ps.add(cl.parentrevs(r)[1])
     ps -= set([node.nullrev])
     return subset & ps
@@ -1435,7 +1433,7 @@ def parents(repo, subset, x):
     else:
         ps = set()
         cl = repo.changelog
-        for r in getset(repo, spanset(repo), x):
+        for r in getset(repo, fullreposet(repo), x):
             ps.update(cl.parentrevs(r))
     ps -= set([node.nullrev])
     return subset & ps
@@ -1548,7 +1546,7 @@ def rev(repo, subset, x):
     except (TypeError, ValueError):
         # i18n: "rev" is a keyword
         raise error.ParseError(_("rev expects a number"))
-    if l not in fullreposet(repo) and l != node.nullrev:
+    if l not in repo.changelog and l != node.nullrev:
         return baseset()
     return subset & baseset([l])
 
@@ -1676,7 +1674,7 @@ def roots(repo, subset, x):
     """``roots(set)``
     Changesets in set with no parent changeset in set.
     """
-    s = getset(repo, spanset(repo), x)
+    s = getset(repo, fullreposet(repo), x)
     subset = baseset([r for r in s if r in subset])
     cs = _children(repo, subset, s)
     return subset - cs
@@ -2153,7 +2151,7 @@ def _checkaliasarg(tree, known=None):
     if isinstance(tree, tuple):
         arg = _getaliasarg(tree)
         if arg is not None and (not known or arg not in known):
-            raise error.ParseError(_("not a function: %s") % '_aliasarg')
+            raise error.UnknownIdentifier('_aliasarg', [])
         for t in tree:
             _checkaliasarg(t, known)
 
@@ -2243,6 +2241,71 @@ def _parsealiasdecl(decl):
     except error.ParseError, inst:
         return (decl, None, None, parseerrordetail(inst))
 
+def _parsealiasdefn(defn, args):
+    """Parse alias definition ``defn``
+
+    This function also replaces alias argument references in the
+    specified definition by ``_aliasarg(ARGNAME)``.
+
+    ``args`` is a list of alias argument names, or None if the alias
+    is declared as a symbol.
+
+    This returns "tree" as parsing result.
+
+    >>> args = ['$1', '$2', 'foo']
+    >>> print prettyformat(_parsealiasdefn('$1 or foo', args))
+    (or
+      (func
+        ('symbol', '_aliasarg')
+        ('string', '$1'))
+      (func
+        ('symbol', '_aliasarg')
+        ('string', 'foo')))
+    >>> try:
+    ...     _parsealiasdefn('$1 or $bar', args)
+    ... except error.ParseError, inst:
+    ...     print parseerrordetail(inst)
+    at 6: '$' not for alias arguments
+    >>> args = ['$1', '$10', 'foo']
+    >>> print prettyformat(_parsealiasdefn('$10 or foobar', args))
+    (or
+      (func
+        ('symbol', '_aliasarg')
+        ('string', '$10'))
+      ('symbol', 'foobar'))
+    >>> print prettyformat(_parsealiasdefn('"$1" or "foo"', args))
+    (or
+      ('string', '$1')
+      ('string', 'foo'))
+    """
+    def tokenizedefn(program, lookup=None):
+        if args:
+            argset = set(args)
+        else:
+            argset = set()
+
+        for t, value, pos in _tokenizealias(program, lookup=lookup):
+            if t == 'symbol':
+                if value in argset:
+                    # emulate tokenization of "_aliasarg('ARGNAME')":
+                    # "_aliasarg()" is an unknown symbol only used separate
+                    # alias argument placeholders from regular strings.
+                    yield ('symbol', '_aliasarg', pos)
+                    yield ('(', None, pos)
+                    yield ('string', value, pos)
+                    yield (')', None, pos)
+                    continue
+                elif value.startswith('$'):
+                    raise error.ParseError(_("'$' not for alias arguments"),
+                                           pos)
+            yield (t, value, pos)
+
+    p = parser.parser(tokenizedefn, elements)
+    tree, pos = p.parse(defn)
+    if pos != len(defn):
+        raise error.ParseError(_('invalid token'), pos)
+    return tree
+
 class revsetalias(object):
     # whether own `error` information is already shown or not.
     # this avoids showing same warning multiple times at each `findaliases`.
@@ -2260,16 +2323,8 @@ class revsetalias(object):
                            ' "%s": %s') % (self.name, self.error)
             return
 
-        if self.args:
-            for arg in self.args:
-                # _aliasarg() is an unknown symbol only used separate
-                # alias argument placeholders from regular strings.
-                value = value.replace(arg, '_aliasarg(%r)' % (arg,))
-
         try:
-            self.replacement, pos = parse(value)
-            if pos != len(value):
-                raise error.ParseError(_('invalid token'), pos)
+            self.replacement = _parsealiasdefn(value, self.args)
             # Check for placeholder injection
             _checkaliasarg(self.replacement, self.args)
         except error.ParseError, inst:
@@ -2392,7 +2447,9 @@ def match(ui, spec, repo=None):
         tree = findaliases(ui, tree, showwarning=ui.warn)
     tree = foldconcat(tree)
     weight, tree = optimize(tree, True)
-    def mfunc(repo, subset):
+    def mfunc(repo, subset=None):
+        if subset is None:
+            subset = fullreposet(repo)
         if util.safehasattr(subset, 'isascending'):
             result = getset(repo, subset, tree)
         else:
@@ -3146,18 +3203,7 @@ class generatorset(abstractsmartset):
             return it().next()
         return None
 
-def spanset(repo, start=None, end=None):
-    """factory function to dispatch between fullreposet and actual spanset
-
-    Feel free to update all spanset call sites and kill this function at some
-    point.
-    """
-    if start is None and end is None:
-        return fullreposet(repo)
-    return _spanset(repo, start, end)
-
-
-class _spanset(abstractsmartset):
+class spanset(abstractsmartset):
     """Duck type for baseset class which represents a range of revisions and
     can work lazily and without having all the range in memory
 
@@ -3261,14 +3307,20 @@ class _spanset(abstractsmartset):
             return x
         return None
 
-class fullreposet(_spanset):
+class fullreposet(spanset):
     """a set containing all revisions in the repo
 
-    This class exists to host special optimization.
+    This class exists to host special optimization and magic to handle virtual
+    revisions such as "null".
     """
 
     def __init__(self, repo):
         super(fullreposet, self).__init__(repo)
+
+    def __contains__(self, rev):
+        # assumes the given rev is valid
+        hidden = self._hiddenrevs
+        return not (hidden and rev in hidden)
 
     def __and__(self, other):
         """As self contains the whole repo, all of the other set should also be

@@ -71,7 +71,7 @@ static inline int hexdigit(const char *p, Py_ssize_t off)
 /*
  * Turn a hex-encoded string into binary.
  */
-static PyObject *unhexlify(const char *str, int len)
+PyObject *unhexlify(const char *str, int len)
 {
 	PyObject *ret;
 	char *d;
@@ -1676,108 +1676,6 @@ bail:
 }
 
 /*
- * Given a (possibly overlapping) set of revs, return the greatest
- * common ancestors: those with the longest path to the root.
- */
-static PyObject *index_ancestors(indexObject *self, PyObject *args)
-{
-	PyObject *ret = NULL, *gca = NULL;
-	Py_ssize_t argcount, i, len;
-	bitmask repeat = 0;
-	int revcount = 0;
-	int *revs;
-
-	argcount = PySequence_Length(args);
-	revs = malloc(argcount * sizeof(*revs));
-	if (argcount > 0 && revs == NULL)
-		return PyErr_NoMemory();
-	len = index_length(self) - 1;
-
-	for (i = 0; i < argcount; i++) {
-		static const int capacity = 24;
-		PyObject *obj = PySequence_GetItem(args, i);
-		bitmask x;
-		long val;
-
-		if (!PyInt_Check(obj)) {
-			PyErr_SetString(PyExc_TypeError,
-					"arguments must all be ints");
-			Py_DECREF(obj);
-			goto bail;
-		}
-		val = PyInt_AsLong(obj);
-		Py_DECREF(obj);
-		if (val == -1) {
-			ret = PyList_New(0);
-			goto done;
-		}
-		if (val < 0 || val >= len) {
-			PyErr_SetString(PyExc_IndexError,
-					"index out of range");
-			goto bail;
-		}
-		/* this cheesy bloom filter lets us avoid some more
-		 * expensive duplicate checks in the common set-is-disjoint
-		 * case */
-		x = 1ull << (val & 0x3f);
-		if (repeat & x) {
-			int k;
-			for (k = 0; k < revcount; k++) {
-				if (val == revs[k])
-					goto duplicate;
-			}
-		}
-		else repeat |= x;
-		if (revcount >= capacity) {
-			PyErr_Format(PyExc_OverflowError,
-				     "bitset size (%d) > capacity (%d)",
-				     revcount, capacity);
-			goto bail;
-		}
-		revs[revcount++] = (int)val;
-	duplicate:;
-	}
-
-	if (revcount == 0) {
-		ret = PyList_New(0);
-		goto done;
-	}
-	if (revcount == 1) {
-		PyObject *obj;
-		ret = PyList_New(1);
-		if (ret == NULL)
-			goto bail;
-		obj = PyInt_FromLong(revs[0]);
-		if (obj == NULL)
-			goto bail;
-		PyList_SET_ITEM(ret, 0, obj);
-		goto done;
-	}
-
-	gca = find_gca_candidates(self, revs, revcount);
-	if (gca == NULL)
-		goto bail;
-
-	if (PyList_GET_SIZE(gca) <= 1) {
-		ret = gca;
-		Py_INCREF(gca);
-	}
-	else ret = find_deepest(self, gca);
-
-done:
-	free(revs);
-	Py_XDECREF(gca);
-
-	return ret;
-
-bail:
-	free(revs);
-	Py_XDECREF(gca);
-	Py_XDECREF(ret);
-	return NULL;
-}
-
-/*
  * Given a (possibly overlapping) set of revs, return all the
  * common ancestors heads: heads(::args[0] and ::a[1] and ...)
  */
@@ -1868,6 +1766,24 @@ bail:
 	free(revs);
 	Py_XDECREF(ret);
 	return NULL;
+}
+
+/*
+ * Given a (possibly overlapping) set of revs, return the greatest
+ * common ancestors: those with the longest path to the root.
+ */
+static PyObject *index_ancestors(indexObject *self, PyObject *args)
+{
+	PyObject *gca = index_commonancestorsheads(self, args);
+	if (gca == NULL)
+		return NULL;
+
+	if (PyList_GET_SIZE(gca) <= 1) {
+		Py_INCREF(gca);
+		return gca;
+	}
+
+	return find_deepest(self, gca);
 }
 
 /*
@@ -2230,6 +2146,157 @@ bail:
 	return NULL;
 }
 
+#define BUMPED_FIX 1
+#define USING_SHA_256 2
+
+static PyObject *readshas(
+	const char *source, unsigned char num, Py_ssize_t hashwidth)
+{
+	int i;
+	PyObject *list = PyTuple_New(num);
+	if (list == NULL) {
+		return NULL;
+	}
+	for (i = 0; i < num; i++) {
+		PyObject *hash = PyString_FromStringAndSize(source, hashwidth);
+		if (hash == NULL) {
+			Py_DECREF(list);
+			return NULL;
+		}
+		PyTuple_SetItem(list, i, hash);
+		source += hashwidth;
+	}
+	return list;
+}
+
+static PyObject *fm1readmarker(const char *data, uint32_t *msize)
+{
+	const char *meta;
+
+	double mtime;
+	int16_t tz;
+	uint16_t flags;
+	unsigned char nsuccs, nparents, nmetadata;
+	Py_ssize_t hashwidth = 20;
+
+	PyObject *prec = NULL, *parents = NULL, *succs = NULL;
+	PyObject *metadata = NULL, *ret = NULL;
+	int i;
+
+	*msize = getbe32(data);
+	data += 4;
+	mtime = getbefloat64(data);
+	data += 8;
+	tz = getbeint16(data);
+	data += 2;
+	flags = getbeuint16(data);
+	data += 2;
+
+	if (flags & USING_SHA_256) {
+		hashwidth = 32;
+	}
+
+	nsuccs = (unsigned char)(*data++);
+	nparents = (unsigned char)(*data++);
+	nmetadata = (unsigned char)(*data++);
+
+	prec = PyString_FromStringAndSize(data, hashwidth);
+	data += hashwidth;
+	if (prec == NULL) {
+		goto bail;
+	}
+
+	succs = readshas(data, nsuccs, hashwidth);
+	if (succs == NULL) {
+		goto bail;
+	}
+	data += nsuccs * hashwidth;
+
+	if (nparents == 1 || nparents == 2) {
+		parents = readshas(data, nparents, hashwidth);
+		if (parents == NULL) {
+			goto bail;
+		}
+		data += nparents * hashwidth;
+	} else {
+		parents = Py_None;
+	}
+
+	meta = data + (2 * nmetadata);
+	metadata = PyTuple_New(nmetadata);
+	if (metadata == NULL) {
+		goto bail;
+	}
+	for (i = 0; i < nmetadata; i++) {
+		PyObject *tmp, *left = NULL, *right = NULL;
+		Py_ssize_t metasize = (unsigned char)(*data++);
+		left = PyString_FromStringAndSize(meta, metasize);
+		meta += metasize;
+		metasize = (unsigned char)(*data++);
+		right = PyString_FromStringAndSize(meta, metasize);
+		meta += metasize;
+		if (!left || !right) {
+			Py_XDECREF(left);
+			Py_XDECREF(right);
+			goto bail;
+		}
+		tmp = PyTuple_Pack(2, left, right);
+		Py_DECREF(left);
+		Py_DECREF(right);
+		if (!tmp) {
+			goto bail;
+		}
+		PyTuple_SetItem(metadata, i, tmp);
+	}
+	ret = Py_BuildValue("(OOHO(di)O)", prec, succs, flags,
+			    metadata, mtime, (int)tz * 60, parents);
+bail:
+	Py_XDECREF(prec);
+	Py_XDECREF(succs);
+	Py_XDECREF(metadata);
+	if (parents != Py_None)
+		Py_XDECREF(parents);
+	return ret;
+}
+
+
+static PyObject *fm1readmarkers(PyObject *self, PyObject *args) {
+	const char *data;
+	Py_ssize_t datalen;
+	/* only unsigned long because python 2.4, should be Py_ssize_t */
+	unsigned long offset, stop;
+	PyObject *markers = NULL;
+
+	/* replace kk with nn when we drop Python 2.4 */
+	if (!PyArg_ParseTuple(args, "s#kk", &data, &datalen, &offset, &stop)) {
+		return NULL;
+	}
+	data += offset;
+	markers = PyList_New(0);
+	if (!markers) {
+		return NULL;
+	}
+	while (offset < stop) {
+		uint32_t msize;
+		int error;
+		PyObject *record = fm1readmarker(data, &msize);
+		if (!record) {
+			goto bail;
+		}
+		error = PyList_Append(markers, record);
+		Py_DECREF(record);
+		if (error) {
+			goto bail;
+		}
+		data += msize;
+		offset += msize;
+	}
+	return markers;
+bail:
+	Py_DECREF(markers);
+	return NULL;
+}
+
 static char parsers_doc[] = "Efficient content parsing.";
 
 PyObject *encodedir(PyObject *self, PyObject *args);
@@ -2245,10 +2312,13 @@ static PyMethodDef methods[] = {
 	{"encodedir", encodedir, METH_VARARGS, "encodedir a path\n"},
 	{"pathencode", pathencode, METH_VARARGS, "fncache-encode a path\n"},
 	{"lowerencode", lowerencode, METH_VARARGS, "lower-encode a path\n"},
+	{"fm1readmarkers", fm1readmarkers, METH_VARARGS,
+			"parse v1 obsolete markers\n"},
 	{NULL, NULL}
 };
 
 void dirs_module_init(PyObject *mod);
+void manifest_module_init(PyObject *mod);
 
 static void module_init(PyObject *mod)
 {
@@ -2263,6 +2333,7 @@ static void module_init(PyObject *mod)
 	PyModule_AddStringConstant(mod, "versionerrortext", versionerrortext);
 
 	dirs_module_init(mod);
+	manifest_module_init(mod);
 
 	indexType.tp_new = PyType_GenericNew;
 	if (PyType_Ready(&indexType) < 0 ||

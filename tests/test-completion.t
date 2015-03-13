@@ -202,7 +202,7 @@ Show all commands + options
   add: include, exclude, subrepos, dry-run
   annotate: rev, follow, no-follow, text, user, file, date, number, changeset, line-number, ignore-all-space, ignore-space-change, ignore-blank-lines, include, exclude, template
   clone: noupdate, updaterev, rev, branch, pull, uncompressed, ssh, remotecmd, insecure
-  commit: addremove, close-branch, amend, secret, edit, include, exclude, message, logfile, date, user, subrepos
+  commit: addremove, close-branch, amend, secret, edit, interactive, include, exclude, message, logfile, date, user, subrepos
   diff: rev, change, text, git, nodates, noprefix, show-function, reverse, ignore-all-space, ignore-space-change, ignore-blank-lines, unified, stat, include, exclude, subrepos
   export: output, switch-parent, rev, text, git, nodates
   forget: include, exclude
@@ -268,7 +268,7 @@ Show all commands + options
   heads: rev, topo, active, closed, style, template
   help: extension, command, keyword
   identify: rev, num, id, branch, tags, bookmarks, ssh, remotecmd, insecure
-  import: strip, base, edit, force, no-commit, bypass, partial, exact, import-branch, message, logfile, date, user, similarity
+  import: strip, base, edit, force, no-commit, bypass, partial, exact, prefix, import-branch, message, logfile, date, user, similarity
   incoming: force, newest-first, bundle, rev, bookmarks, branch, patch, git, limit, no-merges, stat, graph, style, template, ssh, remotecmd, insecure, subrepos
   locate: rev, print0, fullpath, include, exclude
   manifest: rev, all, template
@@ -278,7 +278,7 @@ Show all commands + options
   phase: public, draft, secret, force, rev
   recover: 
   rename: after, force, include, exclude, dry-run
-  resolve: all, list, mark, unmark, no-status, tool, include, exclude
+  resolve: all, list, mark, unmark, no-status, tool, include, exclude, template
   revert: all, date, rev, no-backup, include, exclude, dry-run
   rollback: dry-run, force
   root: 

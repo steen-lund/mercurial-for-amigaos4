@@ -66,8 +66,7 @@ class basectx(object):
         return self.filectx(key)
 
     def __iter__(self):
-        for f in sorted(self._manifest):
-            yield f
+        return iter(self._manifest)
 
     def _manifestmatches(self, match, s):
         """generate a new manifest filtered by the match argument
@@ -153,6 +152,8 @@ class basectx(object):
         return hex(self.node())
     def manifest(self):
         return self._manifest
+    def repo(self):
+        return self._repo
     def phasestr(self):
         return phases.phasenames[self.phase()]
     def mutable(self):
@@ -376,10 +377,6 @@ class changectx(basectx):
                 return
             if isinstance(changeid, long):
                 changeid = str(changeid)
-            if changeid == '.':
-                self._node = repo.dirstate.p1()
-                self._rev = repo.changelog.rev(self._node)
-                return
             if changeid == 'null':
                 self._node = nullid
                 self._rev = nullrev
@@ -387,6 +384,12 @@ class changectx(basectx):
             if changeid == 'tip':
                 self._node = repo.changelog.tip()
                 self._rev = repo.changelog.rev(self._node)
+                return
+            if changeid == '.' or changeid == repo.dirstate.p1():
+                # this is a hack to delay/avoid loading obsmarkers
+                # when we know that '.' won't be hidden
+                self._node = repo.dirstate.p1()
+                self._rev = repo.unfiltered().changelog.rev(self._node)
                 return
             if len(changeid) == 20:
                 try:
@@ -752,7 +755,7 @@ class basefilectx(object):
         return True
 
     def _adjustlinkrev(self, path, filelog, fnode, srcrev, inclusive=False):
-        """return the first ancestor of <srcrev> introducting <fnode>
+        """return the first ancestor of <srcrev> introducing <fnode>
 
         If the linkrev of the file revision does not point to an ancestor of
         srcrev, we'll walk down the ancestors until we find one introducing
@@ -824,7 +827,7 @@ class basefilectx(object):
             # be replaced with the rename information. This parent is -always-
             # the first one.
             #
-            # As null id have alway been filtered out in the previous list
+            # As null id have always been filtered out in the previous list
             # comprehension, inserting to 0 will always result in "replacing
             # first nullid parent with rename information.
             pl.insert(0, (r[0], r[1], self._repo.file(r[0])))
@@ -1286,9 +1289,6 @@ class committablectx(basectx):
             self._repo.dirstate.drop(f)
         self._repo.dirstate.setparents(node)
         self._repo.dirstate.endparentchange()
-
-    def dirs(self):
-        return self._repo.dirstate.dirs()
 
 class workingctx(committablectx):
     """A workingctx object makes access to data related to

@@ -362,6 +362,14 @@ Test update with subrepos.
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg status -S
 
+  $ hg forget -v subrepo/large.txt
+  removing subrepo/large.txt (glob)
+
+Test reverting a forgotten file
+  $ hg revert -R subrepo subrepo/large.txt
+  $ hg status -SA subrepo/large.txt
+  C subrepo/large.txt
+
   $ hg rm -v subrepo/large.txt
   removing subrepo/large.txt (glob)
   $ hg revert -R subrepo subrepo/large.txt
@@ -443,6 +451,10 @@ Test actions on largefiles using relative paths from subdir
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     anotherlarge
   
+  $ hg --debug log -T '{rev}: {desc}\n' ../sub/anotherlarge
+  updated patterns: ['../.hglf/sub/../sub/anotherlarge', '../sub/anotherlarge']
+  1: anotherlarge
+
   $ hg log -G anotherlarge
   @  changeset:   1:9627a577c5e9
   |  tag:         tip
@@ -450,6 +462,30 @@ Test actions on largefiles using relative paths from subdir
   |  date:        Thu Jan 01 00:00:00 1970 +0000
   |  summary:     anotherlarge
   |
+
+  $ hg log glob:another*
+  changeset:   1:9627a577c5e9
+  tag:         tip
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     anotherlarge
+  
+  $ hg --debug log -T '{rev}: {desc}\n' -G glob:another*
+  updated patterns: ['glob:../.hglf/sub/another*', 'glob:another*']
+  @  1: anotherlarge
+  |
+
+#if no-msys
+  $ hg --debug log -T '{rev}: {desc}\n' 'glob:../.hglf/sub/another*' # no-msys
+  updated patterns: ['glob:../.hglf/sub/another*']
+  1: anotherlarge
+
+  $ hg --debug log -G -T '{rev}: {desc}\n' 'glob:../.hglf/sub/another*' # no-msys
+  updated patterns: ['glob:../.hglf/sub/another*']
+  @  1: anotherlarge
+  |
+#endif
+
   $ echo more >> anotherlarge
   $ hg st .
   M anotherlarge
@@ -460,7 +496,32 @@ Test actions on largefiles using relative paths from subdir
   ? sub/anotherlarge.orig
   $ cd ..
 
+Test glob logging from the root dir
+  $ hg log glob:**another*
+  changeset:   1:9627a577c5e9
+  tag:         tip
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     anotherlarge
+  
+  $ hg log -G glob:**another*
+  @  changeset:   1:9627a577c5e9
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     anotherlarge
+  |
+
   $ cd ..
+
+Log from outer space
+  $ hg --debug log -R addrm2 -T '{rev}: {desc}\n' 'addrm2/sub/anotherlarge'
+  updated patterns: ['addrm2/.hglf/sub/anotherlarge', 'addrm2/sub/anotherlarge']
+  1: anotherlarge
+  $ hg --debug log -R addrm2 -T '{rev}: {desc}\n' 'addrm2/.hglf/sub/anotherlarge'
+  updated patterns: ['addrm2/.hglf/sub/anotherlarge']
+  1: anotherlarge
+
 
 Check error message while exchange
 =========================================================

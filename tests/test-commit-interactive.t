@@ -15,7 +15,7 @@ Select no files
   $ touch empty-rw
   $ hg add empty-rw
 
-  $ hg record empty-rw<<EOF
+  $ hg commit -i empty-rw<<EOF
   > n
   > EOF
   diff --git a/empty-rw b/empty-rw
@@ -34,7 +34,7 @@ Select no files
 
 Select files but no hunks
 
-  $ hg record empty-rw<<EOF
+  $ hg commit -i  empty-rw<<EOF
   > y
   > n
   > EOF
@@ -55,7 +55,7 @@ Select files but no hunks
 
 Record empty file
 
-  $ hg record -d '0 0' -m empty empty-rw<<EOF
+  $ hg commit -i -d '0 0' -m empty empty-rw<<EOF
   > y
   > y
   > EOF
@@ -85,7 +85,7 @@ Summary shows we updated to the new cset
 Rename empty file
 
   $ hg mv empty-rw empty-rename
-  $ hg record -d '1 0' -m rename<<EOF
+  $ hg commit -i -d '1 0' -m rename<<EOF
   > y
   > EOF
   diff --git a/empty-rw b/empty-rename
@@ -106,7 +106,7 @@ Rename empty file
 Copy empty file
 
   $ hg cp empty-rename empty-copy
-  $ hg record -d '2 0' -m copy<<EOF
+  $ hg commit -i -d '2 0' -m copy<<EOF
   > y
   > EOF
   diff --git a/empty-rename b/empty-copy
@@ -127,7 +127,7 @@ Copy empty file
 Delete empty file
 
   $ hg rm empty-copy
-  $ hg record -d '3 0' -m delete<<EOF
+  $ hg commit -i -d '3 0' -m delete<<EOF
   > y
   > EOF
   diff --git a/empty-copy b/empty-copy
@@ -149,7 +149,7 @@ Add binary file
   $ hg bundle --base -2 tip.bundle
   1 changesets found
   $ hg add tip.bundle
-  $ hg record -d '4 0' -m binary<<EOF
+  $ hg commit -i -d '4 0' -m binary<<EOF
   > y
   > EOF
   diff --git a/tip.bundle b/tip.bundle
@@ -173,7 +173,7 @@ Change binary file
 
   $ hg bundle --base -2 tip.bundle
   1 changesets found
-  $ hg record -d '5 0' -m binary-change<<EOF
+  $ hg commit -i -d '5 0' -m binary-change<<EOF
   > y
   > EOF
   diff --git a/tip.bundle b/tip.bundle
@@ -197,7 +197,7 @@ Rename and change binary file
   $ hg mv tip.bundle top.bundle
   $ hg bundle --base -2 top.bundle
   1 changesets found
-  $ hg record -d '6 0' -m binary-change-rename<<EOF
+  $ hg commit -i -d '6 0' -m binary-change-rename<<EOF
   > y
   > EOF
   diff --git a/tip.bundle b/top.bundle
@@ -227,7 +227,7 @@ Add plain file
   > done
 
   $ hg add plain
-  $ hg record -d '7 0' -m plain plain<<EOF
+  $ hg commit -i -d '7 0' -m plain plain<<EOF
   > y
   > y
   > EOF
@@ -274,7 +274,7 @@ Modify end of plain file with username unset
 
   $ echo 11 >> plain
   $ unset HGUSER
-  $ hg record --config ui.username= -d '8 0' -m end plain
+  $ hg commit -i --config ui.username= -d '8 0' -m end plain
   abort: no username supplied
   (use "hg config --edit" to set your username)
   [255]
@@ -284,7 +284,7 @@ Modify end of plain file, also test that diffopts are accounted for
 
   $ HGUSER="test"
   $ export HGUSER
-  $ hg record --config diff.showfunc=true -d '8 0' -m end plain <<EOF
+  $ hg commit -i --config diff.showfunc=true -d '8 0' -m end plain <<EOF
   > y
   > y
   > EOF
@@ -303,7 +303,7 @@ Modify end of plain file, also test that diffopts are accounted for
 Modify end of plain file, no EOL
 
   $ hg tip --template '{node}' >> plain
-  $ hg record -d '9 0' -m noeol plain <<EOF
+  $ hg commit -i -d '9 0' -m noeol plain <<EOF
   > y
   > y
   > EOF
@@ -325,7 +325,7 @@ Modify end of plain file, add EOL
   $ echo >> plain
   $ echo 1 > plain2
   $ hg add plain2
-  $ hg record -d '10 0' -m eol plain plain2 <<EOF
+  $ hg commit -i -d '10 0' -m eol plain plain2 <<EOF
   > y
   > y
   > y
@@ -361,7 +361,7 @@ changes numbering
   > done
   $ echo 2 >> plain2
 
-  $ hg record -d '10 0' -m begin-and-end plain plain2 <<EOF
+  $ hg commit -i -d '10 0' -m begin-and-end plain plain2 <<EOF
   > y
   > y
   > y
@@ -437,7 +437,7 @@ Trim beginning, modify end
 
 Record end
 
-  $ hg record -d '11 0' -m end-only plain <<EOF
+  $ hg commit -i -d '11 0' -m end-only plain <<EOF
   > y
   > n
   > y
@@ -490,7 +490,7 @@ Record end
 
 Record beginning
 
-  $ hg record -d '12 0' -m begin-only plain <<EOF
+  $ hg commit -i -d '12 0' -m begin-only plain <<EOF
   > y
   > y
   > EOF
@@ -536,7 +536,7 @@ Add to beginning, trim from end
 
 Record end
 
-  $ hg record --traceback -d '13 0' -m end-again plain<<EOF
+  $ hg commit -i --traceback -d '13 0' -m end-again plain<<EOF
   > y
   > n
   > y
@@ -577,7 +577,7 @@ Add to beginning, middle, end
 
 Record beginning, middle, and test that format-breaking diffopts are ignored
 
-  $ hg record --config diff.noprefix=True -d '14 0' -m middle-only plain <<EOF
+  $ hg commit -i --config diff.noprefix=True -d '14 0' -m middle-only plain <<EOF
   > y
   > y
   > y
@@ -641,7 +641,7 @@ Record beginning, middle, and test that format-breaking diffopts are ignored
 
 Record end
 
-  $ hg record -d '15 0' -m end-only plain <<EOF
+  $ hg commit -i -d '15 0' -m end-only plain <<EOF
   > y
   > y
   > EOF
@@ -683,7 +683,7 @@ Record end
   adding subdir/a
 
   $ echo a >> a
-  $ hg record -d '16 0' -m subdir-change a <<EOF
+  $ hg commit -i -d '16 0' -m subdir-change a <<EOF
   > y
   > y
   > EOF
@@ -723,7 +723,7 @@ Record end
 
 Help, quit
 
-  $ hg record <<EOF
+  $ hg commit -i <<EOF
   > ?
   > q
   > EOF
@@ -747,7 +747,7 @@ Help, quit
 
 Skip
 
-  $ hg record <<EOF
+  $ hg commit -i <<EOF
   > s
   > EOF
   diff --git a/subdir/f1 b/subdir/f1
@@ -761,7 +761,7 @@ Skip
 
 No
 
-  $ hg record <<EOF
+  $ hg commit -i <<EOF
   > n
   > EOF
   diff --git a/subdir/f1 b/subdir/f1
@@ -775,7 +775,7 @@ No
 
 f, quit
 
-  $ hg record <<EOF
+  $ hg commit -i <<EOF
   > f
   > q
   > EOF
@@ -792,7 +792,7 @@ f, quit
 
 s, all
 
-  $ hg record -d '18 0' -mx <<EOF
+  $ hg commit -i -d '18 0' -mx <<EOF
   > s
   > a
   > EOF
@@ -822,7 +822,7 @@ s, all
 
 f
 
-  $ hg record -d '19 0' -my <<EOF
+  $ hg commit -i -d '19 0' -my <<EOF
   > f
   > EOF
   diff --git a/subdir/f1 b/subdir/f1
@@ -851,7 +851,7 @@ Preserve chmod +x
 
   $ chmod +x f1
   $ echo a >> f1
-  $ hg record -d '20 0' -mz <<EOF
+  $ hg commit -i -d '20 0' -mz <<EOF
   > y
   > y
   > y
@@ -890,7 +890,7 @@ Preserve chmod +x
 Preserve execute permission on original
 
   $ echo b >> f1
-  $ hg record -d '21 0' -maa <<EOF
+  $ hg commit -i -d '21 0' -maa <<EOF
   > y
   > y
   > y
@@ -928,7 +928,7 @@ Preserve chmod -x
 
   $ chmod -x f1
   $ echo c >> f1
-  $ hg record -d '22 0' -mab <<EOF
+  $ hg commit -i -d '22 0' -mab <<EOF
   > y
   > y
   > y
@@ -974,7 +974,7 @@ Slightly bogus tests to get almost same repo structure as when x bit is used
 Mock "Preserve chmod +x"
 
   $ echo a >> f1
-  $ hg record -d '20 0' -mz <<EOF
+  $ hg commit -i -d '20 0' -mz <<EOF
   > y
   > y
   > y
@@ -1009,7 +1009,7 @@ Mock "Preserve chmod +x"
 Mock "Preserve execute permission on original"
 
   $ echo b >> f1
-  $ hg record -d '21 0' -maa <<EOF
+  $ hg commit -i -d '21 0' -maa <<EOF
   > y
   > y
   > y
@@ -1047,7 +1047,7 @@ Mock "Preserve chmod -x"
 
   $ chmod -x f1
   $ echo c >> f1
-  $ hg record -d '22 0' -mab <<EOF
+  $ hg commit -i -d '22 0' -mab <<EOF
   > y
   > y
   > y
@@ -1107,7 +1107,7 @@ Abort early when a merge is in progress
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
 
-  $ hg record -m'will abort'
+  $ hg commit -i -m'will abort'
   abort: cannot partially commit a merge (use "hg commit" instead)
   [255]
 
@@ -1133,7 +1133,7 @@ Editing patch (and ignoring trailing text)
   > This change will be committed
   > This is the third line
   > __EOF__
-  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg record -d '23 0' -medit-patch-2 <<EOF
+  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg commit -i -d '23 0' -medit-patch-2 <<EOF
   > y
   > e
   > EOF
@@ -1162,7 +1162,7 @@ Editing patch (and ignoring trailing text)
 Trying to edit patch for whole file
 
   $ echo "This is the fourth line" >> editedfile
-  $ hg record <<EOF
+  $ hg commit -i <<EOF
   > e
   > q
   > EOF
@@ -1186,7 +1186,7 @@ Removing changes from patch
   > sed -e 's/^[-+]/ /' "$1" > tmp
   > mv tmp "$1"
   > __EOF__
-  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg record <<EOF
+  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg commit -i <<EOF
   > y
   > e
   > EOF
@@ -1223,7 +1223,7 @@ Invalid patch
   > sed s/This/That/ "$1" > tmp
   > mv tmp "$1"
   > __EOF__
-  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg record <<EOF
+  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg commit -i <<EOF
   > y
   > e
   > EOF
@@ -1270,7 +1270,7 @@ Malformed patch - error handling
   > sed -e '/^@/p' "$1" > tmp
   > mv tmp "$1"
   > __EOF__
-  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg record <<EOF
+  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg commit -i <<EOF
   > y
   > e
   > EOF
@@ -1297,7 +1297,7 @@ random text in random positions is still an error
   > other' "$1" > tmp
   > mv tmp "$1"
   > __EOF__
-  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg record <<EOF
+  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg commit -i <<EOF
   > y
   > e
   > EOF
@@ -1337,7 +1337,7 @@ Ignore win32text deprecation warning for now:
   $ echo 'warn = no' >> .hg/hgrc
 
   $ echo d >> subdir/f1
-  $ hg record -d '24 0' -mw1 <<EOF
+  $ hg commit -i -d '24 0' -mw1 <<EOF
   > y
   > y
   > EOF
@@ -1374,7 +1374,7 @@ Ignore win32text deprecation warning for now:
 Test --user when ui.username not set
   $ unset HGUSER
   $ echo e >> subdir/f1
-  $ hg record  --config ui.username= -d '8 0' --user xyz -m "user flag" <<EOF
+  $ hg commit -i  --config ui.username= -d '8 0' --user xyz -m "user flag" <<EOF
   > y
   > y
   > EOF
@@ -1407,7 +1407,7 @@ Editing patch of newly added file
   > This is the third line
   > __EOF__
   $ hg add newfile
-  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg record -d '23 0' -medit-patch-new <<EOF
+  $ HGEDITOR="\"sh\" \"`pwd`/editor.sh\"" hg commit -i -d '23 0' -medit-patch-new <<EOF
   > y
   > e
   > EOF

@@ -359,8 +359,10 @@ class sortdict(dict):
     def __iter__(self):
         return self._list.__iter__()
     def update(self, src):
-        for k in src:
-            self[k] = src[k]
+        if isinstance(src, dict):
+            src = src.iteritems()
+        for k, v in src:
+            self[k] = v
     def clear(self):
         dict.clear(self)
         self._list = []
@@ -1352,11 +1354,11 @@ def parsedate(date, formats=None, bias={}):
         formats = defaultdateformats
     date = date.strip()
 
-    if date == _('now'):
+    if date == 'now' or date == _('now'):
         return makedate()
-    if date == _('today'):
+    if date == 'today' or date == _('today'):
         date = datetime.date.today().strftime('%b %d')
-    elif date == _('yesterday'):
+    elif date == 'yesterday' or date == _('yesterday'):
         date = (datetime.date.today() -
                 datetime.timedelta(days=1)).strftime('%b %d')
 

@@ -323,6 +323,9 @@ class localrepository(object):
         maxchainlen = self.ui.configint('format', 'maxchainlen')
         if maxchainlen is not None:
             self.svfs.options['maxchainlen'] = maxchainlen
+        manifestcachesize = self.ui.configint('format', 'manifestcachesize')
+        if manifestcachesize is not None:
+            self.svfs.options['manifestcachesize'] = manifestcachesize
 
     def _writerequirements(self):
         reqfile = self.vfs("requires", "w")
@@ -479,7 +482,7 @@ class localrepository(object):
         '''Return a list of revisions matching the given revset'''
         expr = revset.formatspec(expr, *args)
         m = revset.match(None, expr)
-        return m(self, revset.spanset(self))
+        return m(self)
 
     def set(self, expr, *args):
         '''
@@ -906,19 +909,38 @@ class localrepository(object):
                 _("abandoned transaction found"),
                 hint=_("run 'hg recover' to clean up transaction"))
 
+        self.hook('pretxnopen', throw=True, txnname=desc)
+
         self._writejournal(desc)
         renames = [(vfs, x, undoname(x)) for vfs, x in self._journalfiles()]
         rp = report and report or self.ui.warn
         vfsmap = {'plain': self.vfs} # root of .hg/
-        tr = transaction.transaction(rp, self.svfs, vfsmap,
+        # we must avoid cyclic reference between repo and transaction.
+        reporef = weakref.ref(self)
+        def validate(tr):
+            """will run pre-closing hooks"""
+            pending = lambda: tr.writepending() and self.root or ""
+            reporef().hook('pretxnclose', throw=True, pending=pending,
+                           xnname=desc)
+
+        tr = transaction.transaction(rp, self.sopener, vfsmap,
                                      "journal",
                                      "undo",
                                      aftertrans(renames),
-                                     self.store.createmode)
+                                     self.store.createmode,
+                                     validator=validate)
         # note: writing the fncache only during finalize mean that the file is
         # outdated when running hooks. As fncache is used for streaming clone,
         # this is not expected to break anything that happen during the hooks.
         tr.addfinalize('flush-fncache', self.store.write)
+        def txnclosehook(tr2):
+            """To be run if transaction is successful, will schedule a hook run
+            """
+            def hook():
+                reporef().hook('txnclose', throw=False, txnname=desc,
+                               **tr2.hookargs)
+            reporef()._afterlock(hook)
+        tr.addfinalize('txnclose-hook', txnclosehook)
         self._transref = weakref.ref(tr)
         return tr
 
@@ -1208,7 +1230,7 @@ class localrepository(object):
 
             # Here, we used to search backwards through history to try to find
             # where the file copy came from if the source of a copy was not in
-            # the parent diretory. However, this doesn't actually make sense to
+            # the parent directory. However, this doesn't actually make sense to
             # do (what does a copy from something not in your working copy even
             # mean?) and it causes bugs (eg, issue4476). Instead, we will warn
             # the user that copy information was dropped, so if they didn't

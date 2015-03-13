@@ -47,6 +47,9 @@ Second branch starting at nullrev:
   fourth (second)
   $ hg log -T '{file_copies % "{source} -> {name}\n"}' -r .
   second -> fourth
+  $ hg log -T '{rev} {ifcontains("fourth", file_copies, "t", "f")}\n' -r .:7
+  8 t
+  7 f
 
 Quoting for ui.logtemplate
 
@@ -1898,6 +1901,11 @@ Thrown an error if a template function doesn't exist
   hg: parse error: unknown function 'foo'
   [255]
 
+Pass generator object created by template function to filter
+
+  $ hg log -l 1 --template '{if(author, author)|user}\n'
+  test
+
 Test diff function:
 
   $ hg diff -c 8
@@ -2283,6 +2291,14 @@ Test branches inside if statement:
   $ hg log -r 0 --template '{if(branches, "yes", "no")}\n'
   no
 
+Test get function:
+
+  $ hg log -r 0 --template '{get(extras, "branch")}\n'
+  default
+  $ hg log -r 0 --template '{get(files, "should_fail")}\n'
+  hg: parse error: get() expects a dict as first argument
+  [255]
+
 Test shortest(node) function:
 
   $ echo b > b
@@ -2386,6 +2402,10 @@ Test current bookmark templating
   2 bar foo
   1 baz
   0 
+  $ hg log --template "{rev} {ifcontains('foo', bookmarks, 't', 'f')}\n"
+  2 t
+  1 f
+  0 f
 
 Test stringify on sub expressions
 
