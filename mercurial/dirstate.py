@@ -129,7 +129,10 @@ class dirstate(object):
     def _join(self, f):
         # much faster than os.path.join()
         # it's safe because f is always a relative path
-        return self._rootdir + f
+        if (os.name == 'amiga'):
+            return os.path.join(self._rootdir,f)
+        else:
+            return self._rootdir + f
 
     def flagfunc(self, fallback):
         if self._checklink:

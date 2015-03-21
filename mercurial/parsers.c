@@ -162,6 +162,11 @@ static uint32_t ntohl(uint32_t x)
 #include <inttypes.h>
 #endif
 
+#if defined(__amigaos4__)
+#define ntohl(x) x
+#endif
+
+
 static PyObject *parse_dirstate(PyObject *self, PyObject *args)
 {
 	PyObject *dmap, *cmap, *parents = NULL, *ret = NULL;

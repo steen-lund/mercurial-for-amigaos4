@@ -501,6 +501,8 @@ def hidewindow():
 if os.name == 'nt':
     checkosfilename = checkwinfilename
     from windows import *
+elif os.name == 'amiga':
+    from amiga import *
 else:
     from posix import *
 

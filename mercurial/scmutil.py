@@ -399,7 +399,18 @@ def rcpath():
             _rcpath = osrcpath()
     return _rcpath
 
-if os.name != 'nt':
+
+if os.name == 'amiga':
+
+    def systemrcpath():
+        path =  [];
+        path.extend(["ENV:hg/.hgrc"]);
+        return path
+
+    def userrcpath():
+        return [];
+
+elif os.name != 'nt':
 
     def rcfiles(path):
         rcs = [os.path.join(path, 'hgrc')]
