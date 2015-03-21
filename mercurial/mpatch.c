@@ -62,6 +62,10 @@ static uint32_t ntohl(uint32_t x)
 #include <inttypes.h>
 #endif
 
+#if defined(__amigaos4__)
+#define ntohl(x) x
+#endif
+
 static char mpatch_doc[] = "Efficient binary patching.";
 static PyObject *mpatch_Error;
 

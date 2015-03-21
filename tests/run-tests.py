@@ -318,10 +318,19 @@ def showdiff(expected, output, ref, err):
 
 def findprogram(program):
     """Search PATH for a executable program"""
-    for p in os.environ.get('PATH', os.defpath).split(os.pathsep):
-        name = os.path.join(p, program)
-        if os.name == 'nt' or os.access(name, os.X_OK):
-            return name
+    if os.name == 'amiga':
+        h = os.popen('PATH')
+        path = h.read()
+        h.close()
+        for p in path.split('\n'):
+            name = os.path.join(p,program)
+            if os.access(name,os.X_OK):
+                return name
+    else:
+        for p in os.environ.get('PATH', os.defpath).split(os.pathsep):
+            name = os.path.join(p, program)
+            if os.name == 'nt' or os.access(name, os.X_OK):
+                return name
     return None
 
 def checktools():

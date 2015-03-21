@@ -46,6 +46,10 @@ static uint32_t htonl(uint32_t x)
 #include <inttypes.h>
 #endif
 
+#if defined(__amigaos4__)
+#define htonl(x) x
+#endif
+
 #include "util.h"
 
 struct line {

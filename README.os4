@@ -1,0 +1,59 @@
+This is a quick port of the mercurial version control system to AmigaOS4.x
+
+It's based on the source to Mercurial-1.9
+
+
+It's not exhaustively tested but does seem to be working.
+Certainly I was able to clone an online directory via https
+
+Changes:
+
+27/07/2011: First amiga release/
+31/07/2011: Fixed problem with renameing lock files
+01/08/2011: Put configs files in ENV:hg/
+08/08/2011: fixed missing symbol htonl error
+25/08/2011: fixed overwritten fix to path joining!
+
+Requirements:
+
+Python SSL Module
+(which in turn depends on libopenssl)
+
+SDK to build
+
+Installation:
+
+Unpack archive and
+
+cd to top directory mercurial-1.9
+
+from shell do
+
+python setup.py install
+
+then do
+
+protect python:scripts/hg +s
+
+then try
+
+hg
+
+for a list of commands etc
+
+If you wish to customise the config then create an edit the file ENVARC:hg/.hgrc
+See documentation for more details or do
+
+hg help config
+
+you may need to do something like
+
+getenv hg/.hgrc to force ENV: to load the hg directory (first time only) or reboot.
+
+andy@broad.ology.org.uk
+
+
+
+
+
+
