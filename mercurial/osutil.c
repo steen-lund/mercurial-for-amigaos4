@@ -292,7 +292,9 @@ static PyObject *_listdir(char *path, int pathlen, int keepstat, char *skip)
 		goto error_value;
 	}
 	strncpy(fullpath, path, PATH_MAX);
-	fullpath[pathlen] = '/';
+
+	if (fullpath[pathlen - 1] != '/')
+		fullpath[pathlen] = '/';
 
 #ifdef AT_SYMLINK_NOFOLLOW
 	dfd = open(path, O_RDONLY);
