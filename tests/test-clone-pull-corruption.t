@@ -15,8 +15,8 @@ Create two repos, so that one of them can pull from the other one.
 Add a hook to wait 5 seconds and then abort the commit
 
   $ cd ../corrupted
-  $ echo '[hooks]' >> .hg/hgrc
-  $ echo 'pretxncommit = sleep 5; exit 1' >> .hg/hgrc
+  $ echo "[hooks]" >> .hg/hgrc
+  $ echo "pretxncommit = sh -c 'sleep 5; exit 1'" >> .hg/hgrc
 
 start a commit...
 
@@ -48,3 +48,5 @@ see what happened
   crosschecking files in changesets and manifests
   checking files
   1 files, 2 changesets, 2 total revisions
+
+  $ cd ..

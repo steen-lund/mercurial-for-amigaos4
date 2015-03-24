@@ -1,3 +1,5 @@
+#require hardlink
+
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "relink=" >> $HGRCPATH
 
@@ -25,27 +27,27 @@ create source repository
   $ hg ci -Am addfile
   adding a
   adding b
-  $ cat $TESTDIR/binfile.bin >> a
-  $ cat $TESTDIR/binfile.bin >> b
+  $ cat "$TESTDIR/binfile.bin" >> a
+  $ cat "$TESTDIR/binfile.bin" >> b
   $ hg ci -Am changefiles
 
 make another commit to create files larger than 1 KB to test
 formatting of final byte count
 
-  $ cat $TESTDIR/binfile.bin >> a
-  $ cat $TESTDIR/binfile.bin >> b
+  $ cat "$TESTDIR/binfile.bin" >> a
+  $ cat "$TESTDIR/binfile.bin" >> b
   $ hg ci -m anotherchange
 
 don't sit forever trying to double-lock the source repo
 
   $ hg relink .
-  relinking $TESTTMP/repo/.hg/store to $TESTTMP/repo/.hg/store
+  relinking $TESTTMP/repo/.hg/store to $TESTTMP/repo/.hg/store (glob)
   there is nothing to relink
 
 
 Test files are read in binary mode
 
-  $ python -c "file('.hg/store/data/dummy.i', 'wb').write('a\r\nb\n')"
+  $ $PYTHON -c "file('.hg/store/data/dummy.i', 'wb').write('a\r\nb\n')"
   $ cd ..
 
 
@@ -63,7 +65,7 @@ clone and pull to break links
   $ echo b >> b
   $ hg ci -m changeb
   created new head
-  $ python -c "file('.hg/store/data/dummy.i', 'wb').write('a\nb\r\n')"
+  $ $PYTHON -c "file('.hg/store/data/dummy.i', 'wb').write('a\nb\r\n')"
 
 
 relink
@@ -85,7 +87,7 @@ relink
   pruned down to 2 probably relinkable files
   relinking: data/a.i 1/2 files (50.00%)
   not linkable: data/dummy.i
-  relinked 1 files (1.37 KB reclaimed)
+  relinked 1 files (1.36 KB reclaimed)
   $ cd ..
 
 

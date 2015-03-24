@@ -1,18 +1,43 @@
-  $ hg init a
+Log on empty repository: checking consistency
 
+  $ hg init empty
+  $ cd empty
+  $ hg log
+  $ hg log -r 1
+  abort: unknown revision '1'!
+  [255]
+  $ hg log -r -1:0
+  abort: unknown revision '-1'!
+  [255]
+  $ hg log -r 'branch(name)'
+  abort: unknown revision 'name'!
+  [255]
+  $ hg log -r null -q
+  -1:000000000000
+
+The g is crafted to have 2 filelog topological heads in a linear
+changeset graph
+
+  $ hg init a
   $ cd a
   $ echo a > a
+  $ echo f > f
   $ hg ci -Ama -d '1 0'
   adding a
+  adding f
 
   $ hg cp a b
+  $ hg cp f g
   $ hg ci -mb -d '2 0'
 
   $ mkdir dir
   $ hg mv b dir
+  $ echo g >> g
+  $ echo f >> f
   $ hg ci -mc -d '3 0'
 
   $ hg mv a b
+  $ hg cp -f f g
   $ echo a > d
   $ hg add d
   $ hg ci -md -d '4 0'
@@ -20,44 +45,136 @@
   $ hg mv dir/b e
   $ hg ci -me -d '5 0'
 
-  $ hg log a
-  changeset:   0:8580ff50825a
+Make sure largefiles doesn't interfere with logging a regular file
+  $ hg log a --config extensions.largefiles=
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
   summary:     a
   
+  $ hg log a
+  changeset:   0:9161b9aeaf16
+  user:        test
+  date:        Thu Jan 01 00:00:01 1970 +0000
+  summary:     a
+  
+log on directory
 
--f, directory
-
-  $ hg log -f dir
-  abort: cannot follow nonexistent file: "dir"
-  [255]
-
--f, but no args
-
-  $ hg log -f
-  changeset:   4:66c1345dc4f9
+  $ hg log dir
+  changeset:   4:7e4639b4691b
   tag:         tip
   user:        test
   date:        Thu Jan 01 00:00:05 1970 +0000
   summary:     e
   
-  changeset:   3:7c6c671bb7cc
-  user:        test
-  date:        Thu Jan 01 00:00:04 1970 +0000
-  summary:     d
-  
-  changeset:   2:41dd4284081e
+  changeset:   2:f8954cd4dc1f
   user:        test
   date:        Thu Jan 01 00:00:03 1970 +0000
   summary:     c
   
-  changeset:   1:784de7cef101
+  $ hg log somethingthatdoesntexist dir
+  changeset:   4:7e4639b4691b
+  tag:         tip
+  user:        test
+  date:        Thu Jan 01 00:00:05 1970 +0000
+  summary:     e
+  
+  changeset:   2:f8954cd4dc1f
+  user:        test
+  date:        Thu Jan 01 00:00:03 1970 +0000
+  summary:     c
+  
+
+-f, non-existent directory
+
+  $ hg log -f dir
+  abort: cannot follow file not in parent revision: "dir"
+  [255]
+
+-f, directory
+
+  $ hg up -q 3
+  $ hg log -f dir
+  changeset:   2:f8954cd4dc1f
+  user:        test
+  date:        Thu Jan 01 00:00:03 1970 +0000
+  summary:     c
+  
+-f, directory with --patch
+
+  $ hg log -f dir -p
+  changeset:   2:f8954cd4dc1f
+  user:        test
+  date:        Thu Jan 01 00:00:03 1970 +0000
+  summary:     c
+  
+  diff -r d89b0a12d229 -r f8954cd4dc1f dir/b
+  --- /dev/null* (glob)
+  +++ b/dir/b* (glob)
+  @@ -0,0 +1,1 @@
+  +a
+  
+
+-f, pattern
+
+  $ hg log -f -I 'dir**' -p
+  changeset:   2:f8954cd4dc1f
+  user:        test
+  date:        Thu Jan 01 00:00:03 1970 +0000
+  summary:     c
+  
+  diff -r d89b0a12d229 -r f8954cd4dc1f dir/b
+  --- /dev/null* (glob)
+  +++ b/dir/b* (glob)
+  @@ -0,0 +1,1 @@
+  +a
+  
+  $ hg up -q 4
+
+-f, a wrong style
+
+  $ hg log -f -l1 --style something
+  abort: style 'something' not found
+  (available styles: bisect, changelog, compact, default, phases, xml)
+  [255]
+
+-f, phases style
+
+
+  $ hg log -f -l1 --style phases
+  changeset:   4:7e4639b4691b
+  tag:         tip
+  phase:       draft
+  user:        test
+  date:        Thu Jan 01 00:00:05 1970 +0000
+  summary:     e
+  
+
+-f, but no args
+
+  $ hg log -f
+  changeset:   4:7e4639b4691b
+  tag:         tip
+  user:        test
+  date:        Thu Jan 01 00:00:05 1970 +0000
+  summary:     e
+  
+  changeset:   3:2ca5ba701980
+  user:        test
+  date:        Thu Jan 01 00:00:04 1970 +0000
+  summary:     d
+  
+  changeset:   2:f8954cd4dc1f
+  user:        test
+  date:        Thu Jan 01 00:00:03 1970 +0000
+  summary:     c
+  
+  changeset:   1:d89b0a12d229
   user:        test
   date:        Thu Jan 01 00:00:02 1970 +0000
   summary:     b
   
-  changeset:   0:8580ff50825a
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
   summary:     a
@@ -65,11 +182,12 @@
 
 one rename
 
+  $ hg up -q 2
   $ hg log -vf a
-  changeset:   0:8580ff50825a
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
-  files:       a
+  files:       a f
   description:
   a
   
@@ -77,8 +195,9 @@ one rename
 
 many renames
 
+  $ hg up -q tip
   $ hg log -vf e
-  changeset:   4:66c1345dc4f9
+  changeset:   4:7e4639b4691b
   tag:         tip
   user:        test
   date:        Thu Jan 01 00:00:05 1970 +0000
@@ -87,26 +206,26 @@ many renames
   e
   
   
-  changeset:   2:41dd4284081e
+  changeset:   2:f8954cd4dc1f
   user:        test
   date:        Thu Jan 01 00:00:03 1970 +0000
-  files:       b dir/b
+  files:       b dir/b f g
   description:
   c
   
   
-  changeset:   1:784de7cef101
+  changeset:   1:d89b0a12d229
   user:        test
   date:        Thu Jan 01 00:00:02 1970 +0000
-  files:       b
+  files:       b g
   description:
   b
   
   
-  changeset:   0:8580ff50825a
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
-  files:       a
+  files:       a f
   description:
   a
   
@@ -115,77 +234,221 @@ many renames
 
 log -pf dir/b
 
+  $ hg up -q 3
   $ hg log -pf dir/b
-  changeset:   2:41dd4284081e
+  changeset:   2:f8954cd4dc1f
   user:        test
   date:        Thu Jan 01 00:00:03 1970 +0000
   summary:     c
   
-  diff -r 784de7cef101 -r 41dd4284081e dir/b
+  diff -r d89b0a12d229 -r f8954cd4dc1f dir/b
   --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
   +++ b/dir/b	Thu Jan 01 00:00:03 1970 +0000
   @@ -0,0 +1,1 @@
   +a
   
-  changeset:   1:784de7cef101
+  changeset:   1:d89b0a12d229
   user:        test
   date:        Thu Jan 01 00:00:02 1970 +0000
   summary:     b
   
-  diff -r 8580ff50825a -r 784de7cef101 b
+  diff -r 9161b9aeaf16 -r d89b0a12d229 b
   --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
   +++ b/b	Thu Jan 01 00:00:02 1970 +0000
   @@ -0,0 +1,1 @@
   +a
   
-  changeset:   0:8580ff50825a
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
   summary:     a
   
-  diff -r 000000000000 -r 8580ff50825a a
+  diff -r 000000000000 -r 9161b9aeaf16 a
   --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
   +++ b/a	Thu Jan 01 00:00:01 1970 +0000
   @@ -0,0 +1,1 @@
   +a
   
 
+log -pf b inside dir
+
+  $ hg --cwd=dir log -pf b
+  changeset:   2:f8954cd4dc1f
+  user:        test
+  date:        Thu Jan 01 00:00:03 1970 +0000
+  summary:     c
+  
+  diff -r d89b0a12d229 -r f8954cd4dc1f dir/b
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/dir/b	Thu Jan 01 00:00:03 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  
+  changeset:   1:d89b0a12d229
+  user:        test
+  date:        Thu Jan 01 00:00:02 1970 +0000
+  summary:     b
+  
+  diff -r 9161b9aeaf16 -r d89b0a12d229 b
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/b	Thu Jan 01 00:00:02 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  
+  changeset:   0:9161b9aeaf16
+  user:        test
+  date:        Thu Jan 01 00:00:01 1970 +0000
+  summary:     a
+  
+  diff -r 000000000000 -r 9161b9aeaf16 a
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	Thu Jan 01 00:00:01 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  
+
+log -pf, but no args
+
+  $ hg log -pf
+  changeset:   3:2ca5ba701980
+  user:        test
+  date:        Thu Jan 01 00:00:04 1970 +0000
+  summary:     d
+  
+  diff -r f8954cd4dc1f -r 2ca5ba701980 a
+  --- a/a	Thu Jan 01 00:00:03 1970 +0000
+  +++ /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,1 +0,0 @@
+  -a
+  diff -r f8954cd4dc1f -r 2ca5ba701980 b
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/b	Thu Jan 01 00:00:04 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  diff -r f8954cd4dc1f -r 2ca5ba701980 d
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/d	Thu Jan 01 00:00:04 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  diff -r f8954cd4dc1f -r 2ca5ba701980 g
+  --- a/g	Thu Jan 01 00:00:03 1970 +0000
+  +++ b/g	Thu Jan 01 00:00:04 1970 +0000
+  @@ -1,2 +1,2 @@
+   f
+  -g
+  +f
+  
+  changeset:   2:f8954cd4dc1f
+  user:        test
+  date:        Thu Jan 01 00:00:03 1970 +0000
+  summary:     c
+  
+  diff -r d89b0a12d229 -r f8954cd4dc1f b
+  --- a/b	Thu Jan 01 00:00:02 1970 +0000
+  +++ /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,1 +0,0 @@
+  -a
+  diff -r d89b0a12d229 -r f8954cd4dc1f dir/b
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/dir/b	Thu Jan 01 00:00:03 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  diff -r d89b0a12d229 -r f8954cd4dc1f f
+  --- a/f	Thu Jan 01 00:00:02 1970 +0000
+  +++ b/f	Thu Jan 01 00:00:03 1970 +0000
+  @@ -1,1 +1,2 @@
+   f
+  +f
+  diff -r d89b0a12d229 -r f8954cd4dc1f g
+  --- a/g	Thu Jan 01 00:00:02 1970 +0000
+  +++ b/g	Thu Jan 01 00:00:03 1970 +0000
+  @@ -1,1 +1,2 @@
+   f
+  +g
+  
+  changeset:   1:d89b0a12d229
+  user:        test
+  date:        Thu Jan 01 00:00:02 1970 +0000
+  summary:     b
+  
+  diff -r 9161b9aeaf16 -r d89b0a12d229 b
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/b	Thu Jan 01 00:00:02 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  diff -r 9161b9aeaf16 -r d89b0a12d229 g
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/g	Thu Jan 01 00:00:02 1970 +0000
+  @@ -0,0 +1,1 @@
+  +f
+  
+  changeset:   0:9161b9aeaf16
+  user:        test
+  date:        Thu Jan 01 00:00:01 1970 +0000
+  summary:     a
+  
+  diff -r 000000000000 -r 9161b9aeaf16 a
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	Thu Jan 01 00:00:01 1970 +0000
+  @@ -0,0 +1,1 @@
+  +a
+  diff -r 000000000000 -r 9161b9aeaf16 f
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/f	Thu Jan 01 00:00:01 1970 +0000
+  @@ -0,0 +1,1 @@
+  +f
+  
+
 log -vf dir/b
 
   $ hg log -vf dir/b
-  changeset:   2:41dd4284081e
+  changeset:   2:f8954cd4dc1f
   user:        test
   date:        Thu Jan 01 00:00:03 1970 +0000
-  files:       b dir/b
+  files:       b dir/b f g
   description:
   c
   
   
-  changeset:   1:784de7cef101
+  changeset:   1:d89b0a12d229
   user:        test
   date:        Thu Jan 01 00:00:02 1970 +0000
-  files:       b
+  files:       b g
   description:
   b
   
   
-  changeset:   0:8580ff50825a
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
-  files:       a
+  files:       a f
   description:
   a
   
   
 
 
+-f and multiple filelog heads
+
+  $ hg up -q 2
+  $ hg log -f g --template '{rev}\n'
+  2
+  1
+  0
+  $ hg up -q tip
+  $ hg log -f g --template '{rev}\n'
+  3
+  2
+  0
+
+
 log copies with --copies
 
   $ hg log -vC --template '{rev} {file_copies}\n'
   4 e (dir/b)
-  3 b (a)
+  3 b (a)g (f)
   2 dir/b (b)
-  1 b (a)
+  1 b (a)g (f)
   0 
 
 log copies switch without --copies, with old filecopy template
@@ -201,16 +464,16 @@ log copies switch with --copies
 
   $ hg log -vC --template '{rev} {file_copies_switch}\n'
   4 e (dir/b)
-  3 b (a)
+  3 b (a)g (f)
   2 dir/b (b)
-  1 b (a)
+  1 b (a)g (f)
   0 
 
 
 log copies with hardcoded style and with --style=default
 
   $ hg log -vC -r4
-  changeset:   4:66c1345dc4f9
+  changeset:   4:7e4639b4691b
   tag:         tip
   user:        test
   date:        Thu Jan 01 00:00:05 1970 +0000
@@ -221,7 +484,7 @@ log copies with hardcoded style and with --style=default
   
   
   $ hg log -vC -r4 --style=default
-  changeset:   4:66c1345dc4f9
+  changeset:   4:7e4639b4691b
   tag:         tip
   user:        test
   date:        Thu Jan 01 00:00:05 1970 +0000
@@ -231,7 +494,23 @@ log copies with hardcoded style and with --style=default
   e
   
   
-
+  $ hg log -vC -r4 -Tjson
+  [
+   {
+    "rev": 4,
+    "node": "7e4639b4691b9f84b81036a8d4fb218ce3c5e3a3",
+    "branch": "default",
+    "phase": "draft",
+    "user": "test",
+    "date": [5, 0],
+    "desc": "e",
+    "bookmarks": [],
+    "tags": ["tip"],
+    "parents": ["2ca5ba7019804f1f597249caddf22a64d34df0ba"],
+    "files": ["dir/b", "e"],
+    "copies": {"e": "dir/b"}
+   }
+  ]
 
 log copies, non-linear manifest
 
@@ -248,24 +527,26 @@ log copies, non-linear manifest
 
 log copies, execute bit set
 
+#if execbit
   $ chmod +x e
   $ hg ci -me3 -d '7 0'
   $ hg log -v --template '{rev} {file_copies}\n' -r 6
   6 
+#endif
 
 
 log -p d
 
   $ hg log -pv d
-  changeset:   3:7c6c671bb7cc
+  changeset:   3:2ca5ba701980
   user:        test
   date:        Thu Jan 01 00:00:04 1970 +0000
-  files:       a b d
+  files:       a b d g
   description:
   d
   
   
-  diff -r 41dd4284081e -r 7c6c671bb7cc d
+  diff -r f8954cd4dc1f -r 2ca5ba701980 d
   --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
   +++ b/d	Thu Jan 01 00:00:04 1970 +0000
   @@ -0,0 +1,1 @@
@@ -276,18 +557,18 @@ log -p d
 log --removed file
 
   $ hg log --removed -v a
-  changeset:   3:7c6c671bb7cc
+  changeset:   3:2ca5ba701980
   user:        test
   date:        Thu Jan 01 00:00:04 1970 +0000
-  files:       a b d
+  files:       a b d g
   description:
   d
   
   
-  changeset:   0:8580ff50825a
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
-  files:       a
+  files:       a f
   description:
   a
   
@@ -296,20 +577,20 @@ log --removed file
 log --removed revrange file
 
   $ hg log --removed -v -r0:2 a
-  changeset:   0:8580ff50825a
+  changeset:   0:9161b9aeaf16
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
-  files:       a
+  files:       a f
   description:
   a
   
   
-
+  $ cd ..
 
 log --follow tests
 
-  $ hg init ../follow
-  $ cd ../follow
+  $ hg init follow
+  $ cd follow
 
   $ echo base > base
   $ hg ci -Ambase -d '1 0'
@@ -374,6 +655,20 @@ log -f -r 1:tip
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
   summary:     b1
+  
+
+
+log -f -r null
+
+  $ hg log -f -r null
+  changeset:   -1:000000000000
+  user:        
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  
+  $ hg log -f -r null -G
+  o  changeset:   -1:000000000000
+     user:
+     date:        Thu Jan 01 00:00:00 1970 +0000
   
 
 
@@ -512,34 +807,6 @@ log -k r1
   date:        Thu Jan 01 00:00:01 1970 +0000
   summary:     r1
   
-log -d " " (whitespaces only)
-
-  $ hg log -d " "
-  abort: dates cannot consist entirely of whitespace
-  [255]
-
-log -d -1
-
-  $ hg log -d -1
-
-log -d ">"
-
-  $ hg log -d ">"
-  abort: invalid day spec, use '>DATE'
-  [255]
-
-log -d "<"
-
-  $ hg log -d "<"
-  abort: invalid day spec, use '<DATE'
-  [255]
-
-Negative ranges
-  $ hg log -d "--2"
-  abort: -2 must be nonnegative (see 'hg help dates')
-  [255]
-
-
 log -p -l2 --color=always
 
   $ hg --config extensions.color= --config color.mode=ansi \
@@ -587,6 +854,9 @@ log -r tip --stat
 
   $ cd ..
 
+
+User
+
   $ hg init usertest
   $ cd usertest
 
@@ -627,6 +897,7 @@ log -r tip --stat
   adding a
   $ hg branch test
   marked working directory as branch test
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b > b
   $ hg ci -A -m "commit on test"
   adding b
@@ -797,7 +1068,25 @@ log -b 2
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     commit on default
   
+#if gettext
 
+Test that all log names are translated (e.g. branches, bookmarks, tags):
+
+  $ hg bookmark babar -r tip
+
+  $ HGENCODING=UTF-8 LANGUAGE=de hg log -r tip
+  \xc3\x84nderung:        3:f5d8de11c2e2 (esc)
+  Zweig:           test
+  Lesezeichen:     babar
+  Marke:           tip
+  Vorg\xc3\xa4nger:       1:d32277701ccb (esc)
+  Nutzer:          test
+  Datum:           Thu Jan 01 00:00:00 1970 +0000
+  Zusammenfassung: commit on test
+  
+  $ hg bookmark -d babar
+
+#endif
 
 log -p --cwd dir (in subdir)
 
@@ -870,11 +1159,10 @@ log -p -R repo
   +a
   
 
+  $ cd ../..
 
-  $ cd ..
   $ hg init follow2
   $ cd follow2
-
 
 # Build the following history:
 # tip - o - x - o - x - x
@@ -920,26 +1208,28 @@ log -p -R repo
   $ hg merge 7
   merging foo
   warning: conflicts during merge.
-  merging foo failed!
+  merging foo incomplete! (edit conflicts, then use 'hg resolve --mark')
   0 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges or 'hg update -C .' to abandon
   [1]
   $ echo 'merge 1' > foo
   $ hg resolve -m foo
+  (no more unresolved files)
   $ hg ci -m "First merge, related"
 
   $ hg merge 4
   merging foo
   warning: conflicts during merge.
-  merging foo failed!
+  merging foo incomplete! (edit conflicts, then use 'hg resolve --mark')
   1 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges or 'hg update -C .' to abandon
   [1]
   $ echo 'merge 2' > foo
   $ hg resolve -m foo
+  (no more unresolved files)
   $ hg ci -m "Last merge, related"
 
-  $ hg --config "extensions.graphlog=" glog
+  $ hg log --graph
   @    changeset:   10:4dae8563d2c5
   |\   tag:         tip
   | |  parent:      9:7b35701b003e
@@ -1049,6 +1339,7 @@ Also check when maxrev < lastrevfilelog
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     add foo, related
   
+  $ cd ..
 
 Issue2383: hg log showing _less_ differences than hg diff
 
@@ -1125,7 +1416,8 @@ Diff here should be the same:
 
 'hg log -r rev fn' when last(filelog(fn)) != rev
 
-  $ hg init simplelog; cd simplelog
+  $ hg init simplelog
+  $ cd simplelog
   $ echo f > a
   $ hg ci -Am'a' -d '0 0'
   adding a
@@ -1138,21 +1430,532 @@ Diff here should be the same:
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     a
   
-  $ cat > $HGTMP/testhidden.py << EOF
-  > def reposetup(ui, repo):
-  >     for line in repo.opener('hidden'):
-  >         ctx = repo[line.strip()]
-  >         repo.changelog.hiddenrevs.add(ctx.rev())
+enable obsolete to test hidden feature
+
+  $ cat >> $HGRCPATH << EOF
+  > [experimental]
+  > evolution=createmarkers
   > EOF
-  $ echo '[extensions]' >> $HGRCPATH
-  $ echo "hidden=$HGTMP/testhidden.py" >> $HGRCPATH
-  $ touch .hg/hidden
+
   $ hg log --template='{rev}:{node}\n'
   1:a765632148dc55d38c35c4f247c618701886cb2f
   0:9f758d63dcde62d547ebfb08e1e7ee96535f2b05
-  $ echo a765632148dc55d38c35c4f247c618701886cb2f > .hg/hidden
+  $ hg debugobsolete a765632148dc55d38c35c4f247c618701886cb2f
+  $ hg up null -q
   $ hg log --template='{rev}:{node}\n'
   0:9f758d63dcde62d547ebfb08e1e7ee96535f2b05
   $ hg log --template='{rev}:{node}\n' --hidden
   1:a765632148dc55d38c35c4f247c618701886cb2f
   0:9f758d63dcde62d547ebfb08e1e7ee96535f2b05
+  $ hg log -r a
+  abort: hidden revision 'a'!
+  (use --hidden to access hidden revisions)
+  [255]
+
+test that parent prevent a changeset to be hidden
+
+  $ hg up 1 -q --hidden
+  $ hg log --template='{rev}:{node}\n'
+  1:a765632148dc55d38c35c4f247c618701886cb2f
+  0:9f758d63dcde62d547ebfb08e1e7ee96535f2b05
+
+test that second parent prevent a changeset to be hidden too
+
+  $ hg debugsetparents 0 1 # nothing suitable to merge here
+  $ hg log --template='{rev}:{node}\n'
+  1:a765632148dc55d38c35c4f247c618701886cb2f
+  0:9f758d63dcde62d547ebfb08e1e7ee96535f2b05
+  $ hg debugsetparents 1
+  $ hg up -q null
+
+bookmarks prevent a changeset being hidden
+
+  $ hg bookmark --hidden -r 1 X
+  $ hg log --template '{rev}:{node}\n'
+  1:a765632148dc55d38c35c4f247c618701886cb2f
+  0:9f758d63dcde62d547ebfb08e1e7ee96535f2b05
+  $ hg bookmark -d X
+
+divergent bookmarks are not hidden
+
+  $ hg bookmark --hidden -r 1 X@foo
+  $ hg log --template '{rev}:{node}\n'
+  1:a765632148dc55d38c35c4f247c618701886cb2f
+  0:9f758d63dcde62d547ebfb08e1e7ee96535f2b05
+
+clear extensions configuration
+  $ echo '[extensions]' >> $HGRCPATH
+  $ echo "obs=!" >> $HGRCPATH
+  $ cd ..
+
+test -u/-k for problematic encoding
+# unicode: cp932:
+# u30A2    0x83 0x41(= 'A')
+# u30C2    0x83 0x61(= 'a')
+
+  $ hg init problematicencoding
+  $ cd problematicencoding
+
+  $ python > setup.sh <<EOF
+  > print u'''
+  > echo a > text
+  > hg add text
+  > hg --encoding utf-8 commit -u '\u30A2' -m none
+  > echo b > text
+  > hg --encoding utf-8 commit -u '\u30C2' -m none
+  > echo c > text
+  > hg --encoding utf-8 commit -u none -m '\u30A2'
+  > echo d > text
+  > hg --encoding utf-8 commit -u none -m '\u30C2'
+  > '''.encode('utf-8')
+  > EOF
+  $ sh < setup.sh
+
+test in problematic encoding
+  $ python > test.sh <<EOF
+  > print u'''
+  > hg --encoding cp932 log --template '{rev}\\n' -u '\u30A2'
+  > echo ====
+  > hg --encoding cp932 log --template '{rev}\\n' -u '\u30C2'
+  > echo ====
+  > hg --encoding cp932 log --template '{rev}\\n' -k '\u30A2'
+  > echo ====
+  > hg --encoding cp932 log --template '{rev}\\n' -k '\u30C2'
+  > '''.encode('cp932')
+  > EOF
+  $ sh < test.sh
+  0
+  ====
+  1
+  ====
+  2
+  0
+  ====
+  3
+  1
+
+  $ cd ..
+
+test hg log on non-existent files and on directories
+  $ hg init issue1340
+  $ cd issue1340
+  $ mkdir d1; mkdir D2; mkdir D3.i; mkdir d4.hg; mkdir d5.d; mkdir .d6
+  $ echo 1 > d1/f1
+  $ echo 1 > D2/f1
+  $ echo 1 > D3.i/f1
+  $ echo 1 > d4.hg/f1
+  $ echo 1 > d5.d/f1
+  $ echo 1 > .d6/f1
+  $ hg -q add .
+  $ hg commit -m "a bunch of weird directories"
+  $ hg log -l1 d1/f1 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 f1
+  $ hg log -l1 . | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 ./ | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 d1 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 D2 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 D2/f1 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 D3.i | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 D3.i/f1 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 d4.hg | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 d4.hg/f1 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 d5.d | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 d5.d/f1 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 .d6 | grep changeset
+  changeset:   0:65624cd9070a
+  $ hg log -l1 .d6/f1 | grep changeset
+  changeset:   0:65624cd9070a
+
+issue3772: hg log -r :null showing revision 0 as well
+
+  $ hg log -r :null
+  changeset:   0:65624cd9070a
+  tag:         tip
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     a bunch of weird directories
+  
+  changeset:   -1:000000000000
+  user:        
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  
+  $ hg log -r null:null
+  changeset:   -1:000000000000
+  user:        
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  
+Check that adding an arbitrary name shows up in log automatically
+
+  $ cat > ../names.py <<EOF
+  > """A small extension to test adding arbitrary names to a repo"""
+  > from mercurial.namespaces import namespace
+  > 
+  > def reposetup(ui, repo):
+  >     foo = {'foo': repo[0].node()}
+  >     names = lambda r: foo.keys()
+  >     namemap = lambda r, name: foo.get(name)
+  >     nodemap = lambda r, node: [name for name, n in foo.iteritems()
+  >                                if n == node]
+  >     ns = namespace("bars", templatename="bar", logname="barlog",
+  >                    colorname="barcolor", listnames=names, namemap=namemap,
+  >                    nodemap=nodemap)
+  > 
+  >     repo.names.addnamespace(ns)
+  > EOF
+
+  $ hg --config extensions.names=../names.py log -r 0
+  changeset:   0:65624cd9070a
+  tag:         tip
+  barlog:      foo
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     a bunch of weird directories
+  
+  $ hg --config extensions.names=../names.py \
+  >  --config extensions.color= --config color.log.barcolor=red \
+  >  --color=always log -r 0
+  \x1b[0;33mchangeset:   0:65624cd9070a\x1b[0m (esc)
+  tag:         tip
+  \x1b[0;31mbarlog:      foo\x1b[0m (esc)
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     a bunch of weird directories
+  
+  $ hg --config extensions.names=../names.py log -r 0 --template '{bars}\n'
+  foo
+
+  $ cd ..
+
+hg log -f dir across branches
+
+  $ hg init acrossbranches
+  $ cd acrossbranches
+  $ mkdir d
+  $ echo a > d/a && hg ci -Aqm a
+  $ echo b > d/a && hg ci -Aqm b
+  $ hg up -q 0
+  $ echo b > d/a && hg ci -Aqm c
+  $ hg log -f d -T '{desc}' -G
+  @  c
+  |
+  o  a
+  
+Ensure that largefiles doesn't intefere with following a normal file
+  $ hg  --config extensions.largefiles= log -f d -T '{desc}' -G
+  @  c
+  |
+  o  a
+  
+  $ hg log -f d/a -T '{desc}' -G
+  @  c
+  |
+  o  a
+  
+  $ cd ..
+
+hg log -f with linkrev pointing to another branch
+-------------------------------------------------
+
+create history with a filerev whose linkrev points to another branch
+
+  $ hg init branchedlinkrev
+  $ cd branchedlinkrev
+  $ echo 1 > a
+  $ hg commit -Am 'content1'
+  adding a
+  $ echo 2 > a
+  $ hg commit -m 'content2'
+  $ hg up --rev 'desc(content1)'
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ echo unrelated > unrelated
+  $ hg commit -Am 'unrelated'
+  adding unrelated
+  created new head
+  $ hg graft -r 'desc(content2)'
+  grafting 1:2294ae80ad84 "content2"
+  $ echo 3 > a
+  $ hg commit -m 'content3'
+  $ hg log -G
+  @  changeset:   4:50b9b36e9c5d
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content3
+  |
+  o  changeset:   3:15b2327059e5
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content2
+  |
+  o  changeset:   2:2029acd1168c
+  |  parent:      0:ae0a3c9f9e95
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     unrelated
+  |
+  | o  changeset:   1:2294ae80ad84
+  |/   user:        test
+  |    date:        Thu Jan 01 00:00:00 1970 +0000
+  |    summary:     content2
+  |
+  o  changeset:   0:ae0a3c9f9e95
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     content1
+  
+
+log -f on the file should list the graft result.
+
+  $ hg log -Gf a
+  @  changeset:   4:50b9b36e9c5d
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content3
+  |
+  o  changeset:   3:15b2327059e5
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content2
+  |
+  o  changeset:   0:ae0a3c9f9e95
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     content1
+  
+
+plain log lists the original version
+(XXX we should probably list both)
+
+  $ hg log -G a
+  @  changeset:   4:50b9b36e9c5d
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content3
+  |
+  | o  changeset:   1:2294ae80ad84
+  |/   user:        test
+  |    date:        Thu Jan 01 00:00:00 1970 +0000
+  |    summary:     content2
+  |
+  o  changeset:   0:ae0a3c9f9e95
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     content1
+  
+
+hg log -f from the grafted changeset
+(The bootstrap should properly take the topology in account)
+
+  $ hg up 'desc(content3)^'
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg log -Gf a
+  @  changeset:   3:15b2327059e5
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content2
+  |
+  o  changeset:   0:ae0a3c9f9e95
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     content1
+  
+
+Test that we use the first non-hidden changeset in that case.
+
+(hide the changeset)
+
+  $ hg log -T '{node}\n' -r 1
+  2294ae80ad8447bc78383182eeac50cb049df623
+  $ hg debugobsolete 2294ae80ad8447bc78383182eeac50cb049df623
+  $ hg log -G
+  o  changeset:   4:50b9b36e9c5d
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content3
+  |
+  @  changeset:   3:15b2327059e5
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content2
+  |
+  o  changeset:   2:2029acd1168c
+  |  parent:      0:ae0a3c9f9e95
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     unrelated
+  |
+  o  changeset:   0:ae0a3c9f9e95
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     content1
+  
+
+Check that log on the file does not drop the file revision.
+
+  $ hg log -G a
+  o  changeset:   4:50b9b36e9c5d
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content3
+  |
+  @  changeset:   3:15b2327059e5
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content2
+  |
+  o  changeset:   0:ae0a3c9f9e95
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     content1
+  
+
+Even when a head revision is linkrev-shadowed.
+
+  $ hg log -T '{node}\n' -r 4
+  50b9b36e9c5df2c6fc6dcefa8ad0da929e84aed2
+  $ hg debugobsolete 50b9b36e9c5df2c6fc6dcefa8ad0da929e84aed2
+  $ hg log -G a
+  @  changeset:   3:15b2327059e5
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     content2
+  |
+  o  changeset:   0:ae0a3c9f9e95
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     content1
+  
+
+  $ cd ..
+
+Even when the file revision is missing from some head:
+
+  $ hg init issue4490
+  $ cd issue4490
+  $ echo '[experimental]' >> .hg/hgrc
+  $ echo 'evolution=createmarkers' >> .hg/hgrc
+  $ echo a > a
+  $ hg ci -Am0
+  adding a
+  $ echo b > b
+  $ hg ci -Am1
+  adding b
+  $ echo B > b
+  $ hg ci --amend -m 1
+  $ hg up 0
+  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ echo c > c
+  $ hg ci -Am2
+  adding c
+  created new head
+  $ hg up 'head() and not .'
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg log -G
+  o  changeset:   4:db815d6d32e6
+  |  tag:         tip
+  |  parent:      0:f7b1eb17ad24
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     2
+  |
+  | @  changeset:   3:9bc8ce7f9356
+  |/   parent:      0:f7b1eb17ad24
+  |    user:        test
+  |    date:        Thu Jan 01 00:00:00 1970 +0000
+  |    summary:     1
+  |
+  o  changeset:   0:f7b1eb17ad24
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     0
+  
+  $ hg log -f -G b
+  @  changeset:   3:9bc8ce7f9356
+  |  parent:      0:f7b1eb17ad24
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     1
+  |
+  $ hg log -G b
+  @  changeset:   3:9bc8ce7f9356
+  |  parent:      0:f7b1eb17ad24
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     1
+  |
+  $ cd ..
+
+Check proper report when the manifest changes but not the file issue4499
+------------------------------------------------------------------------
+
+  $ hg init issue4499
+  $ cd issue4499
+  $ for f in A B C D F E G H I J K L M N O P Q R S T U; do
+  >     echo 1 > $f;
+  >     hg add $f;
+  > done
+  $ hg commit -m 'A1B1C1'
+  $ echo 2 > A
+  $ echo 2 > B
+  $ echo 2 > C
+  $ hg commit -m 'A2B2C2'
+  $ hg up 0
+  3 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ echo 3 > A
+  $ echo 2 > B
+  $ echo 2 > C
+  $ hg commit -m 'A3B2C2'
+  created new head
+
+  $ hg log -G
+  @  changeset:   2:fe5fc3d0eb17
+  |  tag:         tip
+  |  parent:      0:abf4f0e38563
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     A3B2C2
+  |
+  | o  changeset:   1:07dcc6b312c0
+  |/   user:        test
+  |    date:        Thu Jan 01 00:00:00 1970 +0000
+  |    summary:     A2B2C2
+  |
+  o  changeset:   0:abf4f0e38563
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     A1B1C1
+  
+
+Log -f on B should reports current changesets
+
+  $ hg log -fG B
+  @  changeset:   2:fe5fc3d0eb17
+  |  tag:         tip
+  |  parent:      0:abf4f0e38563
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     A3B2C2
+  |
+  o  changeset:   0:abf4f0e38563
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     A1B1C1
+  
+  $ cd ..

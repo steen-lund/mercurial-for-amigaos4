@@ -9,6 +9,8 @@ from node import bin, hex, nullid
 from i18n import _
 import util, error, revlog, encoding
 
+_defaultextra = {'branch': 'default'}
+
 def _string_escape(text):
     """
     >>> d = {'nl': chr(10), 'bs': chr(92), 'cr': chr(13), 'nul': chr(0)}
@@ -24,9 +26,23 @@ def _string_escape(text):
     return text.replace('\0', '\\0')
 
 def decodeextra(text):
-    extra = {}
+    """
+    >>> sorted(decodeextra(encodeextra({'foo': 'bar', 'baz': chr(0) + '2'})
+    ...                    ).iteritems())
+    [('baz', '\\x002'), ('branch', 'default'), ('foo', 'bar')]
+    >>> sorted(decodeextra(encodeextra({'foo': 'bar',
+    ...                                 'baz': chr(92) + chr(0) + '2'})
+    ...                    ).iteritems())
+    [('baz', '\\\\\\x002'), ('branch', 'default'), ('foo', 'bar')]
+    """
+    extra = _defaultextra.copy()
     for l in text.split('\0'):
         if l:
+            if '\\0' in l:
+                # fix up \0 without getting into trouble with \\0
+                l = l.replace('\\\\', '\\\\\n')
+                l = l.replace('\\0', '\0')
+                l = l.replace('\n', '')
             k, v = l.decode('string_escape').split(':', 1)
             extra[k] = v
     return extra
@@ -36,14 +52,19 @@ def encodeextra(d):
     items = [_string_escape('%s:%s' % (k, d[k])) for k in sorted(d)]
     return "\0".join(items)
 
+def stripdesc(desc):
+    """strip trailing whitespace and leading and trailing empty lines"""
+    return '\n'.join([l.rstrip() for l in desc.splitlines()]).strip('\n')
+
 class appender(object):
     '''the changelog index must be updated last on disk, so we use this class
     to delay writes to it'''
-    def __init__(self, fp, buf):
+    def __init__(self, vfs, name, mode, buf):
         self.data = buf
+        fp = vfs(name, mode)
         self.fp = fp
         self.offset = fp.tell()
-        self.size = util.fstat(fp).st_size
+        self.size = vfs.fstat(fp).st_size
 
     def end(self):
         return self.size + len("".join(self.data))
@@ -87,15 +108,21 @@ class appender(object):
         self.data.append(str(s))
         self.offset += len(s)
 
-def delayopener(opener, target, divert, buf):
-    def o(name, mode='r'):
+def _divertopener(opener, target):
+    """build an opener that writes in 'target.a' instead of 'target'"""
+    def _divert(name, mode='r'):
         if name != target:
             return opener(name, mode)
-        if divert:
-            return opener(name + ".a", mode.replace('a', 'w'))
-        # otherwise, divert to memory
-        return appender(opener(name, mode), buf)
-    return o
+        return opener(name + ".a", mode)
+    return _divert
+
+def _delayopener(opener, target, buf):
+    """build an opener that stores chunks in 'buf' instead of 'target'"""
+    def _delay(name, mode='r'):
+        if name != target:
+            return opener(name, mode)
+        return appender(opener, name, mode, buf)
+    return _delay
 
 class changelog(revlog.revlog):
     def __init__(self, opener):
@@ -106,33 +133,131 @@ class changelog(revlog.revlog):
             self._generaldelta = False
         self._realopener = opener
         self._delayed = False
+        self._delaybuf = None
         self._divert = False
-        # hiddenrevs: revs that should be hidden by command and tools
-        self.hiddenrevs = set()
+        self.filteredrevs = frozenset()
 
-    def delayupdate(self):
+    def tip(self):
+        """filtered version of revlog.tip"""
+        for i in xrange(len(self) -1, -2, -1):
+            if i not in self.filteredrevs:
+                return self.node(i)
+
+    def __iter__(self):
+        """filtered version of revlog.__iter__"""
+        if len(self.filteredrevs) == 0:
+            return revlog.revlog.__iter__(self)
+
+        def filterediter():
+            for i in xrange(len(self)):
+                if i not in self.filteredrevs:
+                    yield i
+
+        return filterediter()
+
+    def revs(self, start=0, stop=None):
+        """filtered version of revlog.revs"""
+        for i in super(changelog, self).revs(start, stop):
+            if i not in self.filteredrevs:
+                yield i
+
+    @util.propertycache
+    def nodemap(self):
+        # XXX need filtering too
+        self.rev(self.node(0))
+        return self._nodecache
+
+    def hasnode(self, node):
+        """filtered version of revlog.hasnode"""
+        try:
+            i = self.rev(node)
+            return i not in self.filteredrevs
+        except KeyError:
+            return False
+
+    def headrevs(self):
+        if self.filteredrevs:
+            try:
+                return self.index.headrevsfiltered(self.filteredrevs)
+            # AttributeError covers non-c-extension environments and
+            # old c extensions without filter handling.
+            except AttributeError:
+                return self._headrevs()
+
+        return super(changelog, self).headrevs()
+
+    def strip(self, *args, **kwargs):
+        # XXX make something better than assert
+        # We can't expect proper strip behavior if we are filtered.
+        assert not self.filteredrevs
+        super(changelog, self).strip(*args, **kwargs)
+
+    def rev(self, node):
+        """filtered version of revlog.rev"""
+        r = super(changelog, self).rev(node)
+        if r in self.filteredrevs:
+            raise error.FilteredLookupError(hex(node), self.indexfile,
+                                            _('filtered node'))
+        return r
+
+    def node(self, rev):
+        """filtered version of revlog.node"""
+        if rev in self.filteredrevs:
+            raise error.FilteredIndexError(rev)
+        return super(changelog, self).node(rev)
+
+    def linkrev(self, rev):
+        """filtered version of revlog.linkrev"""
+        if rev in self.filteredrevs:
+            raise error.FilteredIndexError(rev)
+        return super(changelog, self).linkrev(rev)
+
+    def parentrevs(self, rev):
+        """filtered version of revlog.parentrevs"""
+        if rev in self.filteredrevs:
+            raise error.FilteredIndexError(rev)
+        return super(changelog, self).parentrevs(rev)
+
+    def flags(self, rev):
+        """filtered version of revlog.flags"""
+        if rev in self.filteredrevs:
+            raise error.FilteredIndexError(rev)
+        return super(changelog, self).flags(rev)
+
+    def delayupdate(self, tr):
         "delay visibility of index updates to other readers"
-        self._delayed = True
-        self._divert = (len(self) == 0)
-        self._delaybuf = []
-        self.opener = delayopener(self._realopener, self.indexfile,
-                                  self._divert, self._delaybuf)
 
-    def finalize(self, tr):
+        if not self._delayed:
+            if len(self) == 0:
+                self._divert = True
+                if self._realopener.exists(self.indexfile + '.a'):
+                    self._realopener.unlink(self.indexfile + '.a')
+                self.opener = _divertopener(self._realopener, self.indexfile)
+            else:
+                self._delaybuf = []
+                self.opener = _delayopener(self._realopener, self.indexfile,
+                                           self._delaybuf)
+        self._delayed = True
+        tr.addpending('cl-%i' % id(self), self._writepending)
+        tr.addfinalize('cl-%i' % id(self), self._finalize)
+
+    def _finalize(self, tr):
         "finalize index updates"
         self._delayed = False
         self.opener = self._realopener
         # move redirected index data back into place
         if self._divert:
-            nfile = self.opener(self.indexfile + ".a")
-            n = nfile.name
+            assert not self._delaybuf
+            tmpname = self.indexfile + ".a"
+            nfile = self.opener.open(tmpname)
             nfile.close()
-            util.rename(n, n[:-2])
+            self.opener.rename(tmpname, self.indexfile)
         elif self._delaybuf:
             fp = self.opener(self.indexfile, 'a')
             fp.write("".join(self._delaybuf))
             fp.close()
-            self._delaybuf = []
+            self._delaybuf = None
+        self._divert = False
         # split when we're done
         self.checkinlinesize(tr)
 
@@ -140,21 +265,27 @@ class changelog(revlog.revlog):
         r = revlog.revlog(self.opener, file)
         self.index = r.index
         self.nodemap = r.nodemap
+        self._nodecache = r._nodecache
         self._chunkcache = r._chunkcache
 
-    def writepending(self):
+    def _writepending(self, tr):
         "create a file containing the unfinalized state for pretxnchangegroup"
         if self._delaybuf:
             # make a temporary copy of the index
             fp1 = self._realopener(self.indexfile)
-            fp2 = self._realopener(self.indexfile + ".a", "w")
+            pendingfilename = self.indexfile + ".a"
+            # register as a temp file to ensure cleanup on failure
+            tr.registertmp(pendingfilename)
+            # write existing data
+            fp2 = self._realopener(pendingfilename, "w")
             fp2.write(fp1.read())
             # add pending data
             fp2.write("".join(self._delaybuf))
             fp2.close()
             # switch modes so finalize can simply rename
-            self._delaybuf = []
+            self._delaybuf = None
             self._divert = True
+            self.opener = _divertopener(self._realopener, self.indexfile)
 
         if self._divert:
             return True
@@ -171,7 +302,7 @@ class changelog(revlog.revlog):
         nodeid\n        : manifest node in ascii
         user\n          : user, no \n or \r allowed
         time tz extra\n : date (time is int or float, timezone is int)
-                        : extra is metadatas, encoded and separated by '\0'
+                        : extra is metadata, encoded and separated by '\0'
                         : older versions ignore it
         files\n\n       : files modified by the cset, no \n or \r allowed
         (.*)            : comment (free text, ideally utf-8)
@@ -180,28 +311,26 @@ class changelog(revlog.revlog):
         """
         text = self.revision(node)
         if not text:
-            return (nullid, "", (0, 0), [], "", {'branch': 'default'})
+            return (nullid, "", (0, 0), [], "", _defaultextra)
         last = text.index("\n\n")
         desc = encoding.tolocal(text[last + 2:])
         l = text[:last].split('\n')
         manifest = bin(l[0])
         user = encoding.tolocal(l[1])
 
-        extra_data = l[2].split(' ', 2)
-        if len(extra_data) != 3:
-            time = float(extra_data.pop(0))
+        tdata = l[2].split(' ', 2)
+        if len(tdata) != 3:
+            time = float(tdata[0])
             try:
                 # various tools did silly things with the time zone field.
-                timezone = int(extra_data[0])
+                timezone = int(tdata[1])
             except ValueError:
                 timezone = 0
-            extra = {}
+            extra = _defaultextra
         else:
-            time, timezone, extra = extra_data
-            time, timezone = float(time), int(timezone)
-            extra = decodeextra(extra)
-        if not extra.get('branch'):
-            extra['branch'] = 'default'
+            time, timezone = float(tdata[0]), int(tdata[1])
+            extra = decodeextra(tdata[2])
+
         files = l[3:]
         return (manifest, user, (time, timezone), files, desc, extra)
 
@@ -222,8 +351,7 @@ class changelog(revlog.revlog):
             raise error.RevlogError(_("username %s contains a newline")
                                     % repr(user))
 
-        # strip trailing whitespace and leading and trailing empty lines
-        desc = '\n'.join([l.rstrip() for l in desc.splitlines()]).strip('\n')
+        desc = stripdesc(desc)
 
         if date:
             parseddate = "%d %d" % util.parsedate(date)
@@ -242,3 +370,11 @@ class changelog(revlog.revlog):
         l = [hex(manifest), user, parseddate] + sorted(files) + ["", desc]
         text = "\n".join(l)
         return self.addrevision(text, transaction, len(self), p1, p2)
+
+    def branchinfo(self, rev):
+        """return the branch name and open/close state of a revision
+
+        This function exists because creating a changectx object
+        just to access this is costly."""
+        extra = self.read(rev)[5]
+        return encoding.tolocal(extra.get("branch")), 'close' in extra

@@ -7,7 +7,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-import urllib, urllib2, httplib, os, socket, cStringIO
+import urllib, urllib2, httplib, os, socket, cStringIO, base64
 from i18n import _
 import keepalive, util, sslutil
 import httpconnection as httpconnectionmod
@@ -25,17 +25,21 @@ class passwordmgr(urllib2.HTTPPasswordMgrWithDefaultRealm):
             self._writedebug(user, passwd)
             return (user, passwd)
 
-        if not user:
-            res = httpconnectionmod.readauthforuri(self.ui, authuri)
+        if not user or not passwd:
+            res = httpconnectionmod.readauthforuri(self.ui, authuri, user)
             if res:
                 group, auth = res
                 user, passwd = auth.get('username'), auth.get('password')
                 self.ui.debug("using auth.%s.* for authentication\n" % group)
         if not user or not passwd:
+            u = util.url(authuri)
+            u.query = None
             if not self.ui.interactive():
-                raise util.Abort(_('http authorization required'))
+                raise util.Abort(_('http authorization required for %s') %
+                                 util.hidepassword(str(u)))
 
-            self.ui.write(_("http authorization required\n"))
+            self.ui.write(_("http authorization required for %s\n") %
+                          util.hidepassword(str(u)))
             self.ui.write(_("realm: %s\n") % realm)
             if user:
                 self.ui.write(_("user: %s\n") % user)
@@ -52,6 +56,10 @@ class passwordmgr(urllib2.HTTPPasswordMgrWithDefaultRealm):
     def _writedebug(self, user, passwd):
         msg = _('http auth: user %s, password %s\n')
         self.ui.debug(msg % (user, passwd and '*' * len(passwd) or 'not set'))
+
+    def find_stored_password(self, authuri):
+        return urllib2.HTTPPasswordMgrWithDefaultRealm.find_user_password(
+            self, None, authuri)
 
 class proxyhandler(urllib2.ProxyHandler):
     def __init__(self, ui):
@@ -89,21 +97,28 @@ class proxyhandler(urllib2.ProxyHandler):
             proxies = {}
 
         # urllib2 takes proxy values from the environment and those
-        # will take precedence if found, so drop them
-        for env in ["HTTP_PROXY", "http_proxy", "no_proxy"]:
-            try:
-                if env in os.environ:
-                    del os.environ[env]
-            except OSError:
-                pass
+        # will take precedence if found. So, if there's a config entry
+        # defining a proxy, drop the environment ones
+        if ui.config("http_proxy", "host"):
+            for env in ["HTTP_PROXY", "http_proxy", "no_proxy"]:
+                try:
+                    if env in os.environ:
+                        del os.environ[env]
+                except OSError:
+                    pass
 
         urllib2.ProxyHandler.__init__(self, proxies)
         self.ui = ui
 
     def proxy_open(self, req, proxy, type_):
         host = req.get_host().split(':')[0]
-        if host in self.no_list:
-            return None
+        for e in self.no_list:
+            if host == e:
+                return None
+            if e.startswith('*.') and host.endswith(e[2:]):
+                return None
+            if e.startswith('.') and host.endswith(e[1:]):
+                return None
 
         # work around a bug in Python < 2.4.2
         # (it leaves a "\n" at the end of Proxy-authorization headers)
@@ -129,7 +144,7 @@ def _gen_sendfile(orgsend):
             orgsend(self, data)
     return _sendfile
 
-has_https = hasattr(urllib2, 'HTTPSHandler')
+has_https = util.safehasattr(urllib2, 'HTTPSHandler')
 if has_https:
     try:
         _create_connection = socket.create_connection
@@ -158,7 +173,7 @@ if has_https:
                     if sock is not None:
                         sock.close()
 
-            raise socket.error, msg
+            raise socket.error(msg)
 
 class httpconnection(keepalive.HTTPConnection):
     # must be able to send big bundle as stream.
@@ -169,8 +184,9 @@ class httpconnection(keepalive.HTTPConnection):
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.host, self.port))
             if _generic_proxytunnel(self):
-                # we do not support client x509 certificates
-                self.sock = sslutil.ssl_wrap_socket(self.sock, None, None)
+                # we do not support client X.509 certificates
+                self.sock = sslutil.ssl_wrap_socket(self.sock, None, None,
+                                                    serverhostname=self.host)
         else:
             keepalive.HTTPConnection.connect(self)
 
@@ -186,8 +202,8 @@ class httpconnection(keepalive.HTTPConnection):
 # general transaction handler to support different ways to handle
 # HTTPS proxying before and after Python 2.6.3.
 def _generic_start_transaction(handler, h, req):
-    if hasattr(req, '_tunnel_host') and req._tunnel_host:
-        tunnel_host = req._tunnel_host
+    tunnel_host = getattr(req, '_tunnel_host', None)
+    if tunnel_host:
         if tunnel_host[:7] not in ['http://', 'https:/']:
             tunnel_host = 'https://' + tunnel_host
         new_tunnel = True
@@ -210,7 +226,6 @@ def _generic_proxytunnel(self):
     proxyheaders = dict(
             [(x, self.headers[x]) for x in self.headers
              if x.lower().startswith('proxy-')])
-    self._set_hostport(self.host, self.port)
     self.send('CONNECT %s HTTP/1.0\r\n' % self.realhostport)
     for header in proxyheaders.iteritems():
         self.send('%s: %s\r\n' % header)
@@ -272,7 +287,8 @@ def _generic_proxytunnel(self):
     res.will_close = res._check_close()
 
     # do we have a Content-Length?
-    # NOTE: RFC 2616, S4.4, #3 says we ignore this if tr_enc is "chunked"
+    # NOTE: RFC 2616, section 4.4, #3 says we ignore this if
+    # transfer-encoding is "chunked"
     length = res.msg.getheader('content-length')
     if length and not res.chunked:
         try:
@@ -326,7 +342,7 @@ if has_https:
                 _generic_proxytunnel(self)
                 host = self.realhostport.rsplit(':', 1)[0]
             self.sock = sslutil.ssl_wrap_socket(
-                self.sock, self.key_file, self.cert_file,
+                self.sock, self.key_file, self.cert_file, serverhostname=host,
                 **sslutil.sslkwargs(self.ui, host))
             sslutil.validator(self.ui, host)(self.sock)
 
@@ -342,7 +358,11 @@ if has_https:
             return keepalive.KeepAliveHandler._start_transaction(self, h, req)
 
         def https_open(self, req):
-            res = httpconnectionmod.readauthforuri(self.ui, req.get_full_url())
+            # req.get_full_url() does not contain credentials and we may
+            # need them to match the certificates.
+            url = req.get_full_url()
+            user, password = self.pwmgr.find_stored_password(url)
+            res = httpconnectionmod.readauthforuri(self.ui, url, user)
             if res:
                 group, auth = res
                 self.auth = auth
@@ -367,7 +387,8 @@ if has_https:
                 keyfile = self.auth['key']
                 certfile = self.auth['cert']
 
-            conn = httpsconnection(host, port, keyfile, certfile, *args, **kwargs)
+            conn = httpsconnection(host, port, keyfile, certfile, *args,
+                                   **kwargs)
             conn.ui = self.ui
             return conn
 
@@ -401,8 +422,21 @@ class httpdigestauthhandler(urllib2.HTTPDigestAuthHandler):
 
 class httpbasicauthhandler(urllib2.HTTPBasicAuthHandler):
     def __init__(self, *args, **kwargs):
+        self.auth = None
         urllib2.HTTPBasicAuthHandler.__init__(self, *args, **kwargs)
         self.retried_req = None
+
+    def http_request(self, request):
+        if self.auth:
+            request.add_unredirected_header(self.auth_header, self.auth)
+
+        return request
+
+    def https_request(self, request):
+        if self.auth:
+            request.add_unredirected_header(self.auth_header, self.auth)
+
+        return request
 
     def reset_retry_count(self):
         # Python 2.6.5 will call this on 401 or 407 errors and thus loop
@@ -417,6 +451,19 @@ class httpbasicauthhandler(urllib2.HTTPBasicAuthHandler):
             self.retried = 0
         return urllib2.HTTPBasicAuthHandler.http_error_auth_reqed(
                         self, auth_header, host, req, headers)
+
+    def retry_http_basic_auth(self, host, req, realm):
+        user, pw = self.passwd.find_user_password(realm, req.get_full_url())
+        if pw is not None:
+            raw = "%s:%s" % (user, pw)
+            auth = 'Basic %s' % base64.b64encode(raw).strip()
+            if req.headers.get(self.auth_header, None) == auth:
+                return None
+            self.auth = auth
+            req.add_unredirected_header(self.auth_header, auth)
+            return self.parent.open(req)
+        else:
+            return None
 
 handlerfuncs = []
 

@@ -6,11 +6,26 @@
 # GNU General Public License version 2 or any later version.
 
 from i18n import _
-import osutil
-import errno, msvcrt, os, re, sys
+import osutil, encoding
+import errno, msvcrt, os, re, stat, sys, _winreg
 
-nulldev = 'NUL:'
-umask = 002
+import win32
+executablepath = win32.executablepath
+getuser = win32.getuser
+hidewindow = win32.hidewindow
+makedir = win32.makedir
+nlinks = win32.nlinks
+oslink = win32.oslink
+samedevice = win32.samedevice
+samefile = win32.samefile
+setsignalhandler = win32.setsignalhandler
+spawndetached = win32.spawndetached
+split = os.path.split
+termwidth = win32.termwidth
+testpid = win32.testpid
+unlink = win32.unlink
+
+umask = 0022
 
 # wrap osutil.posixfile to provide friendlier exceptions
 def posixfile(name, mode='r', buffering=-1):
@@ -62,7 +77,7 @@ class winstdout(object):
             self.close()
             raise IOError(errno.EPIPE, 'Broken pipe')
 
-sys.stdout = winstdout(sys.stdout)
+sys.__stdout__ = sys.stdout = winstdout(sys.stdout)
 
 def _is_win_9x():
     '''return true if run on windows 95, 98 or me.'''
@@ -90,6 +105,9 @@ def sshargs(sshcmd, host, user, port):
 def setflags(f, l, x):
     pass
 
+def copymode(src, dst, mode=None):
+    pass
+
 def checkexec(path):
     return False
 
@@ -99,11 +117,12 @@ def checklink(path):
 def setbinary(fd):
     # When run without console, pipes may expose invalid
     # fileno(), usually set to -1.
-    if hasattr(fd, 'fileno') and fd.fileno() >= 0:
-        msvcrt.setmode(fd.fileno(), os.O_BINARY)
+    fno = getattr(fd, 'fileno', None)
+    if fno is not None and fno() >= 0:
+        msvcrt.setmode(fno(), os.O_BINARY)
 
 def pconvert(path):
-    return '/'.join(path.split(os.sep))
+    return path.replace(os.sep, '/')
 
 def localpath(path):
     return path.replace('/', '\\')
@@ -111,14 +130,8 @@ def localpath(path):
 def normpath(path):
     return pconvert(os.path.normpath(path))
 
-def realpath(path):
-    '''
-    Returns the true, canonical file system path equivalent to the given
-    path.
-    '''
-    # TODO: There may be a more clever way to do this that also handles other,
-    # less common file systems.
-    return os.path.normpath(os.path.normcase(os.path.realpath(path)))
+def normcase(path):
+    return encoding.upper(path)
 
 def samestat(s1, s2):
     return False
@@ -131,14 +144,24 @@ def samestat(s1, s2):
 #   backslash
 # (See http://msdn2.microsoft.com/en-us/library/a1y7w461.aspx )
 # So, to quote a string, we must surround it in double quotes, double
-# the number of backslashes that preceed double quotes and add another
+# the number of backslashes that precede double quotes and add another
 # backslash before every double quote (being careful with the double
 # quote we've appended to the end)
 _quotere = None
+_needsshellquote = None
 def shellquote(s):
     global _quotere
     if _quotere is None:
         _quotere = re.compile(r'(\\*)("|\\$)')
+    global _needsshellquote
+    if _needsshellquote is None:
+        # ":" and "\\" are also treated as "safe character", because
+        # they are used as a part of path name (and the latter doesn't
+        # work as "escape character", like one on posix) on Windows
+        _needsshellquote = re.compile(r'[^a-zA-Z0-9._:/\\-]').search
+    if s and not _needsshellquote(s) and not _quotere.search(s):
+        # "s" shouldn't have to be quoted
+        return s
     return '"%s"' % _quotere.sub(r'\1\1\\\2', s)
 
 def quotecommand(cmd):
@@ -152,7 +175,7 @@ def popen(command, mode='r'):
     # Work around "popen spawned process may not write to stdout
     # under windows"
     # http://bugs.python.org/issue1366
-    command += " 2> %s" % nulldev
+    command += " 2> %s" % os.devnull
     return os.popen(quotecommand(command), mode)
 
 def explainexit(code):
@@ -191,21 +214,26 @@ def findexe(command):
             return executable
     return findexisting(os.path.expanduser(os.path.expandvars(command)))
 
+_wantedkinds = set([stat.S_IFREG, stat.S_IFLNK])
+
 def statfiles(files):
-    '''Stat each file in files and yield stat or None if file does not exist.
+    '''Stat each file in files. Yield each stat, or None if a file
+    does not exist or has a type we don't care about.
+
     Cluster and cache stat per directory to minimize number of OS stat calls.'''
-    ncase = os.path.normcase
     dircache = {} # dirname -> filename -> status | None if file does not exist
+    getkind = stat.S_IFMT
     for nf in files:
-        nf  = ncase(nf)
+        nf  = normcase(nf)
         dir, base = os.path.split(nf)
         if not dir:
             dir = '.'
         cache = dircache.get(dir, None)
         if cache is None:
             try:
-                dmap = dict([(ncase(n), s)
-                    for n, k, s in osutil.listdir(dir, True)])
+                dmap = dict([(normcase(n), s)
+                             for n, k, s in osutil.listdir(dir, True)
+                             if getkind(s.st_mode) in _wantedkinds])
             except OSError, err:
                 # handle directory not found in Python version prior to 2.5
                 # Python <= 2.4 returns native Windows code 3 in errno
@@ -248,9 +276,13 @@ def _removedirs(name):
             break
         head, tail = os.path.split(head)
 
-def unlinkpath(f):
+def unlinkpath(f, ignoremissing=False):
     """unlink and remove the directory if it is empty"""
-    unlink(f)
+    try:
+        unlink(f)
+    except OSError, e:
+        if not (ignoremissing and e.errno == errno.ENOENT):
+            raise
     # try removing directories that might now be empty
     try:
         _removedirs(os.path.dirname(f))
@@ -270,17 +302,62 @@ def rename(src, dst):
 def gethgcmd():
     return [sys.executable] + sys.argv[:1]
 
-def termwidth():
-    # cmd.exe does not handle CR like a unix console, the CR is
-    # counted in the line length. On 80 columns consoles, if 80
-    # characters are written, the following CR won't apply on the
-    # current line but on the new one. Keep room for it.
-    return 79
-
 def groupmembers(name):
     # Don't support groups on Windows for now
-    raise KeyError()
+    raise KeyError
 
-from win32 import *
+def isexec(f):
+    return False
+
+class cachestat(object):
+    def __init__(self, path):
+        pass
+
+    def cacheable(self):
+        return False
+
+def lookupreg(key, valname=None, scope=None):
+    ''' Look up a key/value name in the Windows registry.
+
+    valname: value name. If unspecified, the default value for the key
+    is used.
+    scope: optionally specify scope for registry lookup, this can be
+    a sequence of scopes to look up in order. Default (CURRENT_USER,
+    LOCAL_MACHINE).
+    '''
+    if scope is None:
+        scope = (_winreg.HKEY_CURRENT_USER, _winreg.HKEY_LOCAL_MACHINE)
+    elif not isinstance(scope, (list, tuple)):
+        scope = (scope,)
+    for s in scope:
+        try:
+            val = _winreg.QueryValueEx(_winreg.OpenKey(s, key), valname)[0]
+            # never let a Unicode string escape into the wild
+            return encoding.tolocal(val.encode('UTF-8'))
+        except EnvironmentError:
+            pass
 
 expandglobs = True
+
+def statislink(st):
+    '''check whether a stat result is a symlink'''
+    return False
+
+def statisexec(st):
+    '''check whether a stat result is an executable file'''
+    return False
+
+def readpipe(pipe):
+    """Read all available data from a pipe."""
+    chunks = []
+    while True:
+        size = os.fstat(pipe.fileno()).st_size
+        if not size:
+            break
+
+        s = pipe.read(size)
+        if not s:
+            break
+        chunks.append(s)
+
+    return ''.join(chunks)

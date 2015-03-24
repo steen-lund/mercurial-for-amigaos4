@@ -30,7 +30,7 @@ class monotone_source(converter_source, commandline):
                 f = file(path, 'rb')
                 header = f.read(16)
                 f.close()
-            except:
+            except IOError:
                 header = ''
             if header != 'SQLite format 3\x00':
                 raise norepo
@@ -113,7 +113,7 @@ class monotone_source(converter_source, commandline):
 
         stream = self.mtnreadfp.read(1)
         if stream not in 'mewptl':
-            raise util.Abort(_('bad mtn packet - bad stream type %s' % stream))
+            raise util.Abort(_('bad mtn packet - bad stream type %s') % stream)
 
         read = self.mtnreadfp.read(1)
         if read != ':':
@@ -224,8 +224,9 @@ class monotone_source(converter_source, commandline):
         else:
             return [self.rev]
 
-    def getchanges(self, rev):
-        #revision = self.mtncmd("get_revision %s" % rev).split("\n\n")
+    def getchanges(self, rev, full):
+        if full:
+            raise util.Abort(_("convert from monotone do not support --full"))
         revision = self.mtnrun("get_revision", rev).split("\n\n")
         files = {}
         ignoremove = {}
@@ -283,11 +284,11 @@ class monotone_source(converter_source, commandline):
 
     def getfile(self, name, rev):
         if not self.mtnisfile(name, rev):
-            raise IOError() # file was deleted or renamed
+            return None, None
         try:
             data = self.mtnrun("get_file_of", name, r=rev)
-        except:
-            raise IOError() # file was deleted or renamed
+        except Exception:
+            return None, None
         self.mtnloadmanifest(rev)
         node, attr = self.files.get(name, (None, ""))
         return data, attr
@@ -317,7 +318,7 @@ class monotone_source(converter_source, commandline):
     def getchangedfiles(self, rev, i):
         # This function is only needed to support --filemap
         # ... and we don't support that
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def before(self):
         # Check if we have a new enough version to use automate stdio

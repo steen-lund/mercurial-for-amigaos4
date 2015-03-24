@@ -7,39 +7,13 @@
 
 from i18n import _
 import error, util
-import re, os, errno
-
-class sortdict(dict):
-    'a simple sorted dictionary'
-    def __init__(self, data=None):
-        self._list = []
-        if data:
-            self.update(data)
-    def copy(self):
-        return sortdict(self)
-    def __setitem__(self, key, val):
-        if key in self:
-            self._list.remove(key)
-        self._list.append(key)
-        dict.__setitem__(self, key, val)
-    def __iter__(self):
-        return self._list.__iter__()
-    def update(self, src):
-        for k in src:
-            self[k] = src[k]
-    def clear(self):
-        dict.clear(self)
-        self._list = []
-    def items(self):
-        return [(k, self[k]) for k in self._list]
-    def __delitem__(self, key):
-        dict.__delitem__(self, key)
-        self._list.remove(key)
+import os, errno
 
 class config(object):
     def __init__(self, data=None):
         self._data = {}
         self._source = {}
+        self._unset = []
         if data:
             for k in data._data:
                 self._data[k] = data[k].copy()
@@ -54,13 +28,30 @@ class config(object):
         for d in self.sections():
             yield d
     def update(self, src):
+        for s, n in src._unset:
+            if s in self and n in self._data[s]:
+                del self._data[s][n]
+                del self._source[(s, n)]
         for s in src:
             if s not in self:
-                self._data[s] = sortdict()
+                self._data[s] = util.sortdict()
             self._data[s].update(src._data[s])
         self._source.update(src._source)
     def get(self, section, item, default=None):
         return self._data.get(section, {}).get(item, default)
+
+    def backup(self, section, item):
+        """return a tuple allowing restore to reinstall a previous value
+
+        The main reason we need it is because it handles the "no data" case.
+        """
+        try:
+            value = self._data[section][item]
+            source = self.source(section, item)
+            return (section, item, value, source)
+        except KeyError:
+            return (section, item)
+
     def source(self, section, item):
         return self._source.get((section, item), "")
     def sections(self):
@@ -69,18 +60,33 @@ class config(object):
         return self._data.get(section, {}).items()
     def set(self, section, item, value, source=""):
         if section not in self:
-            self._data[section] = sortdict()
+            self._data[section] = util.sortdict()
         self._data[section][item] = value
-        self._source[(section, item)] = source
+        if source:
+            self._source[(section, item)] = source
+
+    def restore(self, data):
+        """restore data returned by self.backup"""
+        if len(data) == 4:
+            # restore old data
+            section, item, value, source = data
+            self._data[section][item] = value
+            self._source[(section, item)] = source
+        else:
+            # no data before, remove everything
+            section, item = data
+            if section in self._data:
+                self._data[section].pop(item, None)
+            self._source.pop((section, item), None)
 
     def parse(self, src, data, sections=None, remap=None, include=None):
-        sectionre = re.compile(r'\[([^\[]+)\]')
-        itemre = re.compile(r'([^=\s][^=]*?)\s*=\s*(.*\S|)')
-        contre = re.compile(r'\s+(\S|\S.*\S)\s*$')
-        emptyre = re.compile(r'(;|#|\s*$)')
-        commentre = re.compile(r'(;|#)')
-        unsetre = re.compile(r'%unset\s+(\S+)')
-        includere = re.compile(r'%include\s+(\S|\S.*\S)\s*$')
+        sectionre = util.re.compile(r'\[([^\[]+)\]')
+        itemre = util.re.compile(r'([^=\s][^=]*?)\s*=\s*(.*\S|)')
+        contre = util.re.compile(r'\s+(\S|\S.*\S)\s*$')
+        emptyre = util.re.compile(r'(;|#|\s*$)')
+        commentre = util.re.compile(r'(;|#)')
+        unsetre = util.re.compile(r'%unset\s+(\S+)')
+        includere = util.re.compile(r'%include\s+(\S|\S.*\S)\s*$')
         section = ""
         item = None
         line = 0
@@ -88,6 +94,9 @@ class config(object):
 
         for l in data.splitlines(True):
             line += 1
+            if line == 1 and l.startswith('\xef\xbb\xbf'):
+                # Someone set us up the BOM
+                l = l[3:]
             if cont:
                 if commentre.match(l):
                     continue
@@ -122,7 +131,7 @@ class config(object):
                 if remap:
                     section = remap.get(section, section)
                 if section not in self:
-                    self._data[section] = sortdict()
+                    self._data[section] = util.sortdict()
                 continue
             m = itemre.match(l)
             if m:
@@ -139,6 +148,7 @@ class config(object):
                     continue
                 if self.get(section, name) is not None:
                     del self._data[section][name]
+                self._unset.append((section, name))
                 continue
 
             raise error.ParseError(l.rstrip(), ("%s:%s" % (src, line)))

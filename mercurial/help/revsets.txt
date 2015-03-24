@@ -4,10 +4,9 @@ revisions.
 The language supports a number of predicates which are joined by infix
 operators. Parenthesis can be used for grouping.
 
-Identifiers such as branch names must be quoted with single or double
-quotes if they contain characters outside of
-``[._a-zA-Z0-9\x80-\xff]`` or if they match one of the predefined
-predicates.
+Identifiers such as branch names may need quoting with single or
+double quotes if they contain characters like ``-`` or if they match
+one of the predefined predicates.
 
 Special characters can be used in quoted identifiers by escaping them,
 e.g., ``\n`` is interpreted as a newline. To prevent them from being
@@ -82,6 +81,19 @@ For example,
 defines three aliases, ``h``, ``d``, and ``rs``. ``rs(0:tip, author)`` is
 exactly equivalent to ``reverse(sort(0:tip, author))``.
 
+An infix operator ``##`` can concatenate strings and identifiers into
+one string. For example::
+
+  [revsetalias]
+  issue($1) = grep(r'\bissue[ :]?' ## $1 ## r'\b|\bbug\(' ## $1 ## r'\)')
+
+``issue(1234)`` is equivalent to ``grep(r'\bissue[ :]?1234\b|\bbug\(1234\)')``
+in this case. This matches against all of "issue 1234", "issue:1234",
+"issue1234" and "bug(1234)".
+
+All other prefix, infix and postfix operators have lower priority than
+``##``. For example, ``$1 ## $2~2`` is equivalent to ``($1 ## $2)~2``.
+
 Command line equivalents for :hg:`log`::
 
   -f    ->  ::.
@@ -119,4 +131,4 @@ Some sample queries:
 - Changesets mentioning "bug" or "issue" that are not in a tagged
   release::
 
-    hg log -r "(keyword(bug) or keyword(issue)) and not ancestors(tagged())"
+    hg log -r "(keyword(bug) or keyword(issue)) and not ancestors(tag())"

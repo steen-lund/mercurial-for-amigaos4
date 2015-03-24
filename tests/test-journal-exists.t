@@ -9,7 +9,8 @@
 
   $ echo foo > a
   $ hg ci -Am0
-  abort: abandoned transaction found - run hg recover!
+  abort: abandoned transaction found!
+  (run 'hg recover' to clean up transaction)
   [255]
 
   $ hg recover
@@ -22,6 +23,7 @@
 
 Check that zero-size journals are correctly aborted:
 
+#if unix-permissions no-root
   $ hg bundle -qa repo.hg
   $ chmod -w foo/.hg/store/00changelog.i
 
@@ -31,4 +33,5 @@ Check that zero-size journals are correctly aborted:
   [255]
 
   $ if test -f foo/.hg/store/journal; then echo 'journal exists :-('; fi
+#endif
 

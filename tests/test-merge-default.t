@@ -66,7 +66,7 @@ Should succeed - 2 heads:
 Should fail because at tip:
 
   $ hg merge
-  abort: there is nothing to merge
+  abort: nothing to merge
   [255]
 
   $ hg up 0
@@ -75,7 +75,8 @@ Should fail because at tip:
 Should fail because there is only one head:
 
   $ hg merge
-  abort: there is nothing to merge - use "hg update" instead
+  abort: nothing to merge
+  (use 'hg update' instead)
   [255]
 
   $ hg up 3
@@ -84,6 +85,7 @@ Should fail because there is only one head:
   $ echo f >> a
   $ hg branch foobranch
   marked working directory as branch foobranch
+  (branches are permanent and global, did you want a bookmark?)
   $ hg commit -mf
 
 Should fail because merge with other branch:
@@ -95,8 +97,7 @@ Should fail because merge with other branch:
 
 
 Test for issue2043: ensure that 'merge -P' shows ancestors of 6 that
-are not ancestors of 7, regardless of where their least common
-ancestor is.
+are not ancestors of 7, regardless of where their common ancestors are.
 
 Merge preview not affected by common ancestor:
 

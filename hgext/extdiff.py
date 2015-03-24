@@ -23,17 +23,17 @@ you do not need to type :hg:`extdiff -p kdiff3` always. ::
   #cmd.cdiff = gdiff
   #opts.cdiff = -Nprc5
 
-  # add new command called vdiff, runs kdiff3
-  vdiff = kdiff3
-
-  # add new command called meld, runs meld (no need to name twice)
+  # add new command called meld, runs meld (no need to name twice).  If
+  # the meld executable is not available, the meld tool in [merge-tools]
+  # will be used, if available
   meld =
 
   # add new command called vimdiff, runs gvimdiff with DirDiff plugin
   # (see http://www.vim.org/scripts/script.php?script_id=102) Non
   # English user, be sure to put "let g:DirDiffDynamicDiffText = 1" in
   # your .vimrc
-  vimdiff = gvim -f '+next' '+execute "DirDiff" argv(0) argv(1)'
+  vimdiff = gvim -f "+next" \\
+            "+execute 'DirDiff' fnameescape(argv(0)) fnameescape(argv(1))"
 
 Tool arguments can include variables that are expanded at runtime::
 
@@ -62,8 +62,12 @@ pretty fast (at least faster than having to compare the entire tree).
 
 from mercurial.i18n import _
 from mercurial.node import short, nullid
-from mercurial import scmutil, scmutil, util, commands, encoding
+from mercurial import cmdutil, scmutil, util, commands, encoding, filemerge
 import os, shlex, shutil, tempfile, re
+
+cmdtable = {}
+command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 def snapshot(ui, repo, files, node, tmproot):
     '''snapshot files as of some revision
@@ -85,9 +89,9 @@ def snapshot(ui, repo, files, node, tmproot):
     wopener = scmutil.opener(base)
     fns_and_mtime = []
     ctx = repo[node]
-    for fn in files:
+    for fn in sorted(files):
         wfn = util.pconvert(fn)
-        if not wfn in ctx:
+        if wfn not in ctx:
             # File doesn't exist; could be a bogus modify
             continue
         ui.note('  %s\n' % wfn)
@@ -105,8 +109,8 @@ def snapshot(ui, repo, files, node, tmproot):
                                   os.lstat(dest).st_mtime))
     return dirname, fns_and_mtime
 
-def dodiff(ui, repo, diffcmd, diffopts, pats, opts):
-    '''Do the actuall diff:
+def dodiff(ui, repo, cmdline, pats, opts):
+    '''Do the actual diff:
 
     - copy to a temp structure if diffing 2 internal revisions
     - copy to a temp structure if diffing working revision with
@@ -116,8 +120,7 @@ def dodiff(ui, repo, diffcmd, diffopts, pats, opts):
 
     revs = opts.get('rev')
     change = opts.get('change')
-    args = ' '.join(diffopts)
-    do3way = '$parent2' in args
+    do3way = '$parent2' in cmdline
 
     if revs and change:
         msg = _('cannot specify --rev and --change at the same time')
@@ -204,25 +207,26 @@ def dodiff(ui, repo, diffcmd, diffopts, pats, opts):
         # Function to quote file/dir names in the argument string.
         # When not operating in 3-way mode, an empty string is
         # returned for parent2
-        replace = dict(parent=dir1a, parent1=dir1a, parent2=dir1b,
-                       plabel1=label1a, plabel2=label1b,
-                       clabel=label2, child=dir2,
-                       root=repo.root)
+        replace = {'parent': dir1a, 'parent1': dir1a, 'parent2': dir1b,
+                   'plabel1': label1a, 'plabel2': label1b,
+                   'clabel': label2, 'child': dir2,
+                   'root': repo.root}
         def quote(match):
-            key = match.group()[1:]
+            pre = match.group(2)
+            key = match.group(3)
             if not do3way and key == 'parent2':
-                return ''
-            return util.shellquote(replace[key])
+                return pre
+            return pre + util.shellquote(replace[key])
 
         # Match parent2 first, so 'parent1?' will match both parent1 and parent
-        regex = '\$(parent2|parent1?|child|plabel1|plabel2|clabel|root)'
-        if not do3way and not re.search(regex, args):
-            args += ' $parent1 $child'
-        args = re.sub(regex, quote, args)
-        cmdline = util.shellquote(diffcmd) + ' ' + args
+        regex = (r'''(['"]?)([^\s'"$]*)'''
+                 r'\$(parent2|parent1?|child|plabel1|plabel2|clabel|root)\1')
+        if not do3way and not re.search(regex, cmdline):
+            cmdline += ' $parent1 $child'
+        cmdline = re.sub(regex, quote, cmdline)
 
         ui.debug('running %r in %s\n' % (cmdline, tmproot))
-        util.system(cmdline, cwd=tmproot, out=ui.fout)
+        ui.system(cmdline, cwd=tmproot)
 
         for copy_fn, working_fn, mtime in fns_and_mtime:
             if os.lstat(copy_fn).st_mtime != mtime:
@@ -235,6 +239,16 @@ def dodiff(ui, repo, diffcmd, diffopts, pats, opts):
         ui.note(_('cleaning up temp directory\n'))
         shutil.rmtree(tmproot)
 
+@command('extdiff',
+    [('p', 'program', '',
+     _('comparison program to run'), _('CMD')),
+    ('o', 'option', [],
+     _('pass option to comparison program'), _('OPT')),
+    ('r', 'rev', [], _('revision'), _('REV')),
+    ('c', 'change', '', _('change made by revision'), _('REV')),
+    ] + commands.walkopts,
+    _('hg extdiff [OPT]... [FILE]...'),
+    inferrepo=True)
 def extdiff(ui, repo, *pats, **opts):
     '''use external program to diff repository (or selected files)
 
@@ -257,51 +271,48 @@ def extdiff(ui, repo, *pats, **opts):
     if not program:
         program = 'diff'
         option = option or ['-Npru']
-    return dodiff(ui, repo, program, option, pats, opts)
-
-cmdtable = {
-    "extdiff":
-    (extdiff,
-     [('p', 'program', '',
-       _('comparison program to run'), _('CMD')),
-      ('o', 'option', [],
-       _('pass option to comparison program'), _('OPT')),
-      ('r', 'rev', [],
-       _('revision'), _('REV')),
-      ('c', 'change', '',
-       _('change made by revision'), _('REV')),
-     ] + commands.walkopts,
-     _('hg extdiff [OPT]... [FILE]...')),
-    }
+    cmdline = ' '.join(map(util.shellquote, [program] + option))
+    return dodiff(ui, repo, cmdline, pats, opts)
 
 def uisetup(ui):
     for cmd, path in ui.configitems('extdiff'):
         if cmd.startswith('cmd.'):
             cmd = cmd[4:]
             if not path:
-                path = cmd
+                path = util.findexe(cmd)
+                if path is None:
+                    path = filemerge.findexternaltool(ui, cmd) or cmd
             diffopts = ui.config('extdiff', 'opts.' + cmd, '')
-            diffopts = diffopts and [diffopts] or []
+            cmdline = util.shellquote(path)
+            if diffopts:
+                cmdline += ' ' + diffopts
         elif cmd.startswith('opts.'):
             continue
         else:
-            # command = path opts
             if path:
-                diffopts = shlex.split(path)
-                path = diffopts.pop(0)
+                # case "cmd = path opts"
+                cmdline = path
+                diffopts = len(shlex.split(cmdline)) > 1
             else:
-                path, diffopts = cmd, []
+                # case "cmd ="
+                path = util.findexe(cmd)
+                if path is None:
+                    path = filemerge.findexternaltool(ui, cmd) or cmd
+                cmdline = util.shellquote(path)
+                diffopts = False
         # look for diff arguments in [diff-tools] then [merge-tools]
-        if diffopts == []:
+        if not diffopts:
             args = ui.config('diff-tools', cmd+'.diffargs') or \
                    ui.config('merge-tools', cmd+'.diffargs')
             if args:
-                diffopts = shlex.split(args)
-        def save(cmd, path, diffopts):
+                cmdline += ' ' + args
+        def save(cmdline):
             '''use closure to save diff command to use'''
             def mydiff(ui, repo, *pats, **opts):
-                return dodiff(ui, repo, path, diffopts + opts['option'],
-                              pats, opts)
+                options = ' '.join(map(util.shellquote, opts['option']))
+                if options:
+                    options = ' ' + options
+                return dodiff(ui, repo, cmdline + options, pats, opts)
             doc = _('''\
 use %(path)s to diff repository (or selected files)
 
@@ -313,7 +324,7 @@ use %(path)s to diff repository (or selected files)
     that revision is compared to the working directory, and, when no
     revisions are specified, the working directory files are compared
     to its parent.\
-''') % dict(path=util.uirepr(path))
+''') % {'path': util.uirepr(path)}
 
             # We must translate the docstring right away since it is
             # used as a format string. The string will unfortunately
@@ -323,6 +334,6 @@ use %(path)s to diff repository (or selected files)
             # right encoding) prevents that.
             mydiff.__doc__ = doc.decode(encoding.encoding)
             return mydiff
-        cmdtable[cmd] = (save(cmd, path, diffopts),
+        cmdtable[cmd] = (save(cmdline),
                          cmdtable['extdiff'][1][1:],
                          _('hg %s [OPTION]... [FILE]...') % cmd)

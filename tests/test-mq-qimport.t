@@ -1,3 +1,4 @@
+#require killdaemons
 
   $ cat > writelines.py <<EOF
   > import sys
@@ -14,18 +15,34 @@
   > f.close()
   > 
   > EOF
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "mq=" >> $HGRCPATH
-  $ echo "[diff]" >> $HGRCPATH
-  $ echo "git=1" >> $HGRCPATH
+  > cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > mq =
+  > [diff]
+  > git = 1
+  > EOF
   $ hg init repo
   $ cd repo
+
+qimport without file or revision
+
+  $ hg qimport
+  abort: no files or revisions specified
+  [255]
 
 qimport non-existing-file
 
   $ hg qimport non-existing-file
   abort: unable to read file non-existing-file
   [255]
+
+qimport null revision
+
+  $ hg qimport -r null
+  abort: revision -1 is not mutable
+  (see "hg help phases" for details)
+  [255]
+  $ hg qseries
 
 import email
 
@@ -152,21 +169,49 @@ qimport CRLF diff
 
 try to import --push
 
-  $ echo another >> b
-  $ hg diff > another.diff
-  $ hg up -C
-  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg qimport --push another.diff
-  adding another.diff to series file
-  applying another.diff
-  now at: another.diff
+  $ cat > appendfoo.diff <<EOF
+  > append foo
+  > 
+  > diff -r 07f494440405 -r 261500830e46 baz
+  > --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  > +++ b/baz	Thu Jan 01 00:00:00 1970 +0000
+  > @@ -0,0 +1,1 @@
+  > +foo
+  > EOF
+
+  $ cat > appendbar.diff <<EOF
+  > append bar
+  > 
+  > diff -r 07f494440405 -r 261500830e46 baz
+  > --- a/baz	Thu Jan 01 00:00:00 1970 +0000
+  > +++ b/baz	Thu Jan 01 00:00:00 1970 +0000
+  > @@ -1,1 +1,2 @@
+  >  foo
+  > +bar
+  > EOF
+
+  $ hg qimport --push appendfoo.diff appendbar.diff
+  adding appendfoo.diff to series file
+  adding appendbar.diff to series file
+  applying appendfoo.diff
+  applying appendbar.diff
+  now at: appendbar.diff
   $ hg qfin -a
   patch b.diff finalized without changeset message
-  patch another.diff finalized without changeset message
-  $ hg qimport -rtip -P
+  $ touch .hg/patches/2.diff
+  $ hg qimport -r 'p1(.)::'
+  abort: patch "2.diff" already exists
+  [255]
+  $ hg qapplied
+  3.diff
+  $ hg qfin -a
+  $ rm .hg/patches/2.diff
+  $ hg qimport -r 'p1(.)::' -P
   $ hg qpop -a
+  popping 3.diff
   popping 2.diff
   patch queue now empty
+  $ hg qdel 3.diff
   $ hg qdel -k 2.diff
 
 qimport -e
@@ -205,7 +250,7 @@ qimport -e --name with --force
 
 qimport with bad name, should abort before reading file
 
-  $ hg qimport non-existant-file --name .hg
+  $ hg qimport non-existent-file --name .hg
   abort: patch name cannot begin with ".hg"
   [255]
 
@@ -225,3 +270,23 @@ set up hgweb
   $ cd ../repo
   $ hg qimport http://localhost:$HGPORT/raw-rev/0///
   adding 0 to series file
+
+check qimport phase:
+
+  $ hg -q qpush
+  now at: 0
+  $ hg phase qparent
+  1: draft
+  $ hg qimport -r qparent
+  $ hg phase qbase
+  1: draft
+  $ hg qfinish qbase
+  $ echo '[mq]' >> $HGRCPATH
+  $ echo 'secret=true' >> $HGRCPATH
+  $ hg qimport -r qparent
+  $ hg phase qbase
+  1: secret
+
+  $ cd ..
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS

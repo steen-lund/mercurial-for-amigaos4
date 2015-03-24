@@ -1,4 +1,4 @@
-adjust to non-default HGPORT, e.g. with run-tests.py -j
+#require serve
 
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "fetch=" >> $HGRCPATH
@@ -7,7 +7,7 @@ test fetch with default branches only
 
   $ hg init a
   $ echo a > a/a
-  $ hg --cwd a commit -d '1 0' -Ama
+  $ hg --cwd a commit -Ama
   adding a
   $ hg clone a b
   updating to branch default
@@ -16,10 +16,10 @@ test fetch with default branches only
   updating to branch default
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo b > a/b
-  $ hg --cwd a commit -d '2 0' -Amb
+  $ hg --cwd a commit -Amb
   adding b
   $ hg --cwd a parents -q
-  1:97d72e5f12c7
+  1:d2ae7f538514
 
 should pull one change
 
@@ -32,9 +32,9 @@ should pull one change
   added 1 changesets with 1 changes to 1 files
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg --cwd b parents -q
-  1:97d72e5f12c7
+  1:d2ae7f538514
   $ echo c > c/c
-  $ hg --cwd c commit -d '3 0' -Amc
+  $ hg --cwd c commit -Amc
   adding c
   $ hg clone c d
   updating to branch default
@@ -48,56 +48,71 @@ repo, because the path of the repo will be included in the commit
 message, making every commit appear different.
 should merge c into a
 
-  $ hg --cwd c fetch -d '4 0' -m 'automated merge' ../a
+  $ hg --cwd c fetch -d '0 0' -m 'automated merge' ../a
   pulling from ../a
   searching for changes
   adding changesets
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files (+1 heads)
-  updating to 2:97d72e5f12c7
+  updating to 2:d2ae7f538514
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
-  merging with 1:5e056962225c
+  merging with 1:d36c0562f908
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  new changeset 3:cd3a41621cf0 merges remote changes with local
+  new changeset 3:a323a0c43ec4 merges remote changes with local
   $ ls c
   a
   b
   c
-  $ netstat -tnap 2>/dev/null | grep $HGPORT | grep LISTEN
-  [1]
   $ hg --cwd a serve -a localhost -p $HGPORT -d --pid-file=hg.pid
   $ cat a/hg.pid >> "$DAEMON_PIDS"
 
 fetch over http, no auth
+(this also tests that editor is invoked if '--edit' is specified)
 
-  $ hg --cwd d fetch -d '5 0' http://localhost:$HGPORT/
+  $ HGEDITOR=cat hg --cwd d fetch --edit http://localhost:$HGPORT/
   pulling from http://localhost:$HGPORT/
   searching for changes
   adding changesets
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files (+1 heads)
-  updating to 2:97d72e5f12c7
+  updating to 2:d2ae7f538514
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
-  merging with 1:5e056962225c
+  merging with 1:d36c0562f908
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  Automated merge with http://localhost:$HGPORT/
+  
+  
+  HG: Enter commit message.  Lines beginning with 'HG:' are removed.
+  HG: Leave message empty to abort commit.
+  HG: --
+  HG: user: test
+  HG: branch merge
+  HG: branch 'default'
+  HG: changed c
   new changeset 3:* merges remote changes with local (glob)
   $ hg --cwd d tip --template '{desc}\n'
   Automated merge with http://localhost:$HGPORT/
+  $ hg --cwd d status --rev 'tip^1' --rev tip
+  A c
+  $ hg --cwd d status --rev 'tip^2' --rev tip
+  A b
 
 fetch over http with auth (should be hidden in desc)
+(this also tests that editor is not invoked if '--edit' is not
+specified, even though commit message is not specified explicitly)
 
-  $ hg --cwd e fetch -d '5 0' http://user:password@localhost:$HGPORT/
+  $ HGEDITOR=cat hg --cwd e fetch http://user:password@localhost:$HGPORT/
   pulling from http://user:***@localhost:$HGPORT/
   searching for changes
   adding changesets
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files (+1 heads)
-  updating to 2:97d72e5f12c7
+  updating to 2:d2ae7f538514
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
-  merging with 1:5e056962225c
+  merging with 1:d36c0562f908
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   new changeset 3:* merges remote changes with local (glob)
   $ hg --cwd e tip --template '{desc}\n'
@@ -109,17 +124,17 @@ fetch over http with auth (should be hidden in desc)
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo f > f/f
-  $ hg --cwd f ci -d '6 0' -Amf
+  $ hg --cwd f ci -Amf
   adding f
   $ echo g > g/g
-  $ hg --cwd g ci -d '6 0' -Amg
+  $ hg --cwd g ci -Amg
   adding g
   $ hg clone -q f h
   $ hg clone -q g i
 
 should merge f into g
 
-  $ hg --cwd g fetch -d '7 0' --switch -m 'automated merge' ../f
+  $ hg --cwd g fetch -d '0 0' --switch -m 'automated merge' ../f
   pulling from ../f
   searching for changes
   adding changesets
@@ -127,36 +142,36 @@ should merge f into g
   adding file changes
   added 1 changesets with 1 changes to 1 files (+1 heads)
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  merging with 3:cc6a3744834d
+  merging with 3:6343ca3eff20
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  new changeset 4:55aa4f32ec59 merges remote changes with local
+  new changeset 4:f7faa0b7d3c6 merges remote changes with local
   $ rm i/g
 
 should abort, because i is modified
 
   $ hg --cwd i fetch ../h
-  abort: working directory is missing some files
+  abort: uncommitted changes
   [255]
 
 test fetch with named branches
 
   $ hg init nbase
   $ echo base > nbase/a
-  $ hg -R nbase ci -d '1 0' -Am base
+  $ hg -R nbase ci -Am base
   adding a
   $ hg -R nbase branch a
   marked working directory as branch a
+  (branches are permanent and global, did you want a bookmark?)
   $ echo a > nbase/a
-  $ hg -R nbase ci -d '2 0' -m a
+  $ hg -R nbase ci -m a
   $ hg -R nbase up -C 0
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg -R nbase branch b
   marked working directory as branch b
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b > nbase/b
-  $ hg -R nbase ci -Ad '3 0' -m b
+  $ hg -R nbase ci -Am b
   adding b
-  $ echo
-  
 
 pull in change on foreign branch
 
@@ -169,10 +184,10 @@ pull in change on foreign branch
   $ hg -R n1 up -C a
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo aa > n1/a
-  $ hg -R n1 ci -d '4 0' -m a1
+  $ hg -R n1 ci -m a1
   $ hg -R n2 up -C b
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg -R n2 fetch -d '9 0' -m 'merge' n1
+  $ hg -R n2 fetch -m 'merge' n1
   pulling from n1
   searching for changes
   adding changesets
@@ -185,8 +200,6 @@ parent should be 2 (no automatic update)
   $ hg -R n2 parents --template '{rev}\n'
   2
   $ rm -fr n1 n2
-  $ echo
-  
 
 pull in changes on both foreign and local branches
 
@@ -199,14 +212,14 @@ pull in changes on both foreign and local branches
   $ hg -R n1 up -C a
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo aa > n1/a
-  $ hg -R n1 ci -d '4 0' -m a1
+  $ hg -R n1 ci -m a1
   $ hg -R n1 up -C b
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo bb > n1/b
-  $ hg -R n1 ci -d '5 0' -m b1
+  $ hg -R n1 ci -m b1
   $ hg -R n2 up -C b
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg -R n2 fetch -d '9 0' -m 'merge' n1
+  $ hg -R n2 fetch -m 'merge' n1
   pulling from n1
   searching for changes
   adding changesets
@@ -220,8 +233,6 @@ parent should be 4 (fast forward)
   $ hg -R n2 parents --template '{rev}\n'
   4
   $ rm -fr n1 n2
-  $ echo
-  
 
 pull changes on foreign (2 new heads) and local (1 new head) branches
 with a local change
@@ -235,33 +246,33 @@ with a local change
   $ hg -R n1 up -C a
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo a1 > n1/a
-  $ hg -R n1 ci -d '4 0' -m a1
+  $ hg -R n1 ci -m a1
   $ hg -R n1 up -C b
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo bb > n1/b
-  $ hg -R n1 ci -d '5 0' -m b1
+  $ hg -R n1 ci -m b1
   $ hg -R n1 up -C 1
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ echo a2 > n1/a
-  $ hg -R n1 ci -d '6 0' -m a2
+  $ hg -R n1 ci -m a2
   created new head
   $ hg -R n2 up -C b
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo change >> n2/c
-  $ hg -R n2 ci -Ad '7 0' -m local
+  $ hg -R n2 ci -A -m local
   adding c
-  $ hg -R n2 fetch -d '9 0' -m 'merge' n1
+  $ hg -R n2 fetch -d '0 0' -m 'merge' n1
   pulling from n1
   searching for changes
   adding changesets
   adding manifests
   adding file changes
   added 3 changesets with 3 changes to 2 files (+2 heads)
-  updating to 5:708c6cce3d26
+  updating to 5:3c4a837a864f
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
-  merging with 3:d83427717b1f
+  merging with 3:1267f84a9ea5
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  new changeset 7:48f1a33f52af merges remote changes with local
+  new changeset 7:2cf2a1261f21 merges remote changes with local
 
 parent should be 7 (new merge changeset)
 
@@ -283,21 +294,21 @@ heads) with a local change
   $ hg -R n1 merge b
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
-  $ hg -R n1 ci -d '4 0' -m merge
+  $ hg -R n1 ci -m merge
   $ hg -R n1 up -C 2
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo c > n1/a
-  $ hg -R n1 ci -d '5 0' -m c
+  $ hg -R n1 ci -m c
   $ hg -R n1 up -C 2
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo cc > n1/a
-  $ hg -R n1 ci -d '6 0' -m cc
+  $ hg -R n1 ci -m cc
   created new head
   $ hg -R n2 up -C b
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo change >> n2/b
-  $ hg -R n2 ci -Ad '7 0' -m local
-  $ hg -R n2 fetch -d '9 0' -m 'merge' n1
+  $ hg -R n2 ci -A -m local
+  $ hg -R n2 fetch -m 'merge' n1
   pulling from n1
   searching for changes
   adding changesets
@@ -326,7 +337,8 @@ pull in change on different branch than dirstate
   $ hg -R n1 ci -m next
   $ hg -R n2 branch topic
   marked working directory as branch topic
-  $ hg -R n2 fetch -d '0 0' -m merge n1
+  (branches are permanent and global, did you want a bookmark?)
+  $ hg -R n2 fetch -m merge n1
   abort: working dir not at branch tip (use "hg update" to check out branch tip)
   [255]
 
@@ -344,11 +356,13 @@ test fetch with inactive branches
   adding a
   $ hg --cwd ib1 branch second
   marked working directory as branch second
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b > ib1/b
   $ hg --cwd ib1 ci -Am onsecond
   adding b
   $ hg --cwd ib1 branch -f default
   marked working directory as branch default
+  (branches are permanent and global, did you want a bookmark?)
   $ echo c > ib1/c
   $ hg --cwd ib1 ci -Am newdefault
   adding c
@@ -393,8 +407,6 @@ test issue1726
   new changeset 3:* merges remote changes with local (glob)
   $ hg --cwd i1726r2 heads default --template '{rev}\n'
   3
-  $ echo
-  
 
 test issue2047
 
@@ -415,4 +427,5 @@ test issue2047
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files
-  $ "$TESTDIR/killdaemons.py"
+
+  $ cd ..

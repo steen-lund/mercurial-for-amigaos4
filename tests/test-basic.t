@@ -1,5 +1,15 @@
 Create a repository:
 
+  $ hg config
+  defaults.backout=-d "0 0"
+  defaults.commit=-d "0 0"
+  defaults.shelve=--date "0 0"
+  defaults.tag=-d "0 0"
+  largefiles.usercache=$TESTTMP/.cache/largefiles (glob)
+  ui.slash=True
+  ui.interactive=False
+  ui.mergemarkers=detailed
+  ui.promptecho=True
   $ hg init t
   $ cd t
 
@@ -33,7 +43,7 @@ Verify that updating to revision 0 via commands.update() works properly
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg identify -n
   0
- 
+
 
 Poke around at hashes:
 
@@ -53,3 +63,5 @@ Verify should succeed:
   1 files, 1 changesets, 1 total revisions
 
 At the end...
+
+  $ cd ..

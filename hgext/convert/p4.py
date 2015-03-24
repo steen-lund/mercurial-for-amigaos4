@@ -108,7 +108,7 @@ class p4_source(converter_source):
             cmd = "p4 -G describe -s %s" % change
             stdout = util.popen(cmd, mode='rb')
             d = marshal.load(stdout)
-            desc = self.recode(d["desc"])
+            desc = self.recode(d.get("desc", ""))
             shortdesc = desc.split("\n", 1)[0]
             t = '%s %s' % (d["change"], repr(shortdesc)[1:-1])
             ui.status(util.ellipsis(t, 80) + '\n')
@@ -119,7 +119,8 @@ class p4_source(converter_source):
                 parents = []
 
             date = (int(d["time"]), 0)     # timezone not set
-            c = commit(author=self.recode(d["user"]), date=util.datestr(date),
+            c = commit(author=self.recode(d["user"]),
+                       date=util.datestr(date, '%Y-%m-%d %H:%M:%S %1%2'),
                        parents=parents, desc=desc, branch='',
                        extra={"p4": change})
 
@@ -163,6 +164,8 @@ class p4_source(converter_source):
                 raise IOError(d["generic"], data)
 
             elif code == "stat":
+                if d.get("action") == "purge":
+                    return None, None
                 p4type = self.re_type.match(d["type"])
                 if p4type:
                     mode = ""
@@ -180,7 +183,7 @@ class p4_source(converter_source):
                 contents += data
 
         if mode is None:
-            raise IOError(0, "bad stat")
+            return None, None
 
         if keywords:
             contents = keywords.sub("$\\1$", contents)
@@ -189,7 +192,9 @@ class p4_source(converter_source):
 
         return contents, mode
 
-    def getchanges(self, rev):
+    def getchanges(self, rev, full):
+        if full:
+            raise util.Abort(_("convert from p4 do not support --full"))
         return self.files[rev], {}
 
     def getcommit(self, rev):

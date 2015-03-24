@@ -1,6 +1,7 @@
 syntax: glob
 
 *.elc
+*.tmp
 *.orig
 *.rej
 *~
@@ -8,32 +9,40 @@ syntax: glob
 *.o
 *.so
 *.dll
+*.exe
 *.pyd
 *.pyc
 *.pyo
 *$py.class
 *.swp
 *.prof
+*.zip
 \#*\#
 .\#*
 tests/.coverage*
 tests/annotated
 tests/*.err
+tests/htmlcov
 build
 contrib/hgsh/hgsh
+contrib/vagrant/.vagrant
 dist
+packages
+doc/common.txt
 doc/*.[0-9]
+doc/*.[0-9].txt
 doc/*.[0-9].gendoc.txt
 doc/*.[0-9].{x,ht}ml
 MANIFEST
 MANIFEST.in
 patches
 mercurial/__version__.py
+mercurial/hgpythonlib.h
 mercurial.egg-info
-Output/Mercurial-*.exe
 .DS_Store
 tags
 cscope.*
+.idea/*
 i18n/hg.pot
 locale/*/LC_MESSAGES/hg.mo
 hgext/__index__.py
@@ -49,3 +58,7 @@ mercurial/parsers.py
 syntax: regexp
 ^\.pc/
 ^\.(pydev)?project
+
+# hackable windows distribution additions
+^hg-python
+^hg.py$

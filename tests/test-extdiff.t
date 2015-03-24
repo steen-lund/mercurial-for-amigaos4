@@ -16,9 +16,13 @@ Should diff cloned directories:
   Only in a: b
   [1]
 
-  $ echo "[extdiff]" >> $HGRCPATH
-  $ echo "cmd.falabala=echo" >> $HGRCPATH
-  $ echo "opts.falabala=diffing" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extdiff]
+  > cmd.falabala = echo
+  > opts.falabala = diffing
+  > cmd.edspace = echo
+  > opts.edspace = "name  <user@example.com>"
+  > EOF
 
   $ hg falabala
   diffing a.000000000000 a
@@ -37,17 +41,15 @@ Should diff cloned directories:
       compared to the working directory, and, when no revisions are specified,
       the working directory files are compared to its parent.
   
-  options:
+  options ([+] can be repeated):
   
-   -o --option OPT [+]       pass option to comparison program
-   -r --rev REV [+]          revision
-   -c --change REV           change made by revision
-   -I --include PATTERN [+]  include names matching the given patterns
-   -X --exclude PATTERN [+]  exclude names matching the given patterns
+   -o --option OPT [+]      pass option to comparison program
+   -r --rev REV [+]         revision
+   -c --change REV          change made by revision
+   -I --include PATTERN [+] include names matching the given patterns
+   -X --exclude PATTERN [+] exclude names matching the given patterns
   
-  [+] marked option can be specified multiple times
-  
-  use "hg -v help falabala" to show global options
+  (some details hidden, use --verbose to show complete help)
 
   $ hg ci -d '0 0' -mtest1
 
@@ -91,6 +93,112 @@ Check diff are made from the first parent:
   $ hg falabala -c 3 || echo "diff-like tools yield a non-zero exit code"
   diffing */extdiff.*/a.2a13a4d2da36/a a.46c0e4daeb72/a (glob)
   diff-like tools yield a non-zero exit code
+
+issue4463: usage of command line configuration without additional quoting
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extdiff]
+  > cmd.4463a = echo
+  > opts.4463a = a-naked 'single quoted' "double quoted"
+  > 4463b = echo b-naked 'single quoted' "double quoted"
+  > echo =
+  > EOF
+  $ hg update -q -C 0
+  $ echo a >> a
+#if windows
+  $ hg --debug 4463a | grep '^running'
+  running 'echo a-naked \'single quoted\' "double quoted" *\\a *\\a' in */extdiff.* (glob)
+  $ hg --debug 4463b | grep '^running'
+  running 'echo b-naked \'single quoted\' "double quoted" *\\a *\\a' in */extdiff.* (glob)
+  $ hg --debug echo | grep '^running'
+  running '*echo* *\\a *\\a' in */extdiff.* (glob)
+#else
+  $ hg --debug 4463a | grep '^running'
+  running 'echo a-naked \'single quoted\' "double quoted" */a $TESTTMP/a/a' in */extdiff.* (glob)
+  $ hg --debug 4463b | grep '^running'
+  running 'echo b-naked \'single quoted\' "double quoted" */a $TESTTMP/a/a' in */extdiff.* (glob)
+  $ hg --debug echo | grep '^running'
+  running '*echo */a $TESTTMP/a/a' in */extdiff.* (glob)
+#endif
+
+(getting options from other than extdiff section)
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extdiff]
+  > # using diff-tools diffargs
+  > 4463b2 = echo
+  > # using merge-tools diffargs
+  > 4463b3 = echo
+  > # no diffargs
+  > 4463b4 = echo
+  > [diff-tools]
+  > 4463b2.diffargs = b2-naked 'single quoted' "double quoted"
+  > [merge-tools]
+  > 4463b3.diffargs = b3-naked 'single quoted' "double quoted"
+  > EOF
+#if windows
+  $ hg --debug 4463b2 | grep '^running'
+  running 'echo b2-naked \'single quoted\' "double quoted" *\\a *\\a' in */extdiff.* (glob)
+  $ hg --debug 4463b3 | grep '^running'
+  running 'echo b3-naked \'single quoted\' "double quoted" *\\a *\\a' in */extdiff.* (glob)
+  $ hg --debug 4463b4 | grep '^running'
+  running 'echo *\\a *\\a' in */extdiff.* (glob)
+  $ hg --debug 4463b4 --option b4-naked --option 'being quoted' | grep '^running'
+  running 'echo b4-naked "being quoted" *\\a *\\a' in */extdiff.* (glob)
+  $ hg --debug extdiff -p echo --option echo-naked --option 'being quoted' | grep '^running'
+  running 'echo echo-naked "being quoted" *\\a *\\a' in */extdiff.* (glob)
+#else
+  $ hg --debug 4463b2 | grep '^running'
+  running 'echo b2-naked \'single quoted\' "double quoted" */a $TESTTMP/a/a' in */extdiff.* (glob)
+  $ hg --debug 4463b3 | grep '^running'
+  running 'echo b3-naked \'single quoted\' "double quoted" */a $TESTTMP/a/a' in */extdiff.* (glob)
+  $ hg --debug 4463b4 | grep '^running'
+  running 'echo */a $TESTTMP/a/a' in */extdiff.* (glob)
+  $ hg --debug 4463b4 --option b4-naked --option 'being quoted' | grep '^running'
+  running "echo b4-naked 'being quoted' */a $TESTTMP/a/a" in */extdiff.* (glob)
+  $ hg --debug extdiff -p echo --option echo-naked --option 'being quoted' | grep '^running'
+  running "echo echo-naked 'being quoted' */a $TESTTMP/a/a" in */extdiff.* (glob)
+#endif
+
+  $ touch 'sp ace'
+  $ hg add 'sp ace'
+  $ hg ci -m 'sp ace'
+  created new head
+  $ echo > 'sp ace'
+
+Test pre-72a89cf86fcd backward compatibility with half-baked manual quoting
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extdiff]
+  > odd =
+  > [merge-tools]
+  > odd.diffargs = --foo='\$clabel' '\$clabel' "--bar=\$clabel" "\$clabel"
+  > odd.executable = echo
+  > EOF
+#if windows
+TODO
+#else
+  $ hg --debug odd | grep '^running'
+  running "*/echo --foo='sp ace' 'sp ace' --bar='sp ace' 'sp ace'" in * (glob)
+#endif
+
+Empty argument must be quoted
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extdiff]
+  > kdiff3 = echo
+  > [merge-tools]
+  > kdiff3.diffargs=--L1 \$plabel1 --L2 \$clabel \$parent \$child
+  > EOF
+#if windows
+  $ hg --debug kdiff3 -r0 | grep '^running'
+  running 'echo --L1 "@0" --L2 "" a.8a5febb7f867 a' in * (glob)
+#else
+  $ hg --debug kdiff3 -r0 | grep '^running'
+  running "echo --L1 '@0' --L2 '' a.8a5febb7f867 a" in * (glob)
+#endif
+
+#if execbit
 
 Test extdiff of multiple files in tmp dir:
 
@@ -168,6 +276,16 @@ Test extdiff with --option:
   diffing this */extdiff.*/a.8a5febb7f867/a a.34eed99112ab/a (glob)
   [1]
 
+Test extdiff's handling of options with spaces in them:
+
+  $ hg edspace -c 1
+  name  <user@example.com> */extdiff.*/a.8a5febb7f867/a a.34eed99112ab/a (glob)
+  [1]
+
+  $ hg extdiff -p echo -o "name  <user@example.com>" -c 1
+  name  <user@example.com> */extdiff.*/a.8a5febb7f867/a a.34eed99112ab/a (glob)
+  [1]
+
 Test with revsets:
 
   $ hg extdif -p echo -c "rev(1)"
@@ -178,7 +296,31 @@ Test with revsets:
   */extdiff.*/a.8a5febb7f867/a a.34eed99112ab/a (glob)
   [1]
 
+Fallback to merge-tools.tool.executable|regkey
+  $ mkdir dir
+  $ cat > 'dir/tool.sh' << EOF
+  > #!/bin/sh
+  > echo "** custom diff **"
+  > EOF
+  $ chmod +x dir/tool.sh
+  $ tool=`pwd`/dir/tool.sh
+  $ hg --debug tl --config extdiff.tl= --config merge-tools.tl.executable=$tool
+  making snapshot of 2 files from rev * (glob)
+    a
+    b
+  making snapshot of 2 files from working directory
+    a
+    b
+  running '$TESTTMP/a/dir/tool.sh a.* a' in */extdiff.* (glob)
+  ** custom diff **
+  cleaning up temp directory
+  [1]
+
   $ cd ..
+
+#endif
+
+#if symlink
 
 Test symlinks handling (issue1909)
 
@@ -194,3 +336,5 @@ Test symlinks handling (issue1909)
   diffing testsymlinks.07f494440405 testsymlinks
   [1]
   $ cd ..
+
+#endif

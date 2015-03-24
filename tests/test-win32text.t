@@ -16,16 +16,14 @@
   [hooks]
   pretxncommit.crlf = python:hgext.win32text.forbidcrlf
   pretxnchangegroup.crlf = python:hgext.win32text.forbidcrlf
-  $ echo
-  
+
   $ echo hello > f
   $ hg add f
 
 commit should succeed
 
   $ hg ci -m 1
-  $ echo
-  
+
   $ hg clone . ../zoz
   updating to branch default
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -35,14 +33,13 @@ commit should succeed
 commit should fail
 
   $ hg ci -m 2.1
-  Attempt to commit or push text file(s) using CRLF line endings
+  attempt to commit or push text file(s) using CRLF line endings
   in f583ea08d42a: f
   transaction abort!
   rollback completed
   abort: pretxncommit.crlf hook failed
   [255]
-  $ echo
-  
+
   $ mv .hg/hgrc .hg/hgrc.bak
 
 commits should succeed
@@ -50,8 +47,6 @@ commits should succeed
   $ hg ci -m 2
   $ hg cp f g
   $ hg ci -m 2.2
-  $ echo
-  
 
 push should fail
 
@@ -62,7 +57,7 @@ push should fail
   adding manifests
   adding file changes
   added 2 changesets with 2 changes to 2 files
-  Attempt to commit or push text file(s) using CRLF line endings
+  attempt to commit or push text file(s) using CRLF line endings
   in bc2d09796734: g
   in b1aa5cde7ff4: f
   
@@ -84,8 +79,7 @@ push should fail
   rollback completed
   abort: pretxnchangegroup.crlf hook failed
   [255]
-  $ echo
-  
+
   $ mv .hg/hgrc.bak .hg/hgrc
   $ echo hello > f
   $ hg rm g
@@ -93,8 +87,6 @@ push should fail
 commit should succeed
 
   $ hg ci -m 2.3
-  $ echo
-  
 
 push should succeed
 
@@ -105,8 +97,6 @@ push should succeed
   adding manifests
   adding file changes
   added 3 changesets with 3 changes to 2 files
-  $ echo
-  
 
 and now for something completely different
 
@@ -115,22 +105,20 @@ and now for something completely different
   $ python unix2dos.py d/f2
   $ hg add d/f2
   $ hg ci -m 3
-  Attempt to commit or push text file(s) using CRLF line endings
+  attempt to commit or push text file(s) using CRLF line endings
   in 053ba1a3035a: d/f2
   transaction abort!
   rollback completed
   abort: pretxncommit.crlf hook failed
   [255]
   $ hg revert -a
-  forgetting d/f2
+  forgetting d/f2 (glob)
   $ rm d/f2
-  $ echo
-  
+
   $ hg rem f
   $ hg ci -m 4
-  $ echo
-  
-  $ python -c 'file("bin", "wb").write("hello\x00\x0D\x0A")'
+
+  $ $PYTHON -c 'file("bin", "wb").write("hello\x00\x0D\x0A")'
   $ hg add bin
   $ hg ci -m 5
   $ hg log -v
@@ -183,19 +171,16 @@ and now for something completely different
   1
   
   
-  $ echo
-  
   $ hg clone . dupe
   updating to branch default
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ echo
-  
+
   $ for x in a b c d; do echo content > dupe/$x; done
   $ hg -R dupe add
-  adding dupe/a
-  adding dupe/b
-  adding dupe/c
-  adding dupe/d
+  adding dupe/a (glob)
+  adding dupe/b (glob)
+  adding dupe/c (glob)
+  adding dupe/d (glob)
   $ python unix2dos.py dupe/b dupe/c dupe/d
   $ hg -R dupe ci -m a dupe/a
   $ hg -R dupe ci -m b/c dupe/[bc]
@@ -274,8 +259,6 @@ and now for something completely different
   1
   
   
-  $ echo
-  
   $ hg pull dupe
   pulling from dupe
   searching for changes
@@ -283,7 +266,7 @@ and now for something completely different
   adding manifests
   adding file changes
   added 3 changesets with 4 changes to 4 files
-  Attempt to commit or push text file(s) using CRLF line endings
+  attempt to commit or push text file(s) using CRLF line endings
   in 67ac5962ab43: d
   in 68c127d1834e: b
   in 68c127d1834e: c
@@ -306,8 +289,7 @@ and now for something completely different
   rollback completed
   abort: pretxnchangegroup.crlf hook failed
   [255]
-  $ echo
-  
+
   $ hg log -v
   changeset:   5:f0b1c8d75fce
   tag:         tip
@@ -358,11 +340,9 @@ and now for something completely different
   1
   
   
-  $ echo
-  
   $ rm .hg/hgrc
   $ (echo some; echo text) > f3
-  $ python -c 'file("f4.bat", "wb").write("rem empty\x0D\x0A")'
+  $ $PYTHON -c 'file("f4.bat", "wb").write("rem empty\x0D\x0A")'
   $ hg add f3 f4.bat
   $ hg ci -m 6
   $ cat bin
@@ -372,8 +352,7 @@ and now for something completely different
   text
   $ cat f4.bat
   rem empty\r (esc)
-  $ echo
-  
+
   $ echo '[extensions]' >> .hg/hgrc
   $ echo 'win32text = ' >> .hg/hgrc
   $ echo '[decode]' >> .hg/hgrc
@@ -406,7 +385,7 @@ Disable warning:
   WARNING: f4.bat already has CRLF line endings
   and does not need EOL conversion by the win32text plugin.
   Before your next commit, please reconsider your encode/decode settings in 
-  Mercurial.ini or $TESTTMP/t/.hg/hgrc.
+  Mercurial.ini or $TESTTMP/t/.hg/hgrc. (glob)
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ cat bin
   hello\x00\r (esc)
@@ -415,9 +394,8 @@ Disable warning:
   text\r (esc)
   $ cat f4.bat
   rem empty\r (esc)
-  $ echo
-  
-  $ python -c 'file("f5.sh", "wb").write("# empty\x0D\x0A")'
+
+  $ $PYTHON -c 'file("f5.sh", "wb").write("# empty\x0D\x0A")'
   $ hg add f5.sh
   $ hg ci -m 7
   $ cat f5.sh
@@ -444,3 +422,5 @@ Disable warning:
   $ hg st -q
   $ cat linefeed
   % just linefeed\r (esc)
+
+  $ cd ..

@@ -28,30 +28,28 @@
     unmatched files in other:
      b
      b2
-    all copies found (* = to merge, ! = divergent):
-     c2 -> a2 !
-     b -> a *
-     b2 -> a2 !
+    all copies found (* = to merge, ! = divergent, % = renamed and deleted):
+     src: 'a' -> dst: 'b' *
+     src: 'a2' -> dst: 'b2' !
+     src: 'a2' -> dst: 'c2' !
     checking for directory renames
-   a2: divergent renames -> dr
   resolving manifests
-   overwrite None partial False
-   ancestor af1939970a1c local 044f8520aeeb+ remote 85c198ef2f6c
-   a: remote moved to b -> m
-   b2: remote created -> g
-  preserving a for resolve of b
+   branchmerge: True, force: False, partial: False
+   ancestor: af1939970a1c, local: 044f8520aeeb+, remote: 85c198ef2f6c
+   preserving a for resolve of b
   removing a
-  updating: a 1/3 files (33.33%)
+   b2: remote created -> g
+  getting b2
+  updating: b2 1/2 files (50.00%)
+   b: remote moved from a -> m
+  updating: b 2/2 files (100.00%)
   picked tool 'internal:merge' for b (binary False symlink False)
   merging a and b to b
   my b@044f8520aeeb+ other b@85c198ef2f6c ancestor a@af1939970a1c
    premerge successful
-  updating: a2 2/3 files (66.67%)
   note: possible conflict - a2 was renamed multiple times to:
    c2
    b2
-  updating: b2 3/3 files (100.00%)
-  getting b2
   1 files updated, 1 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
 
@@ -68,9 +66,9 @@
   $ hg ci -m "merge"
 
   $ hg debugindex b
-     rev    offset  length   base linkrev nodeid       p1           p2
-       0         0      67      0       1 57eacc201a7f 000000000000 000000000000
-       1        67      72      1       3 4727ba907962 000000000000 57eacc201a7f
+     rev    offset  length  ..... linkrev nodeid       p1           p2 (re)
+       0         0      67  .....       1 57eacc201a7f 000000000000 000000000000 (re)
+       1        67      72  .....       3 4727ba907962 000000000000 57eacc201a7f (re)
 
   $ hg debugrename b
   b renamed from a:dd03b83622e78778b403775d0d074b9ac7387a66
@@ -95,9 +93,6 @@ We'd rather not warn on divergent renames done in the same changeset (issue2113)
   $ hg up c761c6948de0
   1 files updated, 0 files merged, 2 files removed, 0 files unresolved
   $ hg up
-  note: possible conflict - b was renamed multiple times to:
-   b3
-   b4
   2 files updated, 0 files merged, 1 files removed, 0 files unresolved
 
 Check for issue2642
@@ -125,6 +120,8 @@ Check for issue2642
 
   $ cat f2
   c0
+
+  $ cd ..
 
 Check for issue2089
 
@@ -155,3 +152,40 @@ Check for issue2089
 
   $ cat f2
   c2
+
+  $ cd ..
+
+Check for issue3074
+
+  $ hg init repo3074
+  $ cd repo3074
+  $ echo foo > file
+  $ hg add file
+  $ hg commit -m "added file"
+  $ hg mv file newfile
+  $ hg commit -m "renamed file"
+  $ hg update 0
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg rm file
+  $ hg commit -m "deleted file"
+  created new head
+  $ hg merge --debug
+    searching for copies back to rev 1
+    unmatched files in other:
+     newfile
+    all copies found (* = to merge, ! = divergent, % = renamed and deleted):
+     src: 'file' -> dst: 'newfile' %
+    checking for directory renames
+  resolving manifests
+   branchmerge: True, force: False, partial: False
+   ancestor: 19d7f95df299, local: 0084274f6b67+, remote: 5d32493049f0
+   newfile: remote created -> g
+  getting newfile
+  updating: newfile 1/1 files (100.00%)
+  note: possible conflict - file was deleted and renamed to:
+   newfile
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  (branch merge, don't forget to commit)
+  $ hg status
+  M newfile
+  $ cd ..

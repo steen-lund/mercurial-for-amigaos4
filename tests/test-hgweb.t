@@ -1,3 +1,5 @@
+#require serve
+
 Some tests for hgweb. Tests static files, plain files and different 404's.
 
   $ hg init test
@@ -13,7 +15,7 @@ Some tests for hgweb. Tests static files, plain files and different 404's.
 
 manifest
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/?style=raw')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/?style=raw')
   200 Script output follows
   
   
@@ -21,7 +23,7 @@ manifest
   -rw-r--r-- 4 foo
   
   
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/da?style=raw')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/da?style=raw')
   200 Script output follows
   
   
@@ -31,14 +33,14 @@ manifest
 
 plain file
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/foo?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/foo?style=raw'
   200 Script output follows
   
   foo
 
 should give a 404 - static file that does not exist
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/static/bogus'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'static/bogus'
   404 Not Found
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -65,20 +67,22 @@ should give a 404 - static file that does not exist
   <li><a href="/tags">tags</a></li>
   <li><a href="/bookmarks">bookmarks</a></li>
   <li><a href="/branches">branches</a></li>
+  </ul>
+  <ul>
   <li><a href="/help">help</a></li>
   </ul>
   </div>
   
   <div class="main">
   
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>error</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30"></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="description">
@@ -102,7 +106,7 @@ should give a 404 - static file that does not exist
 
 should give a 404 - bad revision
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/spam/foo?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/spam/foo?style=raw'
   404 Not Found
   
   
@@ -111,22 +115,40 @@ should give a 404 - bad revision
 
 should give a 400 - bad command
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/foo?cmd=spam&style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/foo?cmd=spam&style=raw'
   400* (glob)
   
   
   error: no such method: spam
   [1]
 
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT '?cmd=spam'
+  400 no such method: spam
+  [1]
+
+should give a 400 - bad command as a part of url path (issue4071)
+
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'spam'
+  400 no such method: spam
+  [1]
+
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'raw-spam'
+  400 no such method: spam
+  [1]
+
+  $ "$TESTDIR/get-with-headers.py" --headeronly localhost:$HGPORT 'spam/tip/foo'
+  400 no such method: spam
+  [1]
+
 should give a 404 - file does not exist
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/bork?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/bork?style=raw'
   404 Not Found
   
   
   error: bork@2ef0ac749a14: not found in manifest
   [1]
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/bork'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/bork'
   404 Not Found
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -153,20 +175,22 @@ should give a 404 - file does not exist
   <li><a href="/tags">tags</a></li>
   <li><a href="/bookmarks">bookmarks</a></li>
   <li><a href="/branches">branches</a></li>
+  </ul>
+  <ul>
   <li><a href="/help">help</a></li>
   </ul>
   </div>
   
   <div class="main">
   
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>error</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30"></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="description">
@@ -187,7 +211,7 @@ should give a 404 - file does not exist
   </html>
   
   [1]
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/diff/tip/bork?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'diff/tip/bork?style=raw'
   404 Not Found
   
   
@@ -196,7 +220,7 @@ should give a 404 - file does not exist
 
 try bad style
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file/tip/?style=foobar')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/?style=foobar')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -237,14 +261,14 @@ try bad style
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>directory / @ 0:2ef0ac749a14 <span class="tag">tip</span> </h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <table class="bigtable">
@@ -253,13 +277,14 @@ try bad style
     <th class="size">size</th>
     <th class="permissions">permissions</th>
   </tr>
-  <tr class="fileline parity0">
+  <tbody class="stripes2">
+  <tr class="fileline">
     <td class="name"><a href="/file/2ef0ac749a14/">[up]</a></td>
     <td class="size"></td>
     <td class="permissions">drwxr-xr-x</td>
   </tr>
   
-  <tr class="fileline parity1">
+  <tr class="fileline">
   <td class="name">
   <a href="/file/2ef0ac749a14/da">
   <img src="/static/coal-folder.png" alt="dir."/> da/
@@ -272,7 +297,7 @@ try bad style
   <td class="permissions">drwxr-xr-x</td>
   </tr>
   
-  <tr class="fileline parity0">
+  <tr class="fileline">
   <td class="filename">
   <a href="/file/2ef0ac749a14/foo">
   <img src="/static/coal-file.png" alt="file"/> foo
@@ -281,6 +306,7 @@ try bad style
   <td class="size">4</td>
   <td class="permissions">-rw-r--r--</td>
   </tr>
+  </tbody>
   </table>
   </div>
   </div>
@@ -293,21 +319,23 @@ try bad style
 
 stop and restart
 
-  $ "$TESTDIR/killdaemons.py"
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
   $ hg serve -p $HGPORT -d --pid-file=hg.pid -A access.log
   $ cat hg.pid >> $DAEMON_PIDS
 
 Test the access/error files are opened in append mode
 
-  $ python -c "print len(file('access.log').readlines()), 'log lines written'"
-  10 log lines written
+  $ $PYTHON -c "print len(file('access.log').readlines()), 'log lines written'"
+  14 log lines written
 
 static file
 
-  $ "$TESTDIR/get-with-headers.py" --twice localhost:$HGPORT '/static/style-gitweb.css'
+  $ "$TESTDIR/get-with-headers.py" --twice localhost:$HGPORT 'static/style-gitweb.css' - date etag server
   200 Script output follows
+  content-length: 5372
+  content-type: text/css
   
-  body { font-family: sans-serif; font-size: 12px; margin:0px; border:solid #d9d8d1; border-width:1px; margin:10px; }
+  body { font-family: sans-serif; font-size: 12px; border:solid #d9d8d1; border-width:1px; margin:10px; }
   a { color:#0000cc; }
   a:hover, a:visited, a:active { color:#880000; }
   div.page_header { height:25px; padding:8px; font-size:18px; font-weight:bold; background-color:#d9d8d1; }
@@ -393,6 +421,9 @@ static file
   	background-color: #afdffa;
   	border-color: #ccecff #46ace6 #46ace6 #ccecff;
   }
+  span.difflineplus { color:#008800; }
+  span.difflineminus { color:#cc0000; }
+  span.difflineat { color:#990099; }
   
   /* Graph */
   div#wrapper {
@@ -435,9 +466,150 @@ static file
   	top: -3px;
   	font-style: italic;
   }
+  
+  /* Comparison */
+  .legend {
+      padding: 1.5% 0 1.5% 0;
+  }
+  
+  .legendinfo {
+      border: 1px solid #d9d8d1;
+      font-size: 80%;
+      text-align: center;
+      padding: 0.5%;
+  }
+  
+  .equal {
+      background-color: #ffffff;
+  }
+  
+  .delete {
+      background-color: #faa;
+      color: #333;
+  }
+  
+  .insert {
+      background-color: #ffa;
+  }
+  
+  .replace {
+      background-color: #e8e8e8;
+  }
+  
+  .comparison {
+      overflow-x: auto;
+  }
+  
+  .header th {
+      text-align: center;
+  }
+  
+  .block {
+      border-top: 1px solid #d9d8d1;
+  }
+  
+  .scroll-loading {
+    -webkit-animation: change_color 1s linear 0s infinite alternate;
+    -moz-animation: change_color 1s linear 0s infinite alternate;
+    -o-animation: change_color 1s linear 0s infinite alternate;
+    animation: change_color 1s linear 0s infinite alternate;
+  }
+  
+  @-webkit-keyframes change_color {
+    from { background-color: #A0CEFF; } to {  }
+  }
+  @-moz-keyframes change_color {
+    from { background-color: #A0CEFF; } to {  }
+  }
+  @-o-keyframes change_color {
+    from { background-color: #A0CEFF; } to {  }
+  }
+  @keyframes change_color {
+    from { background-color: #A0CEFF; } to {  }
+  }
+  
+  .scroll-loading-error {
+      background-color: #FFCCCC !important;
+  }
   304 Not Modified
+  
+
+phase changes are refreshed (issue4061)
+
+  $ echo bar >> foo
+  $ hg ci -msecret --secret
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log?style=raw'
+  200 Script output follows
+  
+  
+  # HG changelog
+  # Node ID 2ef0ac749a14e4f57a5a822464a0902c6f7f448f
+  
+  changeset:   2ef0ac749a14e4f57a5a822464a0902c6f7f448f
+  revision:    0
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     base
+  branch:      default
+  tag:         tip
+  
+  
+  $ hg phase --draft tip
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log?style=raw'
+  200 Script output follows
+  
+  
+  # HG changelog
+  # Node ID a084749e708a9c4c0a5b652a2a446322ce290e04
+  
+  changeset:   a084749e708a9c4c0a5b652a2a446322ce290e04
+  revision:    1
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     secret
+  branch:      default
+  tag:         tip
+  
+  changeset:   2ef0ac749a14e4f57a5a822464a0902c6f7f448f
+  revision:    0
+  user:        test
+  date:        Thu, 01 Jan 1970 00:00:00 +0000
+  summary:     base
+  
   
 
 errors
 
   $ cat errors.log
+
+Uncaught exceptions result in a logged error and canned HTTP response
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
+  $ hg --config extensions.hgweberror=$TESTDIR/hgweberror.py serve -p $HGPORT -d --pid-file=hg.pid -A access.log -E errors.log
+  $ cat hg.pid >> $DAEMON_PIDS
+
+  $ $TESTDIR/get-with-headers.py localhost:$HGPORT 'raiseerror' transfer-encoding content-type
+  500 Internal Server Error
+  transfer-encoding: chunked
+  
+  Internal Server Error (no-eol)
+  [1]
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
+  $ head -1 errors.log
+  .* Exception happened during processing request '/raiseerror': (re)
+
+Uncaught exception after partial content sent
+
+  $ hg --config extensions.hgweberror=$TESTDIR/hgweberror.py serve -p $HGPORT -d --pid-file=hg.pid -A access.log -E errors.log
+  $ cat hg.pid >> $DAEMON_PIDS
+  $ $TESTDIR/get-with-headers.py localhost:$HGPORT 'raiseerror?partialresponse=1' transfer-encoding content-type
+  200 Script output follows
+  transfer-encoding: chunked
+  content-type: text/plain
+  
+  partial content
+  Internal Server Error (no-eol)
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
+  $ cd ..

@@ -1,6 +1,6 @@
   $ hg init test
   $ cd test
-  $ hg unbundle $TESTDIR/bundles/remote.hg
+  $ hg unbundle "$TESTDIR/bundles/remote.hg"
   adding changesets
   adding manifests
   adding file changes
@@ -154,7 +154,6 @@
   4 files, 9 changesets, 7 total revisions
   $ hg rollback
   repository tip rolled back to revision 4 (undo pull)
-  working directory now based on revision -1
   $ cd ..
 
 should fail
@@ -232,7 +231,6 @@ revision 8
   4 files, 9 changesets, 7 total revisions
   $ hg rollback
   repository tip rolled back to revision 2 (undo unbundle)
-  working directory now based on revision 2
 
 revision 2
 
@@ -257,7 +255,6 @@ revision 4
   2 files, 5 changesets, 5 total revisions
   $ hg rollback
   repository tip rolled back to revision 2 (undo unbundle)
-  working directory now based on revision 2
   $ hg unbundle ../test-bundle-branch2.hg
   adding changesets
   adding manifests
@@ -277,7 +274,6 @@ revision 6
   3 files, 7 changesets, 6 total revisions
   $ hg rollback
   repository tip rolled back to revision 2 (undo unbundle)
-  working directory now based on revision 2
   $ hg unbundle ../test-bundle-cset-7.hg
   adding changesets
   adding manifests
@@ -328,3 +324,5 @@ revision 9
   crosschecking files in changesets and manifests
   checking files
   4 files, 10 changesets, 7 total revisions
+
+  $ cd ..

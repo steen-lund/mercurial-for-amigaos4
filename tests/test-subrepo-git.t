@@ -1,13 +1,16 @@
-  $ "$TESTDIR/hghave" git || exit 80
+#require git
 
 make git commits repeatable
 
+  $ echo "[core]" >> $HOME/.gitconfig
+  $ echo "autocrlf = false" >> $HOME/.gitconfig
   $ GIT_AUTHOR_NAME='test'; export GIT_AUTHOR_NAME
   $ GIT_AUTHOR_EMAIL='test@example.org'; export GIT_AUTHOR_EMAIL
   $ GIT_AUTHOR_DATE='1234567891 +0000'; export GIT_AUTHOR_DATE
   $ GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"; export GIT_COMMITTER_NAME
   $ GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"; export GIT_COMMITTER_EMAIL
   $ GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"; export GIT_COMMITTER_DATE
+  $ GIT_CONFIG_NOSYSTEM=1; export GIT_CONFIG_NOSYSTEM
 
 root hg repo
 
@@ -34,7 +37,6 @@ add subrepo clone
   $ git clone -q ../gitroot s
   $ hg add .hgsub
   $ hg commit -m 'new git subrepo'
-  committing subrepository s
   $ hg debugsub
   path s
    source   ../gitroot
@@ -55,7 +57,6 @@ record a new commit from upstream from a different branch
   $ hg status --subrepos
   M s/g
   $ hg commit -m 'update git subrepo'
-  committing subrepository s
   $ hg debugsub
   path s
    source   ../gitroot
@@ -71,7 +72,7 @@ make $GITROOT pushable, by replacing it with a clone with nothing checked out
 clone root
 
   $ cd t
-  $ hg clone . ../tc
+  $ hg clone . ../tc 2> /dev/null
   updating to branch default
   cloning subrepo s from $TESTTMP/gitroot
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -94,7 +95,7 @@ update to previous substate
 clone root, make local change
 
   $ cd ../t
-  $ hg clone . ../ta
+  $ hg clone . ../ta 2> /dev/null
   updating to branch default
   cloning subrepo s from $TESTTMP/gitroot
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -103,7 +104,16 @@ clone root, make local change
   $ echo ggg >> s/g
   $ hg status --subrepos
   M s/g
-  $ hg commit -m ggg
+  $ hg diff --subrepos
+  diff --git a/s/g b/s/g
+  index 089258f..85341ee 100644
+  --- a/s/g
+  +++ b/s/g
+  @@ -1,2 +1,3 @@
+   g
+   gg
+  +ggg
+  $ hg commit --subrepos -m ggg
   committing subrepository s
   $ hg debugsub
   path s
@@ -113,19 +123,23 @@ clone root, make local change
 clone root separately, make different local change
 
   $ cd ../t
-  $ hg clone . ../tb
+  $ hg clone . ../tb 2> /dev/null
   updating to branch default
   cloning subrepo s from $TESTTMP/gitroot
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
 
   $ cd ../tb/s
+  $ hg status --subrepos
   $ echo f > f
+  $ hg status --subrepos
+  ? s/f
+  $ hg add .
   $ git add f
   $ cd ..
 
   $ hg status --subrepos
   A s/f
-  $ hg commit -m f
+  $ hg commit --subrepos -m f
   committing subrepository s
   $ hg debugsub
   path s
@@ -135,7 +149,7 @@ clone root separately, make different local change
 user b push changes
 
   $ hg push 2>/dev/null
-  pushing to $TESTTMP/t
+  pushing to $TESTTMP/t (glob)
   pushing branch testing of subrepo s
   searching for changes
   adding changesets
@@ -147,7 +161,7 @@ user a pulls, merges, commits
 
   $ cd ../ta
   $ hg pull
-  pulling from $TESTTMP/t
+  pulling from $TESTTMP/t (glob)
   searching for changes
   adding changesets
   adding manifests
@@ -155,6 +169,8 @@ user a pulls, merges, commits
   added 1 changesets with 1 changes to 1 files (+1 heads)
   (run 'hg heads' to see heads, 'hg merge' to merge)
   $ hg merge 2>/dev/null
+   subrepository s diverged (local revision: 7969594, remote revision: aa84837)
+  (M)erge, keep (l)ocal or keep (r)emote? m
   pulling subrepo s from $TESTTMP/gitroot
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
@@ -164,7 +180,7 @@ user a pulls, merges, commits
   g
   gg
   ggg
-  $ hg commit -m 'merge'
+  $ hg commit --subrepos -m 'merge'
   committing subrepository s
   $ hg status --subrepos --rev 1:5
   M .hgsubstate
@@ -175,7 +191,7 @@ user a pulls, merges, commits
    source   ../gitroot
    revision f47b465e1bce645dbf37232a00574aa1546ca8d3
   $ hg push 2>/dev/null
-  pushing to $TESTTMP/t
+  pushing to $TESTTMP/t (glob)
   pushing branch testing of subrepo s
   searching for changes
   adding changesets
@@ -197,7 +213,7 @@ make upstream git changes
 make and push changes to hg without updating the subrepo
 
   $ cd ../t
-  $ hg clone . ../td
+  $ hg clone . ../td 2>&1 | egrep -v '^Cloning into|^done\.'
   updating to branch default
   cloning subrepo s from $TESTTMP/gitroot
   checking out detached HEAD in subrepo s
@@ -207,7 +223,7 @@ make and push changes to hg without updating the subrepo
   $ echo aa >> a
   $ hg commit -m aa
   $ hg push
-  pushing to $TESTTMP/t
+  pushing to $TESTTMP/t (glob)
   searching for changes
   adding changesets
   adding manifests
@@ -222,7 +238,6 @@ sync to upstream git, distribute changes
   $ git pull -q >/dev/null 2>/dev/null
   $ cd ..
   $ hg commit -m 'git upstream sync'
-  committing subrepository s
   $ hg debugsub
   path s
    source   ../gitroot
@@ -238,6 +253,32 @@ sync to upstream git, distribute changes
   path s
    source   ../gitroot
    revision 32a343883b74769118bb1d3b4b1fbf9156f4dddc
+
+create a new git branch
+
+  $ cd s
+  $ git checkout -b b2
+  Switched to a new branch 'b2'
+  $ echo a>a
+  $ git add a
+  $ git commit -qm 'add a'
+  $ cd ..
+  $ hg commit -m 'add branch in s'
+
+pulling new git branch should not create tracking branch named 'origin/b2'
+(issue3870)
+  $ cd ../td/s
+  $ git remote set-url origin $TESTTMP/tb/s
+  $ git branch --no-track oldtesting
+  $ cd ..
+  $ hg pull -q ../tb
+  $ hg up
+  From $TESTTMP/tb/s
+   * [new branch]      b2         -> origin/b2
+  Previous HEAD position was f47b465... merge
+  Switched to a new branch 'b2'
+  pulling subrepo s from $TESTTMP/tb/s
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
 
 update to a revision without the subrepo, keeping the local git repository
 
@@ -271,6 +312,16 @@ archive subrepos
   gg
   ggg
 
+  $ hg -R ../tc archive --subrepo -r 5 -X ../tc/**f ../archive_x 2>/dev/null
+  $ find ../archive_x | sort | grep -v pax_global_header
+  ../archive_x
+  ../archive_x/.hg_archival.txt
+  ../archive_x/.hgsub
+  ../archive_x/.hgsubstate
+  ../archive_x/a
+  ../archive_x/s
+  ../archive_x/s/g
+
 create nested repo
 
   $ cd ..
@@ -280,23 +331,22 @@ create nested repo
   $ hg add b
   $ hg commit -m b
 
-  $ hg clone ../t inner
+  $ hg clone ../t inner 2> /dev/null
   updating to branch default
   cloning subrepo s from $TESTTMP/gitroot
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ echo inner = inner > .hgsub
   $ hg add .hgsub
   $ hg commit -m 'nested sub'
-  committing subrepository inner
 
 nested commit
 
   $ echo ffff >> inner/s/f
   $ hg status --subrepos
   M inner/s/f
-  $ hg commit -m nested
+  $ hg commit --subrepos -m nested
   committing subrepository inner
-  committing subrepository inner/s
+  committing subrepository inner/s (glob)
 
 nested archive
 
@@ -309,7 +359,7 @@ relative source expansion
 
   $ cd ..
   $ mkdir d
-  $ hg clone t d/t
+  $ hg clone t d/t 2> /dev/null
   updating to branch default
   cloning subrepo s from $TESTTMP/gitroot
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -323,12 +373,12 @@ Don't crash if the subrepo is missing
   $ hg sum | grep commit
   commit: 1 subrepos
   $ hg push -q
-  abort: subrepo s is missing
+  abort: subrepo s is missing (in subrepo s)
   [255]
-  $ hg commit -qm missing
-  abort: subrepo s is missing
+  $ hg commit --subrepos -qm missing
+  abort: subrepo s is missing (in subrepo s)
   [255]
-  $ hg update -C
+  $ hg update -C 2> /dev/null
   cloning subrepo s from $TESTTMP/gitroot
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg sum | grep commit
@@ -339,27 +389,41 @@ Don't crash if the .hgsubstate entry is missing
   $ hg update 1 -q
   $ hg rm .hgsubstate
   $ hg commit .hgsubstate -m 'no substate'
-  created new head
+  nothing changed
+  [1]
   $ hg tag -l nosubstate
   $ hg manifest
   .hgsub
+  .hgsubstate
   a
 
   $ hg status -S
+  R .hgsubstate
   $ hg sum | grep commit
-  commit: 1 subrepos
+  commit: 1 removed, 1 subrepos (new branch head)
 
   $ hg commit -m 'restore substate'
-  committing subrepository s
+  nothing changed
+  [1]
   $ hg manifest
   .hgsub
   .hgsubstate
   a
   $ hg sum | grep commit
-  commit: (clean)
+  commit: 1 removed, 1 subrepos (new branch head)
 
   $ hg update -qC nosubstate
   $ ls s
+  g
+
+issue3109: false positives in git diff-index
+
+  $ hg update -q
+  $ touch -t 200001010000 s/g
+  $ hg status --subrepos
+  $ touch -t 200001010000 s/g
+  $ hg sum | grep commit
+  commit: (clean)
 
 Check hg update --clean
   $ cd $TESTTMP/ta
@@ -372,6 +436,7 @@ Check hg update --clean
   $ hg status -S
   M s/g
   A s/f1
+  ? s/f2
   $ ls s
   f
   f1
@@ -380,6 +445,8 @@ Check hg update --clean
   $ hg update --clean
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg status -S
+  ? s/f1
+  ? s/f2
   $ ls s
   f
   f1
@@ -402,21 +469,22 @@ Sticky subrepositories, no changes
   da5f5b1d8ffcf62fb8327bcd3c89a4367a6018e7
   $ cd ..
 
-Sticky subrepositorys, file changes
+Sticky subrepositories, file changes
   $ touch s/f1
   $ cd s
   $ git add f1
   $ cd ..
   $ hg id -n
-  1
+  1+
   $ cd s
   $ git rev-parse HEAD
   da5f5b1d8ffcf62fb8327bcd3c89a4367a6018e7
   $ cd ..
   $ hg update 4
+   subrepository s diverged (local revision: da5f5b1, remote revision: aa84837)
+  (M)erge, keep (l)ocal or keep (r)emote? m
    subrepository sources for s differ
-  use (l)ocal source (da5f5b1) or (r)emote source (aa84837)?
-   l
+  use (l)ocal source (da5f5b1) or (r)emote source (aa84837)? l
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg id -n
   4+
@@ -424,7 +492,7 @@ Sticky subrepositorys, file changes
   $ git rev-parse HEAD
   da5f5b1d8ffcf62fb8327bcd3c89a4367a6018e7
   $ cd ..
-  $ hg update --clean tip > /dev/null 2>&1 
+  $ hg update --clean tip > /dev/null 2>&1
 
 Sticky subrepository, revision updates
   $ hg id -n
@@ -439,9 +507,10 @@ Sticky subrepository, revision updates
   HEAD is now at aa84837... f
   $ cd ..
   $ hg update 1
+   subrepository s diverged (local revision: 32a3438, remote revision: da5f5b1)
+  (M)erge, keep (l)ocal or keep (r)emote? m
    subrepository sources for s differ (in checked out version)
-  use (l)ocal source (32a3438) or (r)emote source (da5f5b1)?
-   l
+  use (l)ocal source (32a3438) or (r)emote source (da5f5b1)? l
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg id -n
   1+
@@ -460,21 +529,20 @@ Sticky subrepository, file changes and revision updates
   $ hg id -n
   1+
   $ hg update 7
+   subrepository s diverged (local revision: 32a3438, remote revision: 32a3438)
+  (M)erge, keep (l)ocal or keep (r)emote? m
    subrepository sources for s differ
-  use (l)ocal source (32a3438) or (r)emote source (32a3438)?
-   l
+  use (l)ocal source (32a3438) or (r)emote source (32a3438)? l
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg id -n
-  7
+  7+
   $ cd s
   $ git rev-parse HEAD
   aa84837ccfbdfedcdcdeeedc309d73e6eb069edc
   $ cd ..
 
 Sticky repository, update --clean
-  $ hg update --clean tip
-  Previous HEAD position was aa84837... f
-  HEAD is now at 32a3438... fff
+  $ hg update --clean tip 2>/dev/null
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg id -n
   7
@@ -499,3 +567,239 @@ Test subrepo already at intended revision:
   da5f5b1d8ffcf62fb8327bcd3c89a4367a6018e7
   $ cd ..
 
+Test forgetting files, not implemented in git subrepo, used to
+traceback
+#if no-windows
+  $ hg forget 'notafile*'
+  notafile*: No such file or directory
+  [1]
+#else
+  $ hg forget 'notafile'
+  notafile: * (glob)
+  [1]
+#endif
+
+  $ cd ..
+
+Test sanitizing ".hg/hgrc" in subrepo
+
+  $ cd t
+  $ hg tip -q
+  7:af6d2edbb0d3
+  $ hg update -q -C af6d2edbb0d3
+  $ cd s
+  $ git checkout -q -b sanitize-test
+  $ mkdir .hg
+  $ echo '.hg/hgrc in git repo' > .hg/hgrc
+  $ mkdir -p sub/.hg
+  $ echo 'sub/.hg/hgrc in git repo' > sub/.hg/hgrc
+  $ git add .hg sub
+  $ git commit -qm 'add .hg/hgrc to be sanitized at hg update'
+  $ git push -q origin sanitize-test
+  $ cd ..
+  $ grep ' s$' .hgsubstate
+  32a343883b74769118bb1d3b4b1fbf9156f4dddc s
+  $ hg commit -qm 'commit with git revision including .hg/hgrc'
+  $ hg parents -q
+  8:3473d20bddcf
+  $ grep ' s$' .hgsubstate
+  c4069473b459cf27fd4d7c2f50c4346b4e936599 s
+  $ cd ..
+
+  $ hg -R tc pull -q
+  $ hg -R tc update -q -C 3473d20bddcf 2>&1 | sort
+  warning: removing potentially hostile 'hgrc' in '$TESTTMP/tc/s/.hg' (glob)
+  warning: removing potentially hostile 'hgrc' in '$TESTTMP/tc/s/sub/.hg' (glob)
+  $ cd tc
+  $ hg parents -q
+  8:3473d20bddcf
+  $ grep ' s$' .hgsubstate
+  c4069473b459cf27fd4d7c2f50c4346b4e936599 s
+  $ test -f s/.hg/hgrc
+  [1]
+  $ test -f s/sub/.hg/hgrc
+  [1]
+  $ cd ..
+
+additional test for "git merge --ff" route:
+
+  $ cd t
+  $ hg tip -q
+  8:3473d20bddcf
+  $ hg update -q -C af6d2edbb0d3
+  $ cd s
+  $ git checkout -q testing
+  $ mkdir .hg
+  $ echo '.hg/hgrc in git repo' > .hg/hgrc
+  $ mkdir -p sub/.hg
+  $ echo 'sub/.hg/hgrc in git repo' > sub/.hg/hgrc
+  $ git add .hg sub
+  $ git commit -qm 'add .hg/hgrc to be sanitized at hg update (git merge --ff)'
+  $ git push -q origin testing
+  $ cd ..
+  $ grep ' s$' .hgsubstate
+  32a343883b74769118bb1d3b4b1fbf9156f4dddc s
+  $ hg commit -qm 'commit with git revision including .hg/hgrc'
+  $ hg parents -q
+  9:ed23f7fe024e
+  $ grep ' s$' .hgsubstate
+  f262643c1077219fbd3858d54e78ef050ef84fbf s
+  $ cd ..
+
+  $ cd tc
+  $ hg update -q -C af6d2edbb0d3
+  $ test -f s/.hg/hgrc
+  [1]
+  $ test -f s/sub/.hg/hgrc
+  [1]
+  $ cd ..
+  $ hg -R tc pull -q
+  $ hg -R tc update -q -C ed23f7fe024e 2>&1 | sort
+  warning: removing potentially hostile 'hgrc' in '$TESTTMP/tc/s/.hg' (glob)
+  warning: removing potentially hostile 'hgrc' in '$TESTTMP/tc/s/sub/.hg' (glob)
+  $ cd tc
+  $ hg parents -q
+  9:ed23f7fe024e
+  $ grep ' s$' .hgsubstate
+  f262643c1077219fbd3858d54e78ef050ef84fbf s
+  $ test -f s/.hg/hgrc
+  [1]
+  $ test -f s/sub/.hg/hgrc
+  [1]
+
+Test that sanitizing is omitted in meta data area:
+
+  $ mkdir s/.git/.hg
+  $ echo '.hg/hgrc in git metadata area' > s/.git/.hg/hgrc
+  $ hg update -q -C af6d2edbb0d3
+  checking out detached HEAD in subrepo s
+  check out a git branch if you intend to make changes
+
+check differences made by most recent change
+  $ cd s
+  $ cat > foobar << EOF
+  > woopwoop
+  > 
+  > foo
+  > bar
+  > EOF
+  $ git add foobar
+  $ cd ..
+
+  $ hg diff --subrepos
+  diff --git a/s/foobar b/s/foobar
+  new file mode 100644
+  index 0000000..8a5a5e2
+  --- /dev/null
+  +++ b/s/foobar
+  @@ -0,0 +1,4 @@
+  +woopwoop
+  +
+  +foo
+  +bar
+
+  $ hg commit --subrepos -m "Added foobar"
+  committing subrepository s
+  created new head
+
+  $ hg diff -c . --subrepos --nodates
+  diff -r af6d2edbb0d3 -r 255ee8cf690e .hgsubstate
+  --- a/.hgsubstate
+  +++ b/.hgsubstate
+  @@ -1,1 +1,1 @@
+  -32a343883b74769118bb1d3b4b1fbf9156f4dddc s
+  +fd4dbf828a5b2fcd36b2bcf21ea773820970d129 s
+  diff --git a/s/foobar b/s/foobar
+  new file mode 100644
+  index 0000000..8a5a5e2
+  --- /dev/null
+  +++ b/s/foobar
+  @@ -0,0 +1,4 @@
+  +woopwoop
+  +
+  +foo
+  +bar
+
+check output when only diffing the subrepository
+  $ hg diff -c . --subrepos s
+  diff --git a/s/foobar b/s/foobar
+  new file mode 100644
+  index 0000000..8a5a5e2
+  --- /dev/null
+  +++ b/s/foobar
+  @@ -0,0 +1,4 @@
+  +woopwoop
+  +
+  +foo
+  +bar
+
+check output when diffing something else
+  $ hg diff -c . --subrepos .hgsubstate --nodates
+  diff -r af6d2edbb0d3 -r 255ee8cf690e .hgsubstate
+  --- a/.hgsubstate
+  +++ b/.hgsubstate
+  @@ -1,1 +1,1 @@
+  -32a343883b74769118bb1d3b4b1fbf9156f4dddc s
+  +fd4dbf828a5b2fcd36b2bcf21ea773820970d129 s
+
+add new changes, including whitespace
+  $ cd s
+  $ cat > foobar << EOF
+  > woop    woop
+  > 
+  > foo
+  > bar
+  > EOF
+  $ echo foo > barfoo
+  $ git add barfoo
+  $ cd ..
+
+  $ hg diff --subrepos --ignore-all-space
+  diff --git a/s/barfoo b/s/barfoo
+  new file mode 100644
+  index 0000000..257cc56
+  --- /dev/null
+  +++ b/s/barfoo
+  @@ -0,0 +1 @@
+  +foo
+  $ hg diff --subrepos s/foobar
+  diff --git a/s/foobar b/s/foobar
+  index 8a5a5e2..bd5812a 100644
+  --- a/s/foobar
+  +++ b/s/foobar
+  @@ -1,4 +1,4 @@
+  -woopwoop
+  +woop    woop
+   
+   foo
+   bar
+
+execute a diffstat
+the output contains a regex, because git 1.7.10 and 1.7.11
+ change the amount of whitespace
+  $ hg diff --subrepos --stat
+  \s*barfoo |\s*1 + (re)
+  \s*foobar |\s*2 +- (re)
+   2 files changed, 2 insertions\(\+\), 1 deletions?\(-\) (re)
+
+ensure adding include/exclude ignores the subrepo
+  $ hg diff --subrepos -I s/foobar
+  $ hg diff --subrepos -X s/foobar
+
+revert the subrepository
+  $ hg revert --all
+  reverting subrepo ../gitroot
+
+  $ hg status --subrepos
+  ? s/barfoo
+  ? s/foobar.orig
+
+  $ mv s/foobar.orig s/foobar
+
+  $ hg revert --no-backup s
+  reverting subrepo ../gitroot
+
+  $ hg status --subrepos
+  ? s/barfoo
+
+  $ cd ..

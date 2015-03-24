@@ -107,6 +107,9 @@ should skip c.patch
   applying b.patch
   skipping c.patch - guarded by '-a'
   now at: b.patch
+  $ hg qnext
+  all patches applied
+  [1]
 
 should display b.patch
 
@@ -169,6 +172,8 @@ should push b.patch
   $ hg qpush -a
   applying c.patch
   now at: c.patch
+  $ hg qprev
+  b.patch
 
 Used to be an issue with holes in the patch sequence
 So, put one hole on the base and ask for topmost patch.
@@ -251,14 +256,24 @@ should push b.patch
   $ hg qpush -a
   applying c.patch
   now at: c.patch
-  $ hg qselect -n --reapply
+  $ hg qselect -n --reapply -v
   guards deactivated
   popping guarded patches
   popping c.patch
   popping b.patch
   patch queue now empty
   reapplying unguarded patches
+  skipping a.patch - guarded by '+1' '+2'
+  skipping b.patch - guarded by '+2'
+  skipping a.patch - guarded by '+1' '+2'
+  skipping b.patch - guarded by '+2'
   applying c.patch
+  patching file c
+  adding c
+  committing files:
+  c
+  committing manifest
+  committing changelog
   now at: c.patch
 
 guards in series file: +1 +2 -3
@@ -383,7 +398,6 @@ new.patch, b.patch: Guarded. c.patch: Applied. d.patch: Guarded.
   3 G d.patch
   $ hg qselect 2
   number of unguarded, unapplied patches has changed from 0 to 1
-  number of guarded, applied patches has changed from 1 to 0
   $ qappunappv
   % hg qapplied
   new.patch
@@ -434,3 +448,146 @@ hg qseries -m with color
 
   $ hg --config extensions.color= --config color.mode=ansi qseries -m --color=always
   \x1b[0;31;1mb.patch\x1b[0m (esc)
+
+
+excercise corner cases in "qselect --reapply"
+
+  $ hg qpop -a
+  popping c.patch
+  popping new.patch
+  patch queue now empty
+  $ hg qguard -- new.patch -not-new
+  $ hg qguard -- c.patch -not-c
+  $ hg qguard -- d.patch -not-d
+  $ hg qpush -a
+  applying new.patch
+  applying c.patch
+  applying d.patch
+  patch d.patch is empty
+  now at: d.patch
+  $ hg qguard -l
+  new.patch: -not-new
+  c.patch: -not-c
+  d.patch: -not-d
+  $ hg qselect --reapply not-d
+  popping guarded patches
+  popping d.patch
+  now at: c.patch
+  reapplying unguarded patches
+  cannot push 'd.patch' - guarded by '-not-d'
+  $ hg qser -v
+  0 A new.patch
+  1 A c.patch
+  2 G d.patch
+  $ hg qselect --reapply -n
+  guards deactivated
+  $ hg qpush
+  applying d.patch
+  patch d.patch is empty
+  now at: d.patch
+  $ hg qser -v
+  0 A new.patch
+  1 A c.patch
+  2 A d.patch
+  $ hg qselect --reapply not-c
+  popping guarded patches
+  popping d.patch
+  popping c.patch
+  now at: new.patch
+  reapplying unguarded patches
+  applying d.patch
+  patch d.patch is empty
+  now at: d.patch
+  $ hg qser -v
+  0 A new.patch
+  1 G c.patch
+  2 A d.patch
+  $ hg qselect --reapply not-new
+  popping guarded patches
+  popping d.patch
+  popping new.patch
+  patch queue now empty
+  reapplying unguarded patches
+  applying c.patch
+  applying d.patch
+  patch d.patch is empty
+  now at: d.patch
+  $ hg qser -v
+  0 G new.patch
+  1 A c.patch
+  2 A d.patch
+
+test that qselect shows "number of guarded, applied patches" correctly
+
+  $ hg qimport -q -e b.patch
+  adding b.patch to series file
+  $ hg qguard -- b.patch -not-b
+  $ hg qpop -a -q
+  patch queue now empty
+  $ hg qunapplied -v
+  0 G new.patch
+  1 U c.patch
+  2 U d.patch
+  3 U b.patch
+  $ hg qselect not-new not-c
+  number of unguarded, unapplied patches has changed from 3 to 2
+  $ hg qpush -q -a
+  patch d.patch is empty
+  now at: b.patch
+
+  $ hg qapplied -v
+  0 G new.patch
+  1 G c.patch
+  2 A d.patch
+  3 A b.patch
+  $ hg qselect --none
+  guards deactivated
+  $ hg qselect not-new not-c not-d
+  number of guarded, applied patches has changed from 0 to 1
+
+test that "qselect --reapply" reapplies patches successfully when the
+already applied patch becomes unguarded and it follows the already
+guarded (= not yet applied) one.
+
+  $ hg qpop -q -a
+  patch queue now empty
+  $ hg qselect not-new not-c
+  number of unguarded, unapplied patches has changed from 1 to 2
+  $ hg qpush -q -a
+  patch d.patch is empty
+  now at: b.patch
+  $ hg qapplied -v
+  0 G new.patch
+  1 G c.patch
+  2 A d.patch
+  3 A b.patch
+  $ hg qselect -q --reapply not-c not-b
+  now at: d.patch
+  cannot push 'b.patch' - guarded by '-not-b'
+  $ hg qseries -v
+  0 U new.patch
+  1 G c.patch
+  2 A d.patch
+  3 G b.patch
+
+test that "qselect --reapply" checks applied patches correctly when no
+applied patches becomes guarded but some of unapplied ones become
+unguarded.
+
+  $ hg qpop -q -a
+  patch queue now empty
+  $ hg qselect not-new not-c not-d
+  number of unguarded, unapplied patches has changed from 2 to 1
+  $ hg qpush -q -a
+  now at: b.patch
+  $ hg qapplied -v
+  0 G new.patch
+  1 G c.patch
+  2 G d.patch
+  3 A b.patch
+  $ hg qselect -q --reapply not-new not-c
+  $ hg qseries -v
+  0 G new.patch
+  1 G c.patch
+  2 U d.patch
+  3 A b.patch

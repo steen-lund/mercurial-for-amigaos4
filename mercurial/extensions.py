@@ -11,12 +11,20 @@ from i18n import _, gettext
 
 _extensions = {}
 _order = []
-_ignore = ['hbisect', 'bookmarks', 'parentrevspec']
+_ignore = ['hbisect', 'bookmarks', 'parentrevspec', 'interhg', 'inotify']
 
-def extensions():
+def extensions(ui=None):
+    if ui:
+        def enabled(name):
+            for format in ['%s', 'hgext.%s']:
+                conf = ui.config('extensions', format % name)
+                if conf is not None and not conf.startswith('!'):
+                    return True
+    else:
+        enabled = lambda name: True
     for name in _order:
         module = _extensions[name]
-        if module:
+        if module and enabled(name):
             yield name, module
 
 def find(name):
@@ -35,17 +43,21 @@ def find(name):
 
 def loadpath(path, module_name):
     module_name = module_name.replace('.', '_')
-    path = util.expandpath(path)
+    path = util.normpath(util.expandpath(path))
     if os.path.isdir(path):
         # module/__init__.py style
-        d, f = os.path.split(path.rstrip('/'))
+        d, f = os.path.split(path)
         fd, fpath, desc = imp.find_module(f, [d])
         return imp.load_module(module_name, fd, fpath, desc)
     else:
-        return imp.load_source(module_name, path)
+        try:
+            return imp.load_source(module_name, path)
+        except IOError, exc:
+            if not exc.filename:
+                exc.filename = path # python does not fill this
+            raise
 
 def load(ui, name, path):
-    # unused ui argument kept for backwards compatibility
     if name.startswith('hgext.') or name.startswith('hgext/'):
         shortname = name[6:]
     else:
@@ -69,7 +81,9 @@ def load(ui, name, path):
             return mod
         try:
             mod = importh("hgext.%s" % name)
-        except ImportError:
+        except ImportError, err:
+            ui.debug('could not import hgext.%s (%s): trying %s\n'
+                     % (name, err, name))
             mod = importh(name)
     _extensions[shortname] = mod
     _order.append(shortname)
@@ -93,8 +107,6 @@ def loadall(ui):
             else:
                 ui.warn(_("*** failed to import extension %s: %s\n")
                         % (name, inst))
-            if ui.traceback():
-                return 1
 
     for name in _order[newindex:]:
         uisetup = getattr(_extensions[name], 'uisetup', None)
@@ -124,7 +136,7 @@ def wrapcommand(table, command, wrapper):
     where orig is the original (wrapped) function, and *args, **kwargs
     are the arguments passed to it.
     '''
-    assert hasattr(wrapper, '__call__')
+    assert callable(wrapper)
     aliases, entry = cmdutil.findcmd(command, table)
     for alias, e in table.iteritems():
         if e is entry:
@@ -177,12 +189,12 @@ def wrapfunction(container, funcname, wrapper):
     your end users, you should play nicely with others by using the
     subclass trick.
     '''
-    assert hasattr(wrapper, '__call__')
+    assert callable(wrapper)
     def wrap(*args, **kwargs):
         return wrapper(origfn, *args, **kwargs)
 
     origfn = getattr(container, funcname)
-    assert hasattr(origfn, '__call__')
+    assert callable(origfn)
     setattr(container, funcname, wrap)
     return origfn
 
@@ -267,12 +279,12 @@ def disabled():
         return dict((name, gettext(desc))
                     for name, desc in __index__.docs.iteritems()
                     if name not in _order)
-    except ImportError:
+    except (ImportError, AttributeError):
         pass
 
     paths = _disabledpaths()
     if not paths:
-        return None
+        return {}
 
     exts = {}
     for name, path in paths.iteritems():
@@ -290,7 +302,7 @@ def disabledext(name):
             return
         else:
             return gettext(__index__.docs.get(name))
-    except ImportError:
+    except (ImportError, AttributeError):
         pass
 
     paths = _disabledpaths()
@@ -299,7 +311,7 @@ def disabledext(name):
 
 def disabledcmd(ui, cmd, strict=False):
     '''import disabled extensions until cmd is found.
-    returns (cmdname, extname, doc)'''
+    returns (cmdname, extname, module)'''
 
     paths = _disabledpaths(strip_init=True)
     if not paths:
@@ -327,27 +339,42 @@ def disabledcmd(ui, cmd, strict=False):
             cmd = aliases[0]
         return (cmd, name, mod)
 
+    ext = None
     # first, search for an extension with the same name as the command
     path = paths.pop(cmd, None)
     if path:
         ext = findcmd(cmd, cmd, path)
-        if ext:
-            return ext
-
-    # otherwise, interrogate each extension until there's a match
-    for name, path in paths.iteritems():
-        ext = findcmd(cmd, name, path)
-        if ext:
-            return ext
+    if not ext:
+        # otherwise, interrogate each extension until there's a match
+        for name, path in paths.iteritems():
+            ext = findcmd(cmd, name, path)
+            if ext:
+                break
+    if ext and 'DEPRECATED' not in ext.__doc__:
+        return ext
 
     raise error.UnknownCommand(cmd)
 
-def enabled():
+def enabled(shortname=True):
     '''return a dict of {name: desc} of extensions'''
     exts = {}
     for ename, ext in extensions():
         doc = (gettext(ext.__doc__) or _('(no help text available)'))
-        ename = ename.split('.')[-1]
+        if shortname:
+            ename = ename.split('.')[-1]
         exts[ename] = doc.splitlines()[0].strip()
 
     return exts
+
+def moduleversion(module):
+    '''return version information from given module as a string'''
+    if (util.safehasattr(module, 'getversion')
+          and callable(module.getversion)):
+        version = module.getversion()
+    elif util.safehasattr(module, '__version__'):
+        version = module.__version__
+    else:
+        version = ''
+    if isinstance(version, (list, tuple)):
+        version = '.'.join(str(o) for o in version)
+    return version

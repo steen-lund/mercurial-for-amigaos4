@@ -1,11 +1,12 @@
 import os
 from mercurial import hg, ui
 from mercurial.scmutil import walkrepos
+from mercurial.util import checklink
 from os import mkdir, chdir
 from os.path import join as pjoin
 
 u = ui.ui()
-sym = hasattr(os, 'symlink') and hasattr(os.path, 'samestat')
+sym = checklink('.')
 
 hg.repository(u, 'top1', create=1)
 mkdir('subdir')
@@ -23,10 +24,12 @@ def runtest():
     reposet = frozenset(walkrepos('.', followsym=True))
     if sym and (len(reposet) != 3):
         print "reposet = %r" % (reposet,)
-        print "Found %d repositories when I should have found 3" % (len(reposet),)
+        print ("Found %d repositories when I should have found 3"
+               % (len(reposet),))
     if (not sym) and (len(reposet) != 2):
         print "reposet = %r" % (reposet,)
-        print "Found %d repositories when I should have found 2" % (len(reposet),)
+        print ("Found %d repositories when I should have found 2"
+               % (len(reposet),))
     sub1set = frozenset((pjoin('.', 'sub1'),
                          pjoin('.', 'circle', 'subdir', 'sub1')))
     if len(sub1set & reposet) != 1:
@@ -38,9 +41,9 @@ def runtest():
     if len(sub2set & reposet) != 1:
         print "sub2set = %r" % (sub2set,)
         print "reposet = %r" % (reposet,)
-        print "sub1set and reposet should have exactly one path in common."
+        print "sub2set and reposet should have exactly one path in common."
     sub3 = pjoin('.', 'circle', 'top1')
-    if sym and not (sub3 in reposet):
+    if sym and sub3 not in reposet:
         print "reposet = %r" % (reposet,)
         print "Symbolic links are supported and %s is not in reposet" % (sub3,)
 

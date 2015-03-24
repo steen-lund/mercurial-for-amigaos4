@@ -1,4 +1,4 @@
-# util.py - Mercurial utility functions and platform specfic implementations
+# util.py - Mercurial utility functions and platform specific implementations
 #
 #  Copyright 2005 K. Thananchayan <thananck@yahoo.com>
 #  Copyright 2005-2007 Matt Mackall <mpm@selenic.com>
@@ -7,24 +7,97 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-"""Mercurial utility functions and platform specfic implementations.
+"""Mercurial utility functions and platform specific implementations.
 
 This contains helper routines that are independent of the SCM core and
 hide platform-specific details from the core.
 """
 
-from i18n import _
+import i18n
+_ = i18n._
 import error, osutil, encoding
-import errno, re, shutil, sys, tempfile, traceback
-import os, time, calendar, textwrap, unicodedata, signal
-import imp, socket, urllib
+import errno, shutil, sys, tempfile, traceback
+import re as remod
+import os, time, datetime, calendar, textwrap, signal, collections
+import imp, socket, urllib, struct
+import gc
+
+if os.name == 'nt':
+    import windows as platform
+else:
+    import posix as platform
+
+cachestat = platform.cachestat
+checkexec = platform.checkexec
+checklink = platform.checklink
+copymode = platform.copymode
+executablepath = platform.executablepath
+expandglobs = platform.expandglobs
+explainexit = platform.explainexit
+findexe = platform.findexe
+gethgcmd = platform.gethgcmd
+getuser = platform.getuser
+groupmembers = platform.groupmembers
+groupname = platform.groupname
+hidewindow = platform.hidewindow
+isexec = platform.isexec
+isowner = platform.isowner
+localpath = platform.localpath
+lookupreg = platform.lookupreg
+makedir = platform.makedir
+nlinks = platform.nlinks
+normpath = platform.normpath
+normcase = platform.normcase
+openhardlinks = platform.openhardlinks
+oslink = platform.oslink
+parsepatchoutput = platform.parsepatchoutput
+pconvert = platform.pconvert
+popen = platform.popen
+posixfile = platform.posixfile
+quotecommand = platform.quotecommand
+readpipe = platform.readpipe
+rename = platform.rename
+samedevice = platform.samedevice
+samefile = platform.samefile
+samestat = platform.samestat
+setbinary = platform.setbinary
+setflags = platform.setflags
+setsignalhandler = platform.setsignalhandler
+shellquote = platform.shellquote
+spawndetached = platform.spawndetached
+split = platform.split
+sshargs = platform.sshargs
+statfiles = getattr(osutil, 'statfiles', platform.statfiles)
+statisexec = platform.statisexec
+statislink = platform.statislink
+termwidth = platform.termwidth
+testpid = platform.testpid
+umask = platform.umask
+unlink = platform.unlink
+unlinkpath = platform.unlinkpath
+username = platform.username
 
 # Python compatibility
 
-def sha1(s):
+_notset = object()
+
+def safehasattr(thing, attr):
+    return getattr(thing, attr, _notset) is not _notset
+
+def sha1(s=''):
+    '''
+    Low-overhead wrapper around Python's SHA support
+
+    >>> f = _fastsha1
+    >>> a = sha1()
+    >>> a = f()
+    >>> a.hexdigest()
+    'da39a3ee5e6b4b0d3255bfef95601890afd80709'
+    '''
+
     return _fastsha1(s)
 
-def _fastsha1(s):
+def _fastsha1(s=''):
     # This function will import sha1 from hashlib or sha (whichever is
     # available) and overwrite itself with it on the first call.
     # Subsequent calls will go directly to the imported function.
@@ -36,21 +109,134 @@ def _fastsha1(s):
     _fastsha1 = sha1 = _sha1
     return _sha1(s)
 
-import __builtin__
+def md5(s=''):
+    try:
+        from hashlib import md5 as _md5
+    except ImportError:
+        from md5 import md5 as _md5
+    global md5
+    md5 = _md5
+    return _md5(s)
 
-if sys.version_info[0] < 3:
-    def fakebuffer(sliceable, offset=0):
-        return sliceable[offset:]
-else:
-    def fakebuffer(sliceable, offset=0):
-        return memoryview(sliceable)[offset:]
+DIGESTS = {
+    'md5': md5,
+    'sha1': sha1,
+}
+# List of digest types from strongest to weakest
+DIGESTS_BY_STRENGTH = ['sha1', 'md5']
+
 try:
-    buffer
+    import hashlib
+    DIGESTS.update({
+        'sha512': hashlib.sha512,
+    })
+    DIGESTS_BY_STRENGTH.insert(0, 'sha512')
+except ImportError:
+    pass
+
+for k in DIGESTS_BY_STRENGTH:
+    assert k in DIGESTS
+
+class digester(object):
+    """helper to compute digests.
+
+    This helper can be used to compute one or more digests given their name.
+
+    >>> d = digester(['md5', 'sha1'])
+    >>> d.update('foo')
+    >>> [k for k in sorted(d)]
+    ['md5', 'sha1']
+    >>> d['md5']
+    'acbd18db4cc2f85cedef654fccc4a4d8'
+    >>> d['sha1']
+    '0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33'
+    >>> digester.preferred(['md5', 'sha1'])
+    'sha1'
+    """
+
+    def __init__(self, digests, s=''):
+        self._hashes = {}
+        for k in digests:
+            if k not in DIGESTS:
+                raise Abort(_('unknown digest type: %s') % k)
+            self._hashes[k] = DIGESTS[k]()
+        if s:
+            self.update(s)
+
+    def update(self, data):
+        for h in self._hashes.values():
+            h.update(data)
+
+    def __getitem__(self, key):
+        if key not in DIGESTS:
+            raise Abort(_('unknown digest type: %s') % k)
+        return self._hashes[key].hexdigest()
+
+    def __iter__(self):
+        return iter(self._hashes)
+
+    @staticmethod
+    def preferred(supported):
+        """returns the strongest digest type in both supported and DIGESTS."""
+
+        for k in DIGESTS_BY_STRENGTH:
+            if k in supported:
+                return k
+        return None
+
+class digestchecker(object):
+    """file handle wrapper that additionally checks content against a given
+    size and digests.
+
+        d = digestchecker(fh, size, {'md5': '...'})
+
+    When multiple digests are given, all of them are validated.
+    """
+
+    def __init__(self, fh, size, digests):
+        self._fh = fh
+        self._size = size
+        self._got = 0
+        self._digests = dict(digests)
+        self._digester = digester(self._digests.keys())
+
+    def read(self, length=-1):
+        content = self._fh.read(length)
+        self._digester.update(content)
+        self._got += len(content)
+        return content
+
+    def validate(self):
+        if self._size != self._got:
+            raise Abort(_('size mismatch: expected %d, got %d') %
+                (self._size, self._got))
+        for k, v in self._digests.items():
+            if v != self._digester[k]:
+                # i18n: first parameter is a digest name
+                raise Abort(_('%s mismatch: expected %s, got %s') %
+                    (k, v, self._digester[k]))
+
+try:
+    buffer = buffer
 except NameError:
-    __builtin__.buffer = fakebuffer
+    if sys.version_info[0] < 3:
+        def buffer(sliceable, offset=0):
+            return sliceable[offset:]
+    else:
+        def buffer(sliceable, offset=0):
+            return memoryview(sliceable)[offset:]
 
 import subprocess
 closefds = os.name == 'posix'
+
+def unpacker(fmt):
+    """create a struct unpacker for the specified format"""
+    try:
+        # 2.5+
+        return struct.Struct(fmt).unpack
+    except AttributeError:
+        # 2.4
+        return lambda buf: struct.unpack(fmt, buf)
 
 def popen2(cmd, env=None, newlines=False):
     # Setting bufsize to -1 lets the system decide the buffer size.
@@ -64,13 +250,17 @@ def popen2(cmd, env=None, newlines=False):
     return p.stdin, p.stdout
 
 def popen3(cmd, env=None, newlines=False):
+    stdin, stdout, stderr, p = popen4(cmd, env, newlines)
+    return stdin, stdout, stderr
+
+def popen4(cmd, env=None, newlines=False):
     p = subprocess.Popen(cmd, shell=True, bufsize=-1,
                          close_fds=closefds,
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE,
                          universal_newlines=newlines,
                          env=env)
-    return p.stdin, p.stdout, p.stderr
+    return p.stdin, p.stdout, p.stderr, p
 
 def version():
     """Return version information if available."""
@@ -118,6 +308,13 @@ extendeddateformats = defaultdateformats + (
 def cachefunc(func):
     '''cache the result of function calls'''
     # XXX doesn't handle keywords args
+    if func.func_code.co_argcount == 0:
+        cache = []
+        def f():
+            if len(cache) == 0:
+                cache.append(func())
+            return cache[0]
+        return f
     cache = {}
     if func.func_code.co_argcount == 1:
         # we gain a small amount of time because
@@ -134,15 +331,99 @@ def cachefunc(func):
 
     return f
 
+try:
+    collections.deque.remove
+    deque = collections.deque
+except AttributeError:
+    # python 2.4 lacks deque.remove
+    class deque(collections.deque):
+        def remove(self, val):
+            for i, v in enumerate(self):
+                if v == val:
+                    del self[i]
+                    break
+
+class sortdict(dict):
+    '''a simple sorted dictionary'''
+    def __init__(self, data=None):
+        self._list = []
+        if data:
+            self.update(data)
+    def copy(self):
+        return sortdict(self)
+    def __setitem__(self, key, val):
+        if key in self:
+            self._list.remove(key)
+        self._list.append(key)
+        dict.__setitem__(self, key, val)
+    def __iter__(self):
+        return self._list.__iter__()
+    def update(self, src):
+        for k in src:
+            self[k] = src[k]
+    def clear(self):
+        dict.clear(self)
+        self._list = []
+    def items(self):
+        return [(k, self[k]) for k in self._list]
+    def __delitem__(self, key):
+        dict.__delitem__(self, key)
+        self._list.remove(key)
+    def pop(self, key, *args, **kwargs):
+        dict.pop(self, key, *args, **kwargs)
+        try:
+            self._list.remove(key)
+        except ValueError:
+            pass
+    def keys(self):
+        return self._list
+    def iterkeys(self):
+        return self._list.__iter__()
+    def iteritems(self):
+        for k in self._list:
+            yield k, self[k]
+    def insert(self, index, key, val):
+        self._list.insert(index, key)
+        dict.__setitem__(self, key, val)
+
+class lrucachedict(object):
+    '''cache most recent gets from or sets to this dictionary'''
+    def __init__(self, maxsize):
+        self._cache = {}
+        self._maxsize = maxsize
+        self._order = deque()
+
+    def __getitem__(self, key):
+        value = self._cache[key]
+        self._order.remove(key)
+        self._order.append(key)
+        return value
+
+    def __setitem__(self, key, value):
+        if key not in self._cache:
+            if len(self._cache) >= self._maxsize:
+                del self._cache[self._order.popleft()]
+        else:
+            self._order.remove(key)
+        self._cache[key] = value
+        self._order.append(key)
+
+    def __contains__(self, key):
+        return key in self._cache
+
+    def clear(self):
+        self._cache.clear()
+        self._order = deque()
+
 def lrucachefunc(func):
     '''cache most recent results of function calls'''
     cache = {}
-    order = []
+    order = deque()
     if func.func_code.co_argcount == 1:
         def f(arg):
             if arg not in cache:
                 if len(cache) > 20:
-                    del cache[order.pop(0)]
+                    del cache[order.popleft()]
                 cache[arg] = func(arg)
             else:
                 order.remove(arg)
@@ -152,7 +433,7 @@ def lrucachefunc(func):
         def f(*args):
             if args not in cache:
                 if len(cache) > 20:
-                    del cache[order.pop(0)]
+                    del cache[order.popleft()]
                 cache[args] = func(*args)
             else:
                 order.remove(args)
@@ -167,8 +448,12 @@ class propertycache(object):
         self.name = func.__name__
     def __get__(self, obj, type=None):
         result = self.func(obj)
-        setattr(obj, self.name, result)
+        self.cachevalue(obj, result)
         return result
+
+    def cachevalue(self, obj, value):
+        # __dict__ assignment required to bypass __setattr__ (eg: repoview)
+        obj.__dict__[self.name] = value
 
 def pipefilter(s, cmd):
     '''filter string S through command CMD, returning its output'''
@@ -269,6 +554,28 @@ def always(fn):
 def never(fn):
     return False
 
+def nogc(func):
+    """disable garbage collector
+
+    Python's garbage collector triggers a GC each time a certain number of
+    container objects (the number being defined by gc.get_threshold()) are
+    allocated even when marked not to be tracked by the collector. Tracking has
+    no effect on when GCs are triggered, only on what objects the GC looks
+    into. As a workaround, disable GC while building complex (huge)
+    containers.
+
+    This garbage collector issue have been fixed in 2.7.
+    """
+    def wrapper(*args, **kwargs):
+        gcenabled = gc.isenabled()
+        gc.disable()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            if gcenabled:
+                gc.enable()
+    return wrapper
+
 def pathto(root, n1, n2):
     '''return the relative path from one place to another.
     root should use os.sep to separate directories
@@ -295,17 +602,26 @@ def pathto(root, n1, n2):
     b.reverse()
     return os.sep.join((['..'] * len(a)) + b) or '.'
 
-_hgexecutable = None
-
 def mainfrozen():
     """return True if we are a frozen executable.
 
     The code supports py2exe (most common, Windows only) and tools/freeze
     (portable, not much used).
     """
-    return (hasattr(sys, "frozen") or # new py2exe
-            hasattr(sys, "importers") or # old py2exe
+    return (safehasattr(sys, "frozen") or # new py2exe
+            safehasattr(sys, "importers") or # old py2exe
             imp.is_frozen("__main__")) # tools/freeze
+
+# the location of data files matching the source code
+if mainfrozen():
+    # executable version (py2exe) doesn't support __file__
+    datapath = os.path.dirname(sys.executable)
+else:
+    datapath = os.path.dirname(__file__)
+
+i18n.setdatapath(datapath)
+
+_hgexecutable = None
 
 def hgexecutable():
     """return location of the 'hg' executable.
@@ -314,10 +630,13 @@ def hgexecutable():
     """
     if _hgexecutable is None:
         hg = os.environ.get('HG')
+        mainmod = sys.modules['__main__']
         if hg:
             _sethgexecutable(hg)
         elif mainfrozen():
             _sethgexecutable(sys.executable)
+        elif os.path.basename(getattr(mainmod, '__file__', '')) == 'hg':
+            _sethgexecutable(mainmod.__file__)
         else:
             exe = findexe('hg') or os.path.basename(sys.argv[0])
             _sethgexecutable(exe)
@@ -332,9 +651,8 @@ def system(cmd, environ={}, cwd=None, onerr=None, errprefix=None, out=None):
     '''enhanced shell command execution.
     run with environment maybe modified, maybe in different dir.
 
-    if command fails and onerr is None, return status.  if ui object,
-    print error message and return status, else raise onerr object as
-    exception.
+    if command fails and onerr is None, return status, else raise onerr
+    object as exception.
 
     if out is specified, it is assumed to be a file-like object that has a
     write() method. stdout and stderr will be redirected to out.'''
@@ -351,31 +669,39 @@ def system(cmd, environ={}, cwd=None, onerr=None, errprefix=None, out=None):
         return str(val)
     origcmd = cmd
     cmd = quotecommand(cmd)
-    env = dict(os.environ)
-    env.update((k, py2shell(v)) for k, v in environ.iteritems())
-    env['HG'] = hgexecutable()
-    if out is None or out == sys.__stdout__:
-        rc = subprocess.call(cmd, shell=True, close_fds=closefds,
-                             env=env, cwd=cwd)
+    if sys.platform == 'plan9' and (sys.version_info[0] == 2
+                                    and sys.version_info[1] < 7):
+        # subprocess kludge to work around issues in half-baked Python
+        # ports, notably bichued/python:
+        if not cwd is None:
+            os.chdir(cwd)
+        rc = os.system(cmd)
     else:
-        proc = subprocess.Popen(cmd, shell=True, close_fds=closefds,
-                                env=env, cwd=cwd, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT)
-        for line in proc.stdout:
-            out.write(line)
-        proc.wait()
-        rc = proc.returncode
-    if sys.platform == 'OpenVMS' and rc & 1:
-        rc = 0
+        env = dict(os.environ)
+        env.update((k, py2shell(v)) for k, v in environ.iteritems())
+        env['HG'] = hgexecutable()
+        if out is None or out == sys.__stdout__:
+            rc = subprocess.call(cmd, shell=True, close_fds=closefds,
+                                 env=env, cwd=cwd)
+        else:
+            proc = subprocess.Popen(cmd, shell=True, close_fds=closefds,
+                                    env=env, cwd=cwd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT)
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                out.write(line)
+            proc.wait()
+            rc = proc.returncode
+        if sys.platform == 'OpenVMS' and rc & 1:
+            rc = 0
     if rc and onerr:
         errmsg = '%s %s' % (os.path.basename(origcmd.split(None, 1)[0]),
                             explainexit(rc)[0])
         if errprefix:
             errmsg = '%s: %s' % (errprefix, errmsg)
-        try:
-            onerr.warn(errmsg + '\n')
-        except AttributeError:
-            raise onerr(errmsg)
+        raise onerr(errmsg)
     return rc
 
 def checksignature(func):
@@ -390,25 +716,19 @@ def checksignature(func):
 
     return check
 
-def makedir(path, notindexed):
-    os.mkdir(path)
-
-def unlinkpath(f):
-    """unlink and remove the directory if it is empty"""
-    os.unlink(f)
-    # try removing directories that might now be empty
-    try:
-        os.removedirs(os.path.dirname(f))
-    except OSError:
-        pass
-
-def copyfile(src, dest):
+def copyfile(src, dest, hardlink=False):
     "copy a file, preserving mode and atime/mtime"
-    if os.path.islink(src):
+    if os.path.lexists(dest):
+        unlink(dest)
+    # hardlinks are problematic on CIFS, quietly ignore this flag
+    # until we find a way to work around it cleanly (issue4546)
+    if False and hardlink:
         try:
-            os.unlink(dest)
-        except OSError:
-            pass
+            oslink(src, dest)
+            return
+        except (IOError, OSError):
+            pass # fall back to normal copy
+    if os.path.islink(src):
         os.symlink(os.readlink(src), dest)
     else:
         try:
@@ -450,7 +770,7 @@ _winreservednames = '''con prn aux nul
     lpt1 lpt2 lpt3 lpt4 lpt5 lpt6 lpt7 lpt8 lpt9'''.split()
 _winreservedchars = ':*?"<>|'
 def checkwinfilename(path):
-    '''Check that the base-relative path is a valid filename on Windows.
+    r'''Check that the base-relative path is a valid filename on Windows.
     Returns None if the path is ok, or a UI string describing the problem.
 
     >>> checkwinfilename("just/a/normal/path")
@@ -464,10 +784,19 @@ def checkwinfilename(path):
     >>> checkwinfilename("foo/bar/bla:.txt")
     "filename contains ':', which is reserved on Windows"
     >>> checkwinfilename("foo/bar/b\07la.txt")
-    "filename contains '\\\\x07', which is invalid on Windows"
+    "filename contains '\\x07', which is invalid on Windows"
     >>> checkwinfilename("foo/bar/bla ")
     "filename ends with ' ', which is not allowed on Windows"
+    >>> checkwinfilename("../bar")
+    >>> checkwinfilename("foo\\")
+    "filename ends with '\\', which is invalid on Windows"
+    >>> checkwinfilename("foo\\/bar")
+    "directory name ends with '\\', which is invalid on Windows"
     '''
+    if path.endswith('\\'):
+        return _("filename ends with '\\', which is invalid on Windows")
+    if '\\/' in path:
+        return _("directory name ends with '\\', which is invalid on Windows")
     for n in path.replace('\\', '/').split('/'):
         if not n:
             continue
@@ -483,28 +812,14 @@ def checkwinfilename(path):
             return _("filename contains '%s', which is reserved "
                      "on Windows") % base
         t = n[-1]
-        if t in '. ':
+        if t in '. ' and n not in '..':
             return _("filename ends with '%s', which is not allowed "
                      "on Windows") % t
 
-def lookupreg(key, name=None, scope=None):
-    return None
-
-def hidewindow():
-    """Hide current shell window.
-
-    Used to hide the window opened when starting asynchronous
-    child process under Windows, unneeded on other systems.
-    """
-    pass
-
 if os.name == 'nt':
     checkosfilename = checkwinfilename
-    from windows import *
-elif os.name == 'amiga':
-    from amiga import *
 else:
-    from posix import *
+    checkosfilename = platform.checkosfilename
 
 def makelock(info, pathname):
     try:
@@ -543,16 +858,19 @@ def fstat(fp):
 
 def checkcase(path):
     """
-    Check whether the given path is on a case-sensitive filesystem
+    Return true if the given path is on a case-sensitive filesystem
 
     Requires a path (like /foo/.hg) ending with a foldable final
     directory component.
     """
     s1 = os.stat(path)
     d, b = os.path.split(path)
-    p2 = os.path.join(d, b.upper())
-    if path == p2:
-        p2 = os.path.join(d, b.lower())
+    b2 = b.upper()
+    if b == b2:
+        b2 = b.lower()
+        if b == b2:
+            return True # no evidence against case sensitivity
+    p2 = os.path.join(d, b2)
     try:
         s2 = os.stat(p2)
         if s2 == s1:
@@ -561,31 +879,78 @@ def checkcase(path):
     except OSError:
         return True
 
+try:
+    import re2
+    _re2 = None
+except ImportError:
+    _re2 = False
+
+class _re(object):
+    def _checkre2(self):
+        global _re2
+        try:
+            # check if match works, see issue3964
+            _re2 = bool(re2.match(r'\[([^\[]+)\]', '[ui]'))
+        except ImportError:
+            _re2 = False
+
+    def compile(self, pat, flags=0):
+        '''Compile a regular expression, using re2 if possible
+
+        For best performance, use only re2-compatible regexp features. The
+        only flags from the re module that are re2-compatible are
+        IGNORECASE and MULTILINE.'''
+        if _re2 is None:
+            self._checkre2()
+        if _re2 and (flags & ~(remod.IGNORECASE | remod.MULTILINE)) == 0:
+            if flags & remod.IGNORECASE:
+                pat = '(?i)' + pat
+            if flags & remod.MULTILINE:
+                pat = '(?m)' + pat
+            try:
+                return re2.compile(pat)
+            except re2.error:
+                pass
+        return remod.compile(pat, flags)
+
+    @propertycache
+    def escape(self):
+        '''Return the version of escape corresponding to self.compile.
+
+        This is imperfect because whether re2 or re is used for a particular
+        function depends on the flags, etc, but it's the best we can do.
+        '''
+        global _re2
+        if _re2 is None:
+            self._checkre2()
+        if _re2:
+            return re2.escape
+        else:
+            return remod.escape
+
+re = _re()
+
 _fspathcache = {}
 def fspath(name, root):
     '''Get name in the case stored in the filesystem
 
-    The name is either relative to root, or it is an absolute path starting
-    with root. Note that this function is unnecessary, and should not be
-    called, for case-sensitive filesystems (simply because it's expensive).
-    '''
-    # If name is absolute, make it relative
-    if name.lower().startswith(root.lower()):
-        l = len(root)
-        if name[l] == os.sep or name[l] == os.altsep:
-            l = l + 1
-        name = name[l:]
+    The name should be relative to root, and be normcase-ed for efficiency.
 
-    if not os.path.lexists(os.path.join(root, name)):
-        return None
+    Note that this function is unnecessary, and should not be
+    called, for case-sensitive filesystems (simply because it's expensive).
+
+    The root should be normcase-ed, too.
+    '''
+    def _makefspathcacheentry(dir):
+        return dict((normcase(n), n) for n in os.listdir(dir))
 
     seps = os.sep
     if os.altsep:
         seps = seps + os.altsep
     # Protect backslashes. This gets silly very quickly.
     seps.replace('\\','\\\\')
-    pattern = re.compile(r'([^%s]+)|([%s]+)' % (seps, seps))
-    dir = os.path.normcase(os.path.normpath(root))
+    pattern = remod.compile(r'([^%s]+)|([%s]+)' % (seps, seps))
+    dir = os.path.normpath(root)
     result = []
     for part, sep in pattern.findall(name):
         if sep:
@@ -593,19 +958,18 @@ def fspath(name, root):
             continue
 
         if dir not in _fspathcache:
-            _fspathcache[dir] = os.listdir(dir)
+            _fspathcache[dir] = _makefspathcacheentry(dir)
         contents = _fspathcache[dir]
 
-        lpart = part.lower()
-        lenp = len(part)
-        for n in contents:
-            if lenp == len(n) and n.lower() == lpart:
-                result.append(n)
-                break
-        else:
-            # Cannot happen, as the file exists!
-            result.append(part)
-        dir = os.path.join(dir, lpart)
+        found = contents.get(part)
+        if not found:
+            # retry "once per directory" per "dirstate.walk" which
+            # may take place for each patches of "hg qpush", for example
+            _fspathcache[dir] = contents = _makefspathcacheentry(dir)
+            found = contents.get(part)
+
+        result.append(found or part)
+        dir = os.path.join(dir, part)
 
     return ''.join(result)
 
@@ -642,8 +1006,6 @@ def checknlink(testfile):
                 os.unlink(f)
             except OSError:
                 pass
-
-    return False
 
 def endswithsep(path):
     '''Check path ends with os.sep or os.altsep.'''
@@ -688,16 +1050,7 @@ def mktempcopy(name, emptyok=False, createmode=None):
     # Temporary files are created with mode 0600, which is usually not
     # what we want.  If the original file already exists, just copy
     # its mode.  Otherwise, manually obey umask.
-    try:
-        st_mode = os.lstat(name).st_mode & 0777
-    except OSError, inst:
-        if inst.errno != errno.ENOENT:
-            raise
-        st_mode = createmode
-        if st_mode is None:
-            st_mode = ~umask
-        st_mode &= 0666
-    os.chmod(temp, st_mode)
+    copymode(name, temp, createmode)
     if emptyok:
         return temp
     try:
@@ -714,21 +1067,20 @@ def mktempcopy(name, emptyok=False, createmode=None):
             ofp.write(chunk)
         ifp.close()
         ofp.close()
-    except:
+    except: # re-raises
         try: os.unlink(temp)
-        except: pass
+        except OSError: pass
         raise
     return temp
 
 class atomictempfile(object):
-    '''writeable file object that atomically updates a file
+    '''writable file object that atomically updates a file
 
     All writes will go to a temporary copy of the original file. Call
-    rename() when you are done writing, and atomictempfile will rename
-    the temporary copy to the original name, making the changes visible.
-
-    Unlike other file-like objects, close() discards your writes by
-    simply deleting the temporary file.
+    close() when you are done writing, and atomictempfile will rename
+    the temporary copy to the original name, making the changes
+    visible. If the object is destroyed without being closed, all your
+    writes are discarded.
     '''
     def __init__(self, name, mode='w+b', createmode=None):
         self.__name = name      # permanent name
@@ -738,14 +1090,16 @@ class atomictempfile(object):
 
         # delegated methods
         self.write = self._fp.write
+        self.seek = self._fp.seek
+        self.tell = self._fp.tell
         self.fileno = self._fp.fileno
 
-    def rename(self):
+    def close(self):
         if not self._fp.closed:
             self._fp.close()
             rename(self._tempname, localpath(self.__name))
 
-    def close(self):
+    def discard(self):
         if not self._fp.closed:
             try:
                 os.unlink(self._tempname)
@@ -754,24 +1108,47 @@ class atomictempfile(object):
             self._fp.close()
 
     def __del__(self):
-        if hasattr(self, '_fp'): # constructor actually did something
-            self.close()
+        if safehasattr(self, '_fp'): # constructor actually did something
+            self.discard()
 
-def makedirs(name, mode=None):
+def makedirs(name, mode=None, notindexed=False):
     """recursive directory creation with parent mode inheritance"""
-    parent = os.path.abspath(os.path.dirname(name))
     try:
-        os.mkdir(name)
-        if mode is not None:
-            os.chmod(name, mode)
-        return
+        makedir(name, notindexed)
     except OSError, err:
         if err.errno == errno.EEXIST:
             return
-        if not name or parent == name or err.errno != errno.ENOENT:
+        if err.errno != errno.ENOENT or not name:
             raise
-    makedirs(parent, mode)
-    makedirs(name, mode)
+        parent = os.path.dirname(os.path.abspath(name))
+        if parent == name:
+            raise
+        makedirs(parent, mode, notindexed)
+        makedir(name, notindexed)
+    if mode is not None:
+        os.chmod(name, mode)
+
+def ensuredirs(name, mode=None, notindexed=False):
+    """race-safe recursive directory creation
+
+    Newly created directories are marked as "not to be indexed by
+    the content indexing service", if ``notindexed`` is specified
+    for "write" mode access.
+    """
+    if os.path.isdir(name):
+        return
+    parent = os.path.dirname(os.path.abspath(name))
+    if parent != name:
+        ensuredirs(parent, mode, notindexed)
+    try:
+        makedir(name, notindexed)
+    except OSError, err:
+        if err.errno == errno.EEXIST and os.path.isdir(name):
+            # someone else seems to have won a directory creation race
+            return
+        raise
+    if mode is not None:
+        os.chmod(name, mode)
 
 def readfile(path):
     fp = open(path, 'rb')
@@ -812,15 +1189,17 @@ class chunkbuffer(object):
                 else:
                     yield chunk
         self.iter = splitbig(in_iter)
-        self._queue = []
+        self._queue = deque()
 
-    def read(self, l):
+    def read(self, l=None):
         """Read L bytes of data from the iterator of chunks of data.
-        Returns less than L bytes if the iterator runs dry."""
+        Returns less than L bytes if the iterator runs dry.
+
+        If size parameter is omitted, read everything"""
         left = l
-        buf = ''
+        buf = []
         queue = self._queue
-        while left > 0:
+        while left is None or left > 0:
             # refill the queue
             if not queue:
                 target = 2**18
@@ -832,15 +1211,16 @@ class chunkbuffer(object):
                 if not queue:
                     break
 
-            chunk = queue.pop(0)
-            left -= len(chunk)
-            if left < 0:
-                queue.insert(0, chunk[left:])
-                buf += chunk[:left]
+            chunk = queue.popleft()
+            if left is not None:
+                left -= len(chunk)
+            if left is not None and left < 0:
+                queue.appendleft(chunk[left:])
+                buf.append(chunk[:left])
             else:
-                buf += chunk
+                buf.append(chunk)
 
-        return buf
+        return ''.join(buf)
 
 def filechunkiter(f, size=65536, limit=None):
     """Create a generator that produces the data in the file size
@@ -863,17 +1243,18 @@ def filechunkiter(f, size=65536, limit=None):
             limit -= len(s)
         yield s
 
-def makedate():
-    lt = time.localtime()
-    if lt[8] == 1 and time.daylight:
-        tz = time.altzone
-    else:
-        tz = time.timezone
-    t = time.mktime(lt)
-    if t < 0:
+def makedate(timestamp=None):
+    '''Return a unix timestamp (or the current time) as a (unixtime,
+    offset) tuple based off the local timezone.'''
+    if timestamp is None:
+        timestamp = time.time()
+    if timestamp < 0:
         hint = _("check your clock")
-        raise Abort(_("negative timestamp: %d") % t, hint=hint)
-    return t, tz
+        raise Abort(_("negative timestamp: %d") % timestamp, hint=hint)
+    delta = (datetime.datetime.utcfromtimestamp(timestamp) -
+             datetime.datetime.fromtimestamp(timestamp))
+    tz = delta.days * 86400 + delta.seconds
+    return timestamp, tz
 
 def datestr(date=None, format='%a %b %d %H:%M:%S %Y %1%2'):
     """represent a (unixtime, offset) tuple as a localized time.
@@ -884,12 +1265,18 @@ def datestr(date=None, format='%a %b %d %H:%M:%S %Y %1%2'):
     if t < 0:
         t = 0   # time.gmtime(lt) fails on Windows for lt < -43200
         tz = 0
-    if "%1" in format or "%2" in format:
+    if "%1" in format or "%2" in format or "%z" in format:
         sign = (tz > 0) and "-" or "+"
         minutes = abs(tz) // 60
+        format = format.replace("%z", "%1%2")
         format = format.replace("%1", "%c%02d" % (sign, minutes // 60))
         format = format.replace("%2", "%02d" % (minutes % 60))
-    s = time.strftime(format, time.gmtime(float(t) - tz))
+    try:
+        t = time.gmtime(float(t) - tz)
+    except ValueError:
+        # time was out of range
+        t = time.gmtime(sys.maxint)
+    s = time.strftime(format, t)
     return s
 
 def shortdate(date=None):
@@ -942,6 +1329,20 @@ def parsedate(date, formats=None, bias={}):
 
     The date may be a "unixtime offset" string or in one of the specified
     formats. If the date already is a (unixtime, offset) tuple, it is returned.
+
+    >>> parsedate(' today ') == parsedate(\
+                                  datetime.date.today().strftime('%b %d'))
+    True
+    >>> parsedate( 'yesterday ') == parsedate((datetime.date.today() -\
+                                               datetime.timedelta(days=1)\
+                                              ).strftime('%b %d'))
+    True
+    >>> now, tz = makedate()
+    >>> strnow, strtz = parsedate('now')
+    >>> (strnow - now) < 1
+    True
+    >>> tz == strtz
+    True
     """
     if not date:
         return 0, 0
@@ -950,6 +1351,15 @@ def parsedate(date, formats=None, bias={}):
     if not formats:
         formats = defaultdateformats
     date = date.strip()
+
+    if date == _('now'):
+        return makedate()
+    if date == _('today'):
+        date = datetime.date.today().strftime('%b %d')
+    elif date == _('yesterday'):
+        date = (datetime.date.today() -
+                datetime.timedelta(days=1)).strftime('%b %d')
+
     try:
         when, offset = map(int, date.split(' '))
     except ValueError:
@@ -1021,16 +1431,16 @@ def matchdate(date):
     """
 
     def lower(date):
-        d = dict(mb="1", d="1")
+        d = {'mb': "1", 'd': "1"}
         return parsedate(date, extendeddateformats, d)[0]
 
     def upper(date):
-        d = dict(mb="12", HI="23", M="59", S="59")
+        d = {'mb': "12", 'HI': "23", 'M': "59", 'S': "59"}
         for days in ("31", "30", "29"):
             try:
                 d["d"] = days
                 return parsedate(date, extendeddateformats, d)[0]
-            except:
+            except Abort:
                 pass
         d["d"] = "28"
         return parsedate(date, extendeddateformats, d)[0]
@@ -1055,7 +1465,7 @@ def matchdate(date):
         except ValueError:
             raise Abort(_("invalid day spec: %s") % date[1:])
         if days < 0:
-            raise Abort(_("%s must be nonnegative (see 'hg help dates')")
+            raise Abort(_('%s must be nonnegative (see "hg help dates")')
                 % date[1:])
         when = makedate()[0] - days * 3600 * 24
         return lambda x: x >= when
@@ -1083,6 +1493,16 @@ def shortuser(user):
         user = user[:f]
     return user
 
+def emailuser(user):
+    """Return the user portion of an email address."""
+    f = user.find('@')
+    if f >= 0:
+        user = user[:f]
+    f = user.find('<')
+    if f >= 0:
+        user = user[f + 1:]
+    return user
+
 def email(author):
     '''get email of author.'''
     r = author.find('>')
@@ -1090,44 +1510,33 @@ def email(author):
         r = None
     return author[author.find('<') + 1:r]
 
-def _ellipsis(text, maxlength):
-    if len(text) <= maxlength:
-        return text, False
-    else:
-        return "%s..." % (text[:maxlength - 3]), True
-
 def ellipsis(text, maxlength=400):
-    """Trim string to at most maxlength (default: 400) characters."""
-    try:
-        # use unicode not to split at intermediate multi-byte sequence
-        utext, truncated = _ellipsis(text.decode(encoding.encoding),
-                                     maxlength)
-        if not truncated:
-            return text
-        return utext.encode(encoding.encoding)
-    except (UnicodeDecodeError, UnicodeEncodeError):
-        return _ellipsis(text, maxlength)[0]
+    """Trim string to at most maxlength (default: 400) columns in display."""
+    return encoding.trim(text, maxlength, ellipsis='...')
 
-def bytecount(nbytes):
-    '''return byte count formatted as readable string, with units'''
+def unitcountfn(*unittable):
+    '''return a function that renders a readable count of some quantity'''
 
-    units = (
-        (100, 1 << 30, _('%.0f GB')),
-        (10, 1 << 30, _('%.1f GB')),
-        (1, 1 << 30, _('%.2f GB')),
-        (100, 1 << 20, _('%.0f MB')),
-        (10, 1 << 20, _('%.1f MB')),
-        (1, 1 << 20, _('%.2f MB')),
-        (100, 1 << 10, _('%.0f KB')),
-        (10, 1 << 10, _('%.1f KB')),
-        (1, 1 << 10, _('%.2f KB')),
-        (1, 1, _('%.0f bytes')),
-        )
+    def go(count):
+        for multiplier, divisor, format in unittable:
+            if count >= divisor * multiplier:
+                return format % (count / float(divisor))
+        return unittable[-1][2] % count
 
-    for multiplier, divisor, format in units:
-        if nbytes >= divisor * multiplier:
-            return format % (nbytes / float(divisor))
-    return units[-1][2] % nbytes
+    return go
+
+bytecount = unitcountfn(
+    (100, 1 << 30, _('%.0f GB')),
+    (10, 1 << 30, _('%.1f GB')),
+    (1, 1 << 30, _('%.2f GB')),
+    (100, 1 << 20, _('%.0f MB')),
+    (10, 1 << 20, _('%.1f MB')),
+    (1, 1 << 20, _('%.2f MB')),
+    (100, 1 << 10, _('%.0f KB')),
+    (10, 1 << 10, _('%.1f KB')),
+    (1, 1 << 10, _('%.2f KB')),
+    (1, 1, _('%.0f bytes')),
+    )
 
 def uirepr(s):
     # Avoid double backslash in Windows path repr()
@@ -1137,29 +1546,34 @@ def uirepr(s):
 def MBTextWrapper(**kwargs):
     class tw(textwrap.TextWrapper):
         """
-        Extend TextWrapper for double-width characters.
+        Extend TextWrapper for width-awareness.
 
-        Some Asian characters use two terminal columns instead of one.
-        A good example of this behavior can be seen with u'\u65e5\u672c',
-        the two Japanese characters for "Japan":
-        len() returns 2, but when printed to a terminal, they eat 4 columns.
+        Neither number of 'bytes' in any encoding nor 'characters' is
+        appropriate to calculate terminal columns for specified string.
 
-        (Note that this has nothing to do whatsoever with unicode
-        representation, or encoding of the underlying string)
+        Original TextWrapper implementation uses built-in 'len()' directly,
+        so overriding is needed to use width information of each characters.
+
+        In addition, characters classified into 'ambiguous' width are
+        treated as wide in East Asian area, but as narrow in other.
+
+        This requires use decision to determine width of such characters.
         """
         def __init__(self, **kwargs):
             textwrap.TextWrapper.__init__(self, **kwargs)
 
-        def _cutdown(self, str, space_left):
+            # for compatibility between 2.4 and 2.6
+            if getattr(self, 'drop_whitespace', None) is None:
+                self.drop_whitespace = kwargs.get('drop_whitespace', True)
+
+        def _cutdown(self, ucstr, space_left):
             l = 0
-            ucstr = unicode(str, encoding.encoding)
-            colwidth = unicodedata.east_asian_width
+            colwidth = encoding.ucolwidth
             for i in xrange(len(ucstr)):
-                l += colwidth(ucstr[i]) in 'WFA' and 2 or 1
+                l += colwidth(ucstr[i])
                 if space_left < l:
-                    return (ucstr[:i].encode(encoding.encoding),
-                            ucstr[i:].encode(encoding.encoding))
-            return str, ''
+                    return (ucstr[:i], ucstr[i:])
+            return ucstr, ''
 
         # overriding of base class
         def _handle_long_word(self, reversed_chunks, cur_line, cur_len, width):
@@ -1172,6 +1586,69 @@ def MBTextWrapper(**kwargs):
             elif not cur_line:
                 cur_line.append(reversed_chunks.pop())
 
+        # this overriding code is imported from TextWrapper of python 2.6
+        # to calculate columns of string by 'encoding.ucolwidth()'
+        def _wrap_chunks(self, chunks):
+            colwidth = encoding.ucolwidth
+
+            lines = []
+            if self.width <= 0:
+                raise ValueError("invalid width %r (must be > 0)" % self.width)
+
+            # Arrange in reverse order so items can be efficiently popped
+            # from a stack of chucks.
+            chunks.reverse()
+
+            while chunks:
+
+                # Start the list of chunks that will make up the current line.
+                # cur_len is just the length of all the chunks in cur_line.
+                cur_line = []
+                cur_len = 0
+
+                # Figure out which static string will prefix this line.
+                if lines:
+                    indent = self.subsequent_indent
+                else:
+                    indent = self.initial_indent
+
+                # Maximum width for this line.
+                width = self.width - len(indent)
+
+                # First chunk on line is whitespace -- drop it, unless this
+                # is the very beginning of the text (i.e. no lines started yet).
+                if self.drop_whitespace and chunks[-1].strip() == '' and lines:
+                    del chunks[-1]
+
+                while chunks:
+                    l = colwidth(chunks[-1])
+
+                    # Can at least squeeze this chunk onto the current line.
+                    if cur_len + l <= width:
+                        cur_line.append(chunks.pop())
+                        cur_len += l
+
+                    # Nope, this line is full.
+                    else:
+                        break
+
+                # The current line is full, and the next chunk is too big to
+                # fit on *any* line (not just this one).
+                if chunks and colwidth(chunks[-1]) > width:
+                    self._handle_long_word(chunks, cur_line, cur_len, width)
+
+                # If the last chunk on this line is all whitespace, drop it.
+                if (self.drop_whitespace and
+                    cur_line and cur_line[-1].strip() == ''):
+                    del cur_line[-1]
+
+                # Convert current line back to a string and store it in list
+                # of all lines (return value).
+                if cur_line:
+                    lines.append(indent + ''.join(cur_line))
+
+            return lines
+
     global MBTextWrapper
     MBTextWrapper = tw
     return tw(**kwargs)
@@ -1181,10 +1658,13 @@ def wrap(line, width, initindent='', hangindent=''):
     if width <= maxindent:
         # adjust for weird terminal size
         width = max(78, maxindent + 1)
+    line = line.decode(encoding.encoding, encoding.encodingmode)
+    initindent = initindent.decode(encoding.encoding, encoding.encodingmode)
+    hangindent = hangindent.decode(encoding.encoding, encoding.encodingmode)
     wrapper = MBTextWrapper(width=width,
                             initial_indent=initindent,
                             subsequent_indent=hangindent)
-    return wrapper.fill(line)
+    return wrapper.fill(line).encode(encoding.encoding)
 
 def iterlines(iterator):
     for chunk in iterator:
@@ -1225,8 +1705,9 @@ def rundetached(args, condfn):
     def handler(signum, frame):
         terminated.add(os.wait())
     prevhandler = None
-    if hasattr(signal, 'SIGCHLD'):
-        prevhandler = signal.signal(signal.SIGCHLD, handler)
+    SIGCHLD = getattr(signal, 'SIGCHLD', None)
+    if SIGCHLD is not None:
+        prevhandler = signal.signal(SIGCHLD, handler)
     try:
         pid = spawndetached(args)
         while not condfn():
@@ -1276,7 +1757,7 @@ def interpolate(prefix, mapping, s, fn=None, escape_prefix=False):
         else:
             prefix_char = prefix
         mapping[prefix_char] = prefix_char
-    r = re.compile(r'%s(%s)' % (prefix, patterns))
+    r = remod.compile(r'%s(%s)' % (prefix, patterns))
     return r.sub(lambda x: fn(mapping[x.group()[1:]]), s)
 
 def getport(port):
@@ -1312,7 +1793,11 @@ _hextochr = dict((a + b, chr(int(a + b, 16)))
                  for a in _hexdig for b in _hexdig)
 
 def _urlunquote(s):
-    """unquote('abc%20def') -> 'abc def'."""
+    """Decode HTTP/HTML % encoding.
+
+    >>> _urlunquote('abc%20def')
+    'abc def'
+    """
     res = s.split('%')
     # fastpath
     if len(res) == 1:
@@ -1355,6 +1840,8 @@ class url(object):
     <url scheme: 'ssh', host: '[::1]', port: '2200', path: '/home/joe/repo'>
     >>> url('file:///home/joe/repo')
     <url scheme: 'file', path: '/home/joe/repo'>
+    >>> url('file:///c:/temp/foo/')
+    <url scheme: 'file', path: 'c:/temp/foo/'>
     >>> url('bundle:foo')
     <url scheme: 'bundle', path: 'foo'>
     >>> url('bundle://../foo')
@@ -1363,6 +1850,10 @@ class url(object):
     <url path: 'c:\\foo\\bar'>
     >>> url(r'\\blah\blah\blah')
     <url path: '\\\\blah\\blah\\blah'>
+    >>> url(r'\\blah\blah\blah#baz')
+    <url path: '\\\\blah\\blah\\blah', fragment: 'baz'>
+    >>> url(r'file:///C:\users\me')
+    <url scheme: 'file', path: 'C:\\users\\me'>
 
     Authentication credentials:
 
@@ -1380,8 +1871,8 @@ class url(object):
     """
 
     _safechars = "!~*'()+"
-    _safepchars = "/!~*'()+"
-    _matchscheme = re.compile(r'^[a-zA-Z0-9+.\-]+:').match
+    _safepchars = "/!~*'()+:\\"
+    _matchscheme = remod.compile(r'^[a-zA-Z0-9+.\-]+:').match
 
     def __init__(self, path, parsequery=True, parsefragment=True):
         # We slowly chomp away at path until we have only the path left
@@ -1390,6 +1881,11 @@ class url(object):
         self._localpath = True
         self._hostport = ''
         self._origpath = path
+
+        if parsefragment and '#' in path:
+            path, self.fragment = path.split('#', 1)
+            if not path:
+                path = None
 
         # special case for Windows drive letters and UNC paths
         if hasdriveletter(path) or path.startswith(r'\\'):
@@ -1418,10 +1914,6 @@ class url(object):
                 self.path = ''
                 return
         else:
-            if parsefragment and '#' in path:
-                path, self.fragment = path.split('#', 1)
-                if not path:
-                    path = None
             if self._localpath:
                 self.path = path
                 return
@@ -1438,13 +1930,14 @@ class url(object):
                 parts = path[2:].split('/', 1)
                 if len(parts) > 1:
                     self.host, path = parts
-                    path = path
                 else:
                     self.host = parts[0]
                     path = None
                 if not self.host:
                     self.host = None
-                    if path:
+                    # path of file:///d is /d
+                    # path of file:///d:/ is d:/, not /d:/
+                    if path and not hasdriveletter(path):
                         path = '/' + path
 
             if self.host and '@' in self.host:
@@ -1468,8 +1961,9 @@ class url(object):
 
         self.path = path
 
+        # leave the query string escaped
         for a in ('user', 'passwd', 'host', 'port',
-                  'path', 'query', 'fragment'):
+                  'path', 'fragment'):
             v = getattr(self, a)
             if v is not None:
                 setattr(self, a, _urlunquote(v))
@@ -1488,8 +1982,12 @@ class url(object):
 
         Examples:
 
-        >>> str(url('http://user:pw@host:80/?foo#bar'))
-        'http://user:pw@host:80/?foo#bar'
+        >>> str(url('http://user:pw@host:80/c:/bob?fo:oo#ba:ar'))
+        'http://user:pw@host:80/c:/bob?fo:oo#ba:ar'
+        >>> str(url('http://user:pw@host:80/?foo=bar&baz=42'))
+        'http://user:pw@host:80/?foo=bar&baz=42'
+        >>> str(url('http://user:pw@host:80/?foo=bar%3dbaz'))
+        'http://user:pw@host:80/?foo=bar%3dbaz'
         >>> str(url('ssh://user:pw@[::1]:2200//home/joe#'))
         'ssh://user:pw@[::1]:2200//home/joe#'
         >>> str(url('http://localhost:80//'))
@@ -1506,8 +2004,12 @@ class url(object):
         'path'
         >>> str(url('file:///tmp/foo/bar'))
         'file:///tmp/foo/bar'
+        >>> str(url('file:///c:/tmp/foo/bar'))
+        'file:///c:/tmp/foo/bar'
         >>> print url(r'bundle:foo\bar')
         bundle:foo\bar
+        >>> print url(r'file:///D:\data\hg')
+        file:///D:\data\hg
         """
         if self._localpath:
             s = self.path
@@ -1520,8 +2022,11 @@ class url(object):
         s = self.scheme + ':'
         if self.user or self.passwd or self.host:
             s += '//'
-        elif self.scheme and (not self.path or self.path.startswith('/')):
+        elif self.scheme and (not self.path or self.path.startswith('/')
+                              or hasdriveletter(self.path)):
             s += '//'
+            if hasdriveletter(self.path):
+                s += '/'
         if self.user:
             s += urllib.quote(self.user, safe=self._safechars)
         if self.passwd:
@@ -1538,9 +2043,13 @@ class url(object):
         if self.host:
             s += '/'
         if self.path:
+            # TODO: similar to the query string, we should not unescape the
+            # path when we store it, the path might contain '%2f' = '/',
+            # which we should *not* escape.
             s += urllib.quote(self.path, safe=self._safepchars)
         if self.query:
-            s += '?' + urllib.quote(self.query, safe=self._safepchars)
+            # we store the query in escaped form.
+            s += '?' + self.query
         if self.fragment is not None:
             s += '#' + urllib.quote(self.fragment, safe=self._safepchars)
         return s
@@ -1554,7 +2063,11 @@ class url(object):
             self.user, self.passwd = user, passwd
         if not self.user:
             return (s, None)
-        return (s, (None, (str(self), self.host),
+        # authinfo[1] is passed to urllib2 password manager, and its
+        # URIs must not contain credentials. The host is passed in the
+        # URIs list because Python < 2.4.3 uses only that to search for
+        # a password.
+        return (s, (None, (s, self.host),
                     self.user, self.passwd or ''))
 
     def isabs(self):
@@ -1575,21 +2088,22 @@ class url(object):
             # letters to paths with drive letters.
             if hasdriveletter(self._hostport):
                 path = self._hostport + '/' + self.path
-            elif self.host is not None and self.path:
+            elif (self.host is not None and self.path
+                  and not hasdriveletter(path)):
                 path = '/' + path
-            # We also need to handle the case of file:///C:/, which
-            # should return C:/, not /C:/.
-            elif hasdriveletter(path):
-                # Strip leading slash from paths with drive names
-                return path[1:]
             return path
         return self._origpath
+
+    def islocal(self):
+        '''whether localpath will return something that posixfile can open'''
+        return (not self.scheme or self.scheme == 'file'
+                or self.scheme == 'bundle')
 
 def hasscheme(path):
     return bool(url(path).scheme)
 
 def hasdriveletter(path):
-    return path[1:2] == ':' and path[0:1].isalpha()
+    return path and path[1:2] == ':' and path[0:1].isalpha()
 
 def urllocalpath(path):
     return url(path, parsequery=False, parsefragment=False).localpath()
@@ -1612,3 +2126,106 @@ def isatty(fd):
         return fd.isatty()
     except AttributeError:
         return False
+
+timecount = unitcountfn(
+    (1, 1e3, _('%.0f s')),
+    (100, 1, _('%.1f s')),
+    (10, 1, _('%.2f s')),
+    (1, 1, _('%.3f s')),
+    (100, 0.001, _('%.1f ms')),
+    (10, 0.001, _('%.2f ms')),
+    (1, 0.001, _('%.3f ms')),
+    (100, 0.000001, _('%.1f us')),
+    (10, 0.000001, _('%.2f us')),
+    (1, 0.000001, _('%.3f us')),
+    (100, 0.000000001, _('%.1f ns')),
+    (10, 0.000000001, _('%.2f ns')),
+    (1, 0.000000001, _('%.3f ns')),
+    )
+
+_timenesting = [0]
+
+def timed(func):
+    '''Report the execution time of a function call to stderr.
+
+    During development, use as a decorator when you need to measure
+    the cost of a function, e.g. as follows:
+
+    @util.timed
+    def foo(a, b, c):
+        pass
+    '''
+
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        indent = 2
+        _timenesting[0] += indent
+        try:
+            return func(*args, **kwargs)
+        finally:
+            elapsed = time.time() - start
+            _timenesting[0] -= indent
+            sys.stderr.write('%s%s: %s\n' %
+                             (' ' * _timenesting[0], func.__name__,
+                              timecount(elapsed)))
+    return wrapper
+
+_sizeunits = (('m', 2**20), ('k', 2**10), ('g', 2**30),
+              ('kb', 2**10), ('mb', 2**20), ('gb', 2**30), ('b', 1))
+
+def sizetoint(s):
+    '''Convert a space specifier to a byte count.
+
+    >>> sizetoint('30')
+    30
+    >>> sizetoint('2.2kb')
+    2252
+    >>> sizetoint('6M')
+    6291456
+    '''
+    t = s.strip().lower()
+    try:
+        for k, u in _sizeunits:
+            if t.endswith(k):
+                return int(float(t[:-len(k)]) * u)
+        return int(t)
+    except ValueError:
+        raise error.ParseError(_("couldn't parse size: %s") % s)
+
+class hooks(object):
+    '''A collection of hook functions that can be used to extend a
+    function's behaviour. Hooks are called in lexicographic order,
+    based on the names of their sources.'''
+
+    def __init__(self):
+        self._hooks = []
+
+    def add(self, source, hook):
+        self._hooks.append((source, hook))
+
+    def __call__(self, *args):
+        self._hooks.sort(key=lambda x: x[0])
+        results = []
+        for source, hook in self._hooks:
+            results.append(hook(*args))
+        return results
+
+def debugstacktrace(msg='stacktrace', skip=0, f=sys.stderr, otherf=sys.stdout):
+    '''Writes a message to f (stderr) with a nicely formatted stacktrace.
+    Skips the 'skip' last entries. By default it will flush stdout first.
+    It can be used everywhere and do intentionally not require an ui object.
+    Not be used in production code but very convenient while developing.
+    '''
+    if otherf:
+        otherf.flush()
+    f.write('%s at:\n' % msg)
+    entries = [('%s:%s' % (fn, ln), func)
+        for fn, ln, func, _text in traceback.extract_stack()[:-skip - 1]]
+    if entries:
+        fnmax = max(len(entry[0]) for entry in entries)
+        for fnln, func in entries:
+            f.write(' %-*s in %s\n' % (fnmax, fnln, func))
+    f.flush()
+
+# convenient shortcut
+dst = debugstacktrace

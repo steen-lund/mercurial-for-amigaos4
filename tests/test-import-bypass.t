@@ -1,9 +1,8 @@
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "purge=" >> $HGRCPATH
-  $ echo "graphlog=" >> $HGRCPATH
 
   $ shortlog() {
-  >     hg glog --template '{rev}:{node|short} {author} {date|hgdate} - {branch} - {desc|firstline}\n'
+  >     hg log -G --template '{rev}:{node|short} {author} {date|hgdate} - {branch} - {desc|firstline}\n'
   > }
 
 Test --bypass with other options
@@ -16,13 +15,19 @@ Test --bypass with other options
   $ echo a >> a
   $ hg branch foo
   marked working directory as branch foo
+  (branches are permanent and global, did you want a bookmark?)
   $ hg ci -Am changea
   $ hg export . > ../test.diff
   $ hg up null
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
 
 Test importing an existing revision
+(this also tests that "hg import" disallows combination of '--exact'
+and '--edit')
 
+  $ hg import --bypass --exact --edit ../test.diff
+  abort: cannot use --exact with --edit
+  [255]
   $ hg import --bypass --exact ../test.diff
   applying ../test.diff
   $ shortlog
@@ -61,12 +66,13 @@ Test --user, --date and --message
   @  0:07f494440405 test 0 0 - default - adda
   
   $ hg rollback
-  repository tip rolled back to revision 1 (undo commit)
-  working directory now based on revision 0
+  repository tip rolled back to revision 1 (undo import)
 
 Test --import-branch
+(this also tests that editor is not invoked for '--bypass', if the
+patch contains the commit message, regardless of '--edit')
 
-  $ hg import --bypass --import-branch ../test.diff
+  $ HGEDITOR=cat hg import --bypass --import-branch --edit ../test.diff
   applying ../test.diff
   $ shortlog
   o  1:4e322f7ce8e3 test 0 0 - foo - changea
@@ -74,8 +80,7 @@ Test --import-branch
   @  0:07f494440405 test 0 0 - default - adda
   
   $ hg rollback
-  repository tip rolled back to revision 1 (undo commit)
-  working directory now based on revision 0
+  repository tip rolled back to revision 1 (undo import)
 
 Test --strip
 
@@ -97,8 +102,7 @@ Test --strip
   > EOF
   applying patch from stdin
   $ hg rollback
-  repository tip rolled back to revision 1 (undo commit)
-  working directory now based on revision 0
+  repository tip rolled back to revision 1 (undo import)
 
 Test unsupported combinations
 
@@ -110,8 +114,18 @@ Test unsupported combinations
   [255]
 
 Test commit editor
+(this also tests that editor is invoked, if the patch doesn't contain
+the commit message, regardless of '--edit')
 
-  $ hg diff -c 1 > ../test.diff
+  $ cat > ../test.diff <<EOF
+  > diff -r 07f494440405 -r 4e322f7ce8e3 a
+  > --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  > +++ b/a	Thu Jan 01 00:00:00 1970 +0000
+  > @@ -1,1 +1,2 @@
+  > -a
+  > +b
+  > +c
+  > EOF
   $ HGEDITOR=cat hg import --bypass ../test.diff
   applying ../test.diff
   
@@ -126,10 +140,12 @@ Test commit editor
   [255]
 
 Test patch.eol is handled
+(this also tests that editor is not invoked for '--bypass', if the
+commit message is explicitly specified, regardless of '--edit')
 
-  $ python -c 'file("a", "wb").write("a\r\n")'
+  $ $PYTHON -c 'file("a", "wb").write("a\r\n")'
   $ hg ci -m makeacrlf
-  $ hg import -m 'should fail because of eol' --bypass ../test.diff
+  $ HGEDITOR=cat hg import -m 'should fail because of eol' --edit --bypass ../test.diff
   applying ../test.diff
   patching file a
   Hunk #1 FAILED at 0
@@ -138,7 +154,7 @@ Test patch.eol is handled
   $ hg --config patch.eol=auto import -d '0 0' -m 'test patch.eol' --bypass ../test.diff
   applying ../test.diff
   $ shortlog
-  o  3:d7805b4d2cb3 test 0 0 - default - test patch.eol
+  o  3:c606edafba99 test 0 0 - default - test patch.eol
   |
   @  2:872023de769d test 0 0 - default - makeacrlf
   |
@@ -174,7 +190,6 @@ Test applying multiple patches
   $ hg import --bypass ../patch1.diff ../patch2.diff
   applying ../patch1.diff
   applying ../patch2.diff
-  applied 16581080145e
   $ shortlog
   o  3:bc8ca3f8a7c4 test 0 0 - default - addf
   |
@@ -199,7 +214,6 @@ Test applying multiple patches with --exact
   $ hg import --bypass --exact ../patch1.diff ../patch2.diff
   applying ../patch1.diff
   applying ../patch2.diff
-  applied 16581080145e
   $ shortlog
   o  3:d60cb8989666 test 0 0 - foo - addf
   |
@@ -211,6 +225,27 @@ Test applying multiple patches with --exact
   
 
   $ cd ..
+
+Test avoiding editor invocation at applying the patch with --exact
+even if commit message is empty
+
+  $ cd repo-options
+
+  $ echo a >> a
+  $ hg commit -m ' '
+  $ hg tip -T "{node}\n"
+  1b77bc7d1db9f0e7f1716d515b630516ab386c89
+  $ hg export -o ../empty-log.diff .
+  $ hg update -q -C ".^1"
+  $ hg --config extensions.strip= strip -q tip
+  $ HGEDITOR=cat hg import --exact --bypass ../empty-log.diff
+  applying ../empty-log.diff
+  $ hg tip -T "{node}\n"
+  1b77bc7d1db9f0e7f1716d515b630516ab386c89
+
+  $ cd ..
+
+#if symlink execbit
 
 Test complicated patch with --exact
 
@@ -259,3 +294,6 @@ data. If not, diff both heads to debug it.
   |
   o  0:a0e19e636a43 test 0 0 - default - t
   
+#endif
+
+  $ cd ..

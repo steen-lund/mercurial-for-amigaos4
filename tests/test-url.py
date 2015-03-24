@@ -1,11 +1,11 @@
-import sys
+import os
 
 def check(a, b):
     if a != b:
         print (a, b)
 
 def cert(cn):
-    return dict(subject=((('commonName', cn),),))
+    return {'subject': ((('commonName', cn),),)}
 
 from mercurial.sslutil import _verifycert
 
@@ -204,18 +204,43 @@ def test_url():
     <url scheme: 'file', path: '/foo/bar/baz'>
     >>> str(u)
     'file:///foo/bar/baz'
+    >>> u.localpath()
+    '/foo/bar/baz'
 
     >>> u = url('file:///foo/bar/baz')
     >>> u
     <url scheme: 'file', path: '/foo/bar/baz'>
     >>> str(u)
     'file:///foo/bar/baz'
+    >>> u.localpath()
+    '/foo/bar/baz'
+
+    >>> u = url('file:///f:oo/bar/baz')
+    >>> u
+    <url scheme: 'file', path: 'f:oo/bar/baz'>
+    >>> str(u)
+    'file:///f:oo/bar/baz'
+    >>> u.localpath()
+    'f:oo/bar/baz'
+
+    >>> u = url('file://localhost/f:oo/bar/baz')
+    >>> u
+    <url scheme: 'file', host: 'localhost', path: 'f:oo/bar/baz'>
+    >>> str(u)
+    'file://localhost/f:oo/bar/baz'
+    >>> u.localpath()
+    'f:oo/bar/baz'
 
     >>> u = url('file:foo/bar/baz')
     >>> u
     <url scheme: 'file', path: 'foo/bar/baz'>
     >>> str(u)
     'file:foo/bar/baz'
+    >>> u.localpath()
+    'foo/bar/baz'
     """
+
+if 'TERM' in os.environ:
+    del os.environ['TERM']
 
 doctest.testmod(optionflags=doctest.NORMALIZE_WHITESPACE)

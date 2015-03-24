@@ -1,5 +1,5 @@
-  $ hg init t
-  $ cd t
+  $ hg init repo
+  $ cd repo
   $ echo 0 > a
   $ echo 0 > b
   $ echo 0 > t.h
@@ -87,34 +87,55 @@ Issue294: hg remove --after dir fails when dir.* also exists
   $ cd ..
   $ rm -r t
 
+  $ hg rm t/b
+
   $ hg locate 't/**'
-  t/b
-  t/e.h
-  t/x
+  t/b (glob)
+  t/e.h (glob)
+  t/x (glob)
+
+  $ hg files
+  b
+  dir.h/foo (glob)
+  t.h
+  t/e.h (glob)
+  t/x (glob)
+  $ hg files b
+  b
 
   $ mkdir otherdir
   $ cd otherdir
 
   $ hg locate b
-  ../b
-  ../t/b
+  ../b (glob)
+  ../t/b (glob)
   $ hg locate '*.h'
-  ../t.h
-  ../t/e.h
+  ../t.h (glob)
+  ../t/e.h (glob)
   $ hg locate path:t/x
-  ../t/x
+  ../t/x (glob)
   $ hg locate 're:.*\.h$'
-  ../t.h
-  ../t/e.h
+  ../t.h (glob)
+  ../t/e.h (glob)
   $ hg locate -r 0 b
-  ../b
-  ../t/b
+  ../b (glob)
+  ../t/b (glob)
   $ hg locate -r 0 '*.h'
-  ../t.h
-  ../t/e.h
+  ../t.h (glob)
+  ../t/e.h (glob)
   $ hg locate -r 0 path:t/x
-  ../t/x
+  ../t/x (glob)
   $ hg locate -r 0 're:.*\.h$'
-  ../t.h
-  ../t/e.h
+  ../t.h (glob)
+  ../t/e.h (glob)
 
+  $ hg files
+  ../b (glob)
+  ../dir.h/foo (glob)
+  ../t.h (glob)
+  ../t/e.h (glob)
+  ../t/x (glob)
+  $ hg files .
+  [1]
+
+  $ cd ../..

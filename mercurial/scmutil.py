@@ -6,9 +6,117 @@
 # GNU General Public License version 2 or any later version.
 
 from i18n import _
-import util, error, osutil, revset, similar
+from mercurial.node import nullrev
+import util, error, osutil, revset, similar, encoding, phases, parsers
+import pathutil
 import match as matchmod
-import os, errno, stat, sys, glob
+import os, errno, re, glob, tempfile
+
+if os.name == 'nt':
+    import scmwindows as scmplatform
+else:
+    import scmposix as scmplatform
+
+systemrcpath = scmplatform.systemrcpath
+userrcpath = scmplatform.userrcpath
+
+class status(tuple):
+    '''Named tuple with a list of files per status. The 'deleted', 'unknown'
+       and 'ignored' properties are only relevant to the working copy.
+    '''
+
+    __slots__ = ()
+
+    def __new__(cls, modified, added, removed, deleted, unknown, ignored,
+                clean):
+        return tuple.__new__(cls, (modified, added, removed, deleted, unknown,
+                                   ignored, clean))
+
+    @property
+    def modified(self):
+        '''files that have been modified'''
+        return self[0]
+
+    @property
+    def added(self):
+        '''files that have been added'''
+        return self[1]
+
+    @property
+    def removed(self):
+        '''files that have been removed'''
+        return self[2]
+
+    @property
+    def deleted(self):
+        '''files that are in the dirstate, but have been deleted from the
+           working copy (aka "missing")
+        '''
+        return self[3]
+
+    @property
+    def unknown(self):
+        '''files not in the dirstate that are not ignored'''
+        return self[4]
+
+    @property
+    def ignored(self):
+        '''files not in the dirstate that are ignored (by _dirignore())'''
+        return self[5]
+
+    @property
+    def clean(self):
+        '''files that have not been modified'''
+        return self[6]
+
+    def __repr__(self, *args, **kwargs):
+        return (('<status modified=%r, added=%r, removed=%r, deleted=%r, '
+                 'unknown=%r, ignored=%r, clean=%r>') % self)
+
+def itersubrepos(ctx1, ctx2):
+    """find subrepos in ctx1 or ctx2"""
+    # Create a (subpath, ctx) mapping where we prefer subpaths from
+    # ctx1. The subpaths from ctx2 are important when the .hgsub file
+    # has been modified (in ctx2) but not yet committed (in ctx1).
+    subpaths = dict.fromkeys(ctx2.substate, ctx2)
+    subpaths.update(dict.fromkeys(ctx1.substate, ctx1))
+    for subpath, ctx in sorted(subpaths.iteritems()):
+        yield subpath, ctx.sub(subpath)
+
+def nochangesfound(ui, repo, excluded=None):
+    '''Report no changes for push/pull, excluded is None or a list of
+    nodes excluded from the push/pull.
+    '''
+    secretlist = []
+    if excluded:
+        for n in excluded:
+            if n not in repo:
+                # discovery should not have included the filtered revision,
+                # we have to explicitly exclude it until discovery is cleanup.
+                continue
+            ctx = repo[n]
+            if ctx.phase() >= phases.secret and not ctx.extinct():
+                secretlist.append(n)
+
+    if secretlist:
+        ui.status(_("no changes found (ignored %d secret changesets)\n")
+                  % len(secretlist))
+    else:
+        ui.status(_("no changes found\n"))
+
+def checknewlabel(repo, lbl, kind):
+    # Do not use the "kind" parameter in ui output.
+    # It makes strings difficult to translate.
+    if lbl in ['tip', '.', 'null']:
+        raise util.Abort(_("the name '%s' is reserved") % lbl)
+    for c in (':', '\0', '\n', '\r'):
+        if c in lbl:
+            raise util.Abort(_("%r cannot be used in a name") % c)
+    try:
+        int(lbl)
+        raise util.Abort(_("cannot use an integer as a name"))
+    except ValueError:
+        pass
 
 def checkfilename(f):
     '''Check that the filename f is an acceptable filename for a tracked file'''
@@ -41,109 +149,76 @@ def checkportabilityalert(ui):
     return abort, warn
 
 class casecollisionauditor(object):
-    def __init__(self, ui, abort, existingiter):
+    def __init__(self, ui, abort, dirstate):
         self._ui = ui
         self._abort = abort
-        self._map = {}
-        for f in existingiter:
-            self._map[f.lower()] = f
+        allfiles = '\0'.join(dirstate._map)
+        self._loweredfiles = set(encoding.lower(allfiles).split('\0'))
+        self._dirstate = dirstate
+        # The purpose of _newfiles is so that we don't complain about
+        # case collisions if someone were to call this object with the
+        # same filename twice.
+        self._newfiles = set()
 
     def __call__(self, f):
-        fl = f.lower()
-        map = self._map
-        if fl in map and map[fl] != f:
+        if f in self._newfiles:
+            return
+        fl = encoding.lower(f)
+        if fl in self._loweredfiles and f not in self._dirstate:
             msg = _('possible case-folding collision for %s') % f
             if self._abort:
                 raise util.Abort(msg)
             self._ui.warn(_("warning: %s\n") % msg)
-        map[fl] = f
+        self._loweredfiles.add(fl)
+        self._newfiles.add(f)
 
-class pathauditor(object):
-    '''ensure that a filesystem path contains no banned components.
-    the following properties of a path are checked:
-
-    - ends with a directory separator
-    - under top-level .hg
-    - starts at the root of a windows drive
-    - contains ".."
-    - traverses a symlink (e.g. a/symlink_here/b)
-    - inside a nested repository (a callback can be used to approve
-      some nested repositories, e.g., subrepositories)
-    '''
-
-    def __init__(self, root, callback=None):
-        self.audited = set()
-        self.auditeddir = set()
-        self.root = root
-        self.callback = callback
-
-    def __call__(self, path):
-        '''Check the relative path.
-        path may contain a pattern (e.g. foodir/**.txt)'''
-
-        if path in self.audited:
-            return
-        # AIX ignores "/" at end of path, others raise EISDIR.
-        if util.endswithsep(path):
-            raise util.Abort(_("path ends in directory separator: %s") % path)
-        normpath = os.path.normcase(path)
-        parts = util.splitpath(normpath)
-        if (os.path.splitdrive(path)[0]
-            or parts[0].lower() in ('.hg', '.hg.', '')
-            or os.pardir in parts):
-            raise util.Abort(_("path contains illegal component: %s") % path)
-        if '.hg' in path.lower():
-            lparts = [p.lower() for p in parts]
-            for p in '.hg', '.hg.':
-                if p in lparts[1:]:
-                    pos = lparts.index(p)
-                    base = os.path.join(*parts[:pos])
-                    raise util.Abort(_('path %r is inside nested repo %r')
-                                     % (path, base))
-
-        parts.pop()
-        prefixes = []
-        while parts:
-            prefix = os.sep.join(parts)
-            if prefix in self.auditeddir:
-                break
-            curpath = os.path.join(self.root, prefix)
-            try:
-                st = os.lstat(curpath)
-            except OSError, err:
-                # EINVAL can be raised as invalid path syntax under win32.
-                # They must be ignored for patterns can be checked too.
-                if err.errno not in (errno.ENOENT, errno.ENOTDIR, errno.EINVAL):
-                    raise
-            else:
-                if stat.S_ISLNK(st.st_mode):
-                    raise util.Abort(
-                        _('path %r traverses symbolic link %r')
-                        % (path, prefix))
-                elif (stat.S_ISDIR(st.st_mode) and
-                      os.path.isdir(os.path.join(curpath, '.hg'))):
-                    if not self.callback or not self.callback(curpath):
-                        raise util.Abort(_('path %r is inside nested repo %r') %
-                                         (path, prefix))
-            prefixes.append(prefix)
-            parts.pop()
-
-        self.audited.add(path)
-        # only add prefixes to the cache after checking everything: we don't
-        # want to add "foo/bar/baz" before checking if there's a "foo/.hg"
-        self.auditeddir.update(prefixes)
-
-class abstractopener(object):
+class abstractvfs(object):
     """Abstract base class; cannot be instantiated"""
 
     def __init__(self, *args, **kwargs):
         '''Prevent instantiation; don't call this from subclasses.'''
         raise NotImplementedError('attempted instantiating ' + str(type(self)))
 
+    def tryread(self, path):
+        '''gracefully return an empty string for missing files'''
+        try:
+            return self.read(path)
+        except IOError, inst:
+            if inst.errno != errno.ENOENT:
+                raise
+        return ""
+
+    def tryreadlines(self, path, mode='rb'):
+        '''gracefully return an empty array for missing files'''
+        try:
+            return self.readlines(path, mode=mode)
+        except IOError, inst:
+            if inst.errno != errno.ENOENT:
+                raise
+        return []
+
+    def open(self, path, mode="r", text=False, atomictemp=False,
+             notindexed=False):
+        '''Open ``path`` file, which is relative to vfs root.
+
+        Newly created directories are marked as "not to be indexed by
+        the content indexing service", if ``notindexed`` is specified
+        for "write" mode access.
+        '''
+        self.open = self.__call__
+        return self.__call__(path, mode, text, atomictemp, notindexed)
+
     def read(self, path):
         fp = self(path, 'rb')
         try:
             return fp.read()
+        finally:
+            fp.close()
+
+    def readlines(self, path, mode='rb'):
+        fp = self(path, mode=mode)
+        try:
+            return fp.readlines()
         finally:
             fp.close()
 
@@ -154,6 +229,13 @@ class abstractopener(object):
         finally:
             fp.close()
 
+    def writelines(self, path, data, mode='wb', notindexed=False):
+        fp = self(path, mode=mode, notindexed=notindexed)
+        try:
+            return fp.writelines(data)
+        finally:
+            fp.close()
+
     def append(self, path, data):
         fp = self(path, 'ab')
         try:
@@ -161,90 +243,198 @@ class abstractopener(object):
         finally:
             fp.close()
 
-class opener(abstractopener):
-    '''Open files relative to a base directory
+    def chmod(self, path, mode):
+        return os.chmod(self.join(path), mode)
+
+    def exists(self, path=None):
+        return os.path.exists(self.join(path))
+
+    def fstat(self, fp):
+        return util.fstat(fp)
+
+    def isdir(self, path=None):
+        return os.path.isdir(self.join(path))
+
+    def isfile(self, path=None):
+        return os.path.isfile(self.join(path))
+
+    def islink(self, path=None):
+        return os.path.islink(self.join(path))
+
+    def reljoin(self, *paths):
+        """join various elements of a path together (as os.path.join would do)
+
+        The vfs base is not injected so that path stay relative. This exists
+        to allow handling of strange encoding if needed."""
+        return os.path.join(*paths)
+
+    def split(self, path):
+        """split top-most element of a path (as os.path.split would do)
+
+        This exists to allow handling of strange encoding if needed."""
+        return os.path.split(path)
+
+    def lexists(self, path=None):
+        return os.path.lexists(self.join(path))
+
+    def lstat(self, path=None):
+        return os.lstat(self.join(path))
+
+    def listdir(self, path=None):
+        return os.listdir(self.join(path))
+
+    def makedir(self, path=None, notindexed=True):
+        return util.makedir(self.join(path), notindexed)
+
+    def makedirs(self, path=None, mode=None):
+        return util.makedirs(self.join(path), mode)
+
+    def makelock(self, info, path):
+        return util.makelock(info, self.join(path))
+
+    def mkdir(self, path=None):
+        return os.mkdir(self.join(path))
+
+    def mkstemp(self, suffix='', prefix='tmp', dir=None, text=False):
+        fd, name = tempfile.mkstemp(suffix=suffix, prefix=prefix,
+                                    dir=self.join(dir), text=text)
+        dname, fname = util.split(name)
+        if dir:
+            return fd, os.path.join(dir, fname)
+        else:
+            return fd, fname
+
+    def readdir(self, path=None, stat=None, skip=None):
+        return osutil.listdir(self.join(path), stat, skip)
+
+    def readlock(self, path):
+        return util.readlock(self.join(path))
+
+    def rename(self, src, dst):
+        return util.rename(self.join(src), self.join(dst))
+
+    def readlink(self, path):
+        return os.readlink(self.join(path))
+
+    def setflags(self, path, l, x):
+        return util.setflags(self.join(path), l, x)
+
+    def stat(self, path=None):
+        return os.stat(self.join(path))
+
+    def unlink(self, path=None):
+        return util.unlink(self.join(path))
+
+    def unlinkpath(self, path=None, ignoremissing=False):
+        return util.unlinkpath(self.join(path), ignoremissing)
+
+    def utime(self, path=None, t=None):
+        return os.utime(self.join(path), t)
+
+class vfs(abstractvfs):
+    '''Operate files relative to a base directory
 
     This class is used to hide the details of COW semantics and
     remote file access from higher level code.
     '''
-    def __init__(self, base, audit=True):
+    def __init__(self, base, audit=True, expandpath=False, realpath=False):
+        if expandpath:
+            base = util.expandpath(base)
+        if realpath:
+            base = os.path.realpath(base)
         self.base = base
-        self._audit = audit
-        if audit:
-            self.auditor = pathauditor(base)
-        else:
-            self.auditor = util.always
+        self._setmustaudit(audit)
         self.createmode = None
         self._trustnlink = None
+
+    def _getmustaudit(self):
+        return self._audit
+
+    def _setmustaudit(self, onoff):
+        self._audit = onoff
+        if onoff:
+            self.audit = pathutil.pathauditor(self.base)
+        else:
+            self.audit = util.always
+
+    mustaudit = property(_getmustaudit, _setmustaudit)
 
     @util.propertycache
     def _cansymlink(self):
         return util.checklink(self.base)
 
+    @util.propertycache
+    def _chmod(self):
+        return util.checkexec(self.base)
+
     def _fixfilemode(self, name):
-        if self.createmode is None:
+        if self.createmode is None or not self._chmod:
             return
         os.chmod(name, self.createmode & 0666)
 
-    def __call__(self, path, mode="r", text=False, atomictemp=False):
+    def __call__(self, path, mode="r", text=False, atomictemp=False,
+                 notindexed=False):
+        '''Open ``path`` file, which is relative to vfs root.
+
+        Newly created directories are marked as "not to be indexed by
+        the content indexing service", if ``notindexed`` is specified
+        for "write" mode access.
+        '''
         if self._audit:
             r = util.checkosfilename(path)
             if r:
                 raise util.Abort("%s: %r" % (r, path))
-        self.auditor(path)
-        f = os.path.join(self.base, path)
+        self.audit(path)
+        f = self.join(path)
 
         if not text and "b" not in mode:
             mode += "b" # for that other OS
 
         nlink = -1
-        dirname, basename = os.path.split(f)
-        # If basename is empty, then the path is malformed because it points
-        # to a directory. Let the posixfile() call below raise IOError.
-        if basename and mode not in ('r', 'rb'):
-            if atomictemp:
-                if not os.path.isdir(dirname):
-                    util.makedirs(dirname, self.createmode)
-                return util.atomictempfile(f, mode, self.createmode)
-            try:
-                if 'w' in mode:
-                    util.unlink(f)
+        if mode not in ('r', 'rb'):
+            dirname, basename = util.split(f)
+            # If basename is empty, then the path is malformed because it points
+            # to a directory. Let the posixfile() call below raise IOError.
+            if basename:
+                if atomictemp:
+                    util.ensuredirs(dirname, self.createmode, notindexed)
+                    return util.atomictempfile(f, mode, self.createmode)
+                try:
+                    if 'w' in mode:
+                        util.unlink(f)
+                        nlink = 0
+                    else:
+                        # nlinks() may behave differently for files on Windows
+                        # shares if the file is open.
+                        fd = util.posixfile(f)
+                        nlink = util.nlinks(f)
+                        if nlink < 1:
+                            nlink = 2 # force mktempcopy (issue1922)
+                        fd.close()
+                except (OSError, IOError), e:
+                    if e.errno != errno.ENOENT:
+                        raise
                     nlink = 0
-                else:
-                    # nlinks() may behave differently for files on Windows
-                    # shares if the file is open.
-                    fd = util.posixfile(f)
-                    nlink = util.nlinks(f)
-                    if nlink < 1:
-                        nlink = 2 # force mktempcopy (issue1922)
-                    fd.close()
-            except (OSError, IOError), e:
-                if e.errno != errno.ENOENT:
-                    raise
-                nlink = 0
-                if not os.path.isdir(dirname):
-                    util.makedirs(dirname, self.createmode)
-            if nlink > 0:
-                if self._trustnlink is None:
-                    self._trustnlink = nlink > 1 or util.checknlink(f)
-                if nlink > 1 or not self._trustnlink:
-                    util.rename(util.mktempcopy(f), f)
+                    util.ensuredirs(dirname, self.createmode, notindexed)
+                if nlink > 0:
+                    if self._trustnlink is None:
+                        self._trustnlink = nlink > 1 or util.checknlink(f)
+                    if nlink > 1 or not self._trustnlink:
+                        util.rename(util.mktempcopy(f), f)
         fp = util.posixfile(f, mode)
         if nlink == 0:
             self._fixfilemode(f)
         return fp
 
     def symlink(self, src, dst):
-        self.auditor(dst)
-        linkname = os.path.join(self.base, dst)
+        self.audit(dst)
+        linkname = self.join(dst)
         try:
             os.unlink(linkname)
         except OSError:
             pass
 
-        dirname = os.path.dirname(linkname)
-        if not os.path.exists(dirname):
-            util.makedirs(dirname, self.createmode)
+        util.ensuredirs(os.path.dirname(linkname), self.createmode)
 
         if self._cansymlink:
             try:
@@ -253,81 +443,68 @@ class opener(abstractopener):
                 raise OSError(err.errno, _('could not symlink to %r: %s') %
                               (src, err.strerror), linkname)
         else:
-            f = self(dst, "w")
-            f.write(src)
-            f.close()
-            self._fixfilemode(dst)
+            self.write(dst, src)
 
-    def audit(self, path):
-        self.auditor(path)
+    def join(self, path):
+        if path:
+            return os.path.join(self.base, path)
+        else:
+            return self.base
 
-class filteropener(abstractopener):
-    '''Wrapper opener for filtering filenames with a function.'''
+opener = vfs
 
-    def __init__(self, opener, filter):
+class auditvfs(object):
+    def __init__(self, vfs):
+        self.vfs = vfs
+
+    def _getmustaudit(self):
+        return self.vfs.mustaudit
+
+    def _setmustaudit(self, onoff):
+        self.vfs.mustaudit = onoff
+
+    mustaudit = property(_getmustaudit, _setmustaudit)
+
+class filtervfs(abstractvfs, auditvfs):
+    '''Wrapper vfs for filtering filenames with a function.'''
+
+    def __init__(self, vfs, filter):
+        auditvfs.__init__(self, vfs)
         self._filter = filter
-        self._orig = opener
 
     def __call__(self, path, *args, **kwargs):
-        return self._orig(self._filter(path), *args, **kwargs)
+        return self.vfs(self._filter(path), *args, **kwargs)
 
-def canonpath(root, cwd, myname, auditor=None):
-    '''return the canonical path of myname, given cwd and root'''
-    if util.endswithsep(root):
-        rootsep = root
-    else:
-        rootsep = root + os.sep
-    name = myname
-    if not os.path.isabs(name):
-        name = os.path.join(root, cwd, name)
-    name = os.path.normpath(name)
-    if auditor is None:
-        auditor = pathauditor(root)
-    if name != rootsep and name.startswith(rootsep):
-        name = name[len(rootsep):]
-        auditor(name)
-        return util.pconvert(name)
-    elif name == root:
-        return ''
-    else:
-        # Determine whether `name' is in the hierarchy at or beneath `root',
-        # by iterating name=dirname(name) until that causes no change (can't
-        # check name == '/', because that doesn't work on windows).  For each
-        # `name', compare dev/inode numbers.  If they match, the list `rel'
-        # holds the reversed list of components making up the relative file
-        # name we want.
-        root_st = os.stat(root)
-        rel = []
-        while True:
-            try:
-                name_st = os.stat(name)
-            except OSError:
-                break
-            if util.samestat(name_st, root_st):
-                if not rel:
-                    # name was actually the same as root (maybe a symlink)
-                    return ''
-                rel.reverse()
-                name = os.path.join(*rel)
-                auditor(name)
-                return util.pconvert(name)
-            dirname, basename = os.path.split(name)
-            rel.append(basename)
-            if dirname == name:
-                break
-            name = dirname
+    def join(self, path):
+        if path:
+            return self.vfs.join(self._filter(path))
+        else:
+            return self.vfs.join(path)
 
-        raise util.Abort('%s not under root' % myname)
+filteropener = filtervfs
+
+class readonlyvfs(abstractvfs, auditvfs):
+    '''Wrapper vfs preventing any writing.'''
+
+    def __init__(self, vfs):
+        auditvfs.__init__(self, vfs)
+
+    def __call__(self, path, mode='r', *args, **kw):
+        if mode not in ('r', 'rb'):
+            raise util.Abort('this vfs is read only')
+        return self.vfs(path, mode, *args, **kw)
+
 
 def walkrepos(path, followsym=False, seen_dirs=None, recurse=False):
-    '''yield every hg repository under path, recursively.'''
+    '''yield every hg repository under path, always recursively.
+    The recurse flag will only control recursion into repo working dirs'''
     def errhandler(err):
         if err.filename == path:
             raise err
-    if followsym and hasattr(os.path, 'samestat'):
+    samestat = getattr(os.path, 'samestat', None)
+    if followsym and samestat is not None:
         def adddir(dirlst, dirname):
             match = False
-            samestat = os.path.samestat
             dirstat = os.stat(dirname)
             for lstdirstat in dirlst:
                 if samestat(dirstat, lstdirstat):
@@ -368,7 +545,13 @@ def walkrepos(path, followsym=False, seen_dirs=None, recurse=False):
 
 def osrcpath():
     '''return default os-specific hgrc search path'''
-    path = systemrcpath()
+    path = []
+    defaultpath = os.path.join(util.datapath, 'default.d')
+    if os.path.isdir(defaultpath):
+        for f, kind in osutil.listdir(defaultpath):
+            if f.endswith('.rc'):
+                path.append(os.path.join(defaultpath, f))
+    path.extend(systemrcpath())
     path.extend(userrcpath())
     path = [os.path.normpath(f) for f in path]
     return path
@@ -399,96 +582,14 @@ def rcpath():
             _rcpath = osrcpath()
     return _rcpath
 
-
-if os.name == 'amiga':
-
-    def systemrcpath():
-        path =  [];
-        path.extend(["ENV:hg/.hgrc"]);
-        return path
-
-    def userrcpath():
-        return [];
-
-elif os.name != 'nt':
-
-    def rcfiles(path):
-        rcs = [os.path.join(path, 'hgrc')]
-        rcdir = os.path.join(path, 'hgrc.d')
-        try:
-            rcs.extend([os.path.join(rcdir, f)
-                        for f, kind in osutil.listdir(rcdir)
-                        if f.endswith(".rc")])
-        except OSError:
-            pass
-        return rcs
-
-    def systemrcpath():
-        path = []
-        # old mod_python does not set sys.argv
-        if len(getattr(sys, 'argv', [])) > 0:
-            p = os.path.dirname(os.path.dirname(sys.argv[0]))
-            path.extend(rcfiles(os.path.join(p, 'etc/mercurial')))
-        path.extend(rcfiles('/etc/mercurial'))
-        return path
-
-    def userrcpath():
-        return [os.path.expanduser('~/.hgrc')]
-
-else:
-
-    _HKEY_LOCAL_MACHINE = 0x80000002L
-
-    def systemrcpath():
-        '''return default os-specific hgrc search path'''
-        rcpath = []
-        filename = util.executablepath()
-        # Use mercurial.ini found in directory with hg.exe
-        progrc = os.path.join(os.path.dirname(filename), 'mercurial.ini')
-        if os.path.isfile(progrc):
-            rcpath.append(progrc)
-            return rcpath
-        # Use hgrc.d found in directory with hg.exe
-        progrcd = os.path.join(os.path.dirname(filename), 'hgrc.d')
-        if os.path.isdir(progrcd):
-            for f, kind in osutil.listdir(progrcd):
-                if f.endswith('.rc'):
-                    rcpath.append(os.path.join(progrcd, f))
-            return rcpath
-        # else look for a system rcpath in the registry
-        value = util.lookupreg('SOFTWARE\\Mercurial', None,
-                               _HKEY_LOCAL_MACHINE)
-        if not isinstance(value, str) or not value:
-            return rcpath
-        value = value.replace('/', os.sep)
-        for p in value.split(os.pathsep):
-            if p.lower().endswith('mercurial.ini'):
-                rcpath.append(p)
-            elif os.path.isdir(p):
-                for f, kind in osutil.listdir(p):
-                    if f.endswith('.rc'):
-                        rcpath.append(os.path.join(p, f))
-        return rcpath
-
-    def userrcpath():
-        '''return os-specific hgrc search path to the user dir'''
-        home = os.path.expanduser('~')
-        path = [os.path.join(home, 'mercurial.ini'),
-                os.path.join(home, '.hgrc')]
-        userprofile = os.environ.get('USERPROFILE')
-        if userprofile:
-            path.append(os.path.join(userprofile, 'mercurial.ini'))
-            path.append(os.path.join(userprofile, '.hgrc'))
-        return path
-
 def revsingle(repo, revspec, default='.'):
-    if not revspec:
+    if not revspec and revspec != 0:
         return repo[default]
 
     l = revrange(repo, [revspec])
-    if len(l) < 1:
+    if not l:
         raise util.Abort(_('empty revision set'))
-    return repo[l[-1]]
+    return repo[l.last()]
 
 def revpair(repo, revs):
     if not revs:
@@ -496,13 +597,25 @@ def revpair(repo, revs):
 
     l = revrange(repo, revs)
 
-    if len(l) == 0:
-        return repo.dirstate.p1(), None
+    if not l:
+        first = second = None
+    elif l.isascending():
+        first = l.min()
+        second = l.max()
+    elif l.isdescending():
+        first = l.max()
+        second = l.min()
+    else:
+        first = l.first()
+        second = l.last()
 
-    if len(l) == 1:
-        return repo.lookup(l[0]), None
+    if first is None:
+        raise util.Abort(_('empty revision range'))
 
-    return repo.lookup(l[0]), repo.lookup(l[-1])
+    if first == second and len(revs) == 1 and _revrangesep not in revs[0]:
+        return repo.lookup(first), None
+
+    return repo.lookup(first), repo.lookup(second)
 
 _revrangesep = ':'
 
@@ -512,66 +625,83 @@ def revrange(repo, revs):
     def revfix(repo, val, defval):
         if not val and val != 0 and defval is not None:
             return defval
-        return repo.changelog.rev(repo.lookup(val))
+        return repo[val].rev()
 
-    seen, l = set(), []
+    seen, l = set(), revset.baseset([])
     for spec in revs:
+        if l and not seen:
+            seen = set(l)
         # attempt to parse old-style ranges first to deal with
         # things like old-tag which contain query metacharacters
         try:
             if isinstance(spec, int):
                 seen.add(spec)
-                l.append(spec)
+                l = l + revset.baseset([spec])
                 continue
 
             if _revrangesep in spec:
                 start, end = spec.split(_revrangesep, 1)
                 start = revfix(repo, start, 0)
                 end = revfix(repo, end, len(repo) - 1)
-                step = start > end and -1 or 1
-                for rev in xrange(start, end + step, step):
-                    if rev in seen:
-                        continue
-                    seen.add(rev)
-                    l.append(rev)
+                if end == nullrev and start < 0:
+                    start = nullrev
+                rangeiter = repo.changelog.revs(start, end)
+                if not seen and not l:
+                    # by far the most common case: revs = ["-1:0"]
+                    l = revset.baseset(rangeiter)
+                    # defer syncing seen until next iteration
+                    continue
+                newrevs = set(rangeiter)
+                if seen:
+                    newrevs.difference_update(seen)
+                    seen.update(newrevs)
+                else:
+                    seen = newrevs
+                l = l + revset.baseset(sorted(newrevs, reverse=start > end))
                 continue
             elif spec and spec in repo: # single unquoted rev
                 rev = revfix(repo, spec, None)
                 if rev in seen:
                     continue
                 seen.add(rev)
-                l.append(rev)
+                l = l + revset.baseset([rev])
                 continue
         except error.RepoLookupError:
             pass
 
         # fall through to new-style queries if old-style fails
-        m = revset.match(repo.ui, spec)
-        for r in m(repo, range(len(repo))):
-            if r not in seen:
-                l.append(r)
-        seen.update(l)
+        m = revset.match(repo.ui, spec, repo)
+        if seen or l:
+            dl = [r for r in m(repo, revset.spanset(repo)) if r not in seen]
+            l = l + revset.baseset(dl)
+            seen.update(dl)
+        else:
+            l = m(repo, revset.spanset(repo))
 
     return l
 
 def expandpats(pats):
+    '''Expand bare globs when running on windows.
+    On posix we assume it already has already been done by sh.'''
     if not util.expandglobs:
         return list(pats)
     ret = []
-    for p in pats:
-        kind, name = matchmod._patsplit(p, None)
+    for kindpat in pats:
+        kind, pat = matchmod._patsplit(kindpat, None)
         if kind is None:
             try:
-                globbed = glob.glob(name)
+                globbed = glob.glob(pat)
             except re.error:
-                globbed = [name]
+                globbed = [pat]
             if globbed:
                 ret.extend(globbed)
                 continue
-        ret.append(p)
+        ret.append(kindpat)
     return ret
 
-def match(ctx, pats=[], opts={}, globbed=False, default='relpath'):
+def matchandpats(ctx, pats=[], opts={}, globbed=False, default='relpath'):
+    '''Return a matcher and the patterns that were used.
+    The matcher will warn about bad matches.'''
     if pats == ("",):
         pats = []
     if not globbed and default == 'relpath':
@@ -582,109 +712,169 @@ def match(ctx, pats=[], opts={}, globbed=False, default='relpath'):
     def badfn(f, msg):
         ctx._repo.ui.warn("%s: %s\n" % (m.rel(f), msg))
     m.bad = badfn
-    return m
+    return m, pats
+
+def match(ctx, pats=[], opts={}, globbed=False, default='relpath'):
+    '''Return a matcher that will warn about bad matches.'''
+    return matchandpats(ctx, pats, opts, globbed, default)[0]
 
 def matchall(repo):
+    '''Return a matcher that will efficiently match everything.'''
     return matchmod.always(repo.root, repo.getcwd())
 
 def matchfiles(repo, files):
+    '''Return a matcher that will efficiently match exactly these files.'''
     return matchmod.exact(repo.root, repo.getcwd(), files)
 
-def addremove(repo, pats=[], opts={}, dry_run=None, similarity=None):
+def addremove(repo, matcher, prefix, opts={}, dry_run=None, similarity=None):
+    m = matcher
     if dry_run is None:
         dry_run = opts.get('dry_run')
     if similarity is None:
         similarity = float(opts.get('similarity') or 0)
-    # we'd use status here, except handling of symlinks and ignore is tricky
-    added, unknown, deleted, removed = [], [], [], []
-    audit_path = pathauditor(repo.root)
-    m = match(repo[None], pats, opts)
-    for abs in repo.walk(m):
-        target = repo.wjoin(abs)
-        good = True
-        try:
-            audit_path(abs)
-        except (OSError, util.Abort):
-            good = False
-        rel = m.rel(abs)
-        exact = m.exact(abs)
-        if good and abs not in repo.dirstate:
-            unknown.append(abs)
-            if repo.ui.verbose or not exact:
-                repo.ui.status(_('adding %s\n') % ((pats and rel) or abs))
-        elif repo.dirstate[abs] != 'r' and (not good or not os.path.lexists(target)
-            or (os.path.isdir(target) and not os.path.islink(target))):
-            deleted.append(abs)
-            if repo.ui.verbose or not exact:
-                repo.ui.status(_('removing %s\n') % ((pats and rel) or abs))
-        # for finding renames
-        elif repo.dirstate[abs] == 'r':
-            removed.append(abs)
-        elif repo.dirstate[abs] == 'a':
-            added.append(abs)
-    copies = {}
-    if similarity > 0:
-        for old, new, score in similar.findrenames(repo,
-                added + unknown, removed + deleted, similarity):
-            if repo.ui.verbose or not m.exact(old) or not m.exact(new):
-                repo.ui.status(_('recording removal of %s as rename to %s '
-                                 '(%d%% similar)\n') %
-                               (m.rel(old), m.rel(new), score * 100))
-            copies[new] = old
 
-    if not dry_run:
-        wctx = repo[None]
-        wlock = repo.wlock()
-        try:
-            wctx.forget(deleted)
-            wctx.add(unknown)
-            for new, old in copies.iteritems():
-                wctx.copy(old, new)
-        finally:
-            wlock.release()
+    ret = 0
+    join = lambda f: os.path.join(prefix, f)
 
-def updatedir(ui, repo, patches, similarity=0):
-    '''Update dirstate after patch application according to metadata'''
-    if not patches:
-        return []
-    copies = []
-    removes = set()
-    cfiles = patches.keys()
-    cwd = repo.getcwd()
-    if cwd:
-        cfiles = [util.pathto(repo.root, cwd, f) for f in patches.keys()]
-    for f in patches:
-        gp = patches[f]
-        if not gp:
-            continue
-        if gp.op == 'RENAME':
-            copies.append((gp.oldpath, gp.path))
-            removes.add(gp.oldpath)
-        elif gp.op == 'COPY':
-            copies.append((gp.oldpath, gp.path))
-        elif gp.op == 'DELETE':
-            removes.add(gp.path)
+    def matchessubrepo(matcher, subpath):
+        if matcher.exact(subpath):
+            return True
+        for f in matcher.files():
+            if f.startswith(subpath):
+                return True
+        return False
 
     wctx = repo[None]
-    for src, dst in copies:
-        dirstatecopy(ui, repo, wctx, src, dst, cwd=cwd)
-    if (not similarity) and removes:
-        wctx.remove(sorted(removes), True)
+    for subpath in sorted(wctx.substate):
+        if opts.get('subrepos') or matchessubrepo(m, subpath):
+            sub = wctx.sub(subpath)
+            try:
+                submatch = matchmod.narrowmatcher(subpath, m)
+                if sub.addremove(submatch, prefix, opts, dry_run, similarity):
+                    ret = 1
+            except error.LookupError:
+                repo.ui.status(_("skipping missing subrepository: %s\n")
+                                 % join(subpath))
 
-    for f in patches:
-        gp = patches[f]
-        if gp and gp.mode:
-            islink, isexec = gp.mode
-            dst = repo.wjoin(gp.path)
-            # patch won't create empty files
-            if gp.op == 'ADD' and not os.path.lexists(dst):
-                flags = (isexec and 'x' or '') + (islink and 'l' or '')
-                repo.wwrite(gp.path, '', flags)
-            util.setflags(dst, islink, isexec)
-    addremove(repo, cfiles, similarity=similarity)
-    files = patches.keys()
-    files.extend([r for r in removes if r not in files])
-    return sorted(files)
+    rejected = []
+    origbad = m.bad
+    def badfn(f, msg):
+        if f in m.files():
+            origbad(f, msg)
+        rejected.append(f)
+
+    m.bad = badfn
+    added, unknown, deleted, removed, forgotten = _interestingfiles(repo, m)
+    m.bad = origbad
+
+    unknownset = set(unknown + forgotten)
+    toprint = unknownset.copy()
+    toprint.update(deleted)
+    for abs in sorted(toprint):
+        if repo.ui.verbose or not m.exact(abs):
+            if abs in unknownset:
+                status = _('adding %s\n') % m.uipath(abs)
+            else:
+                status = _('removing %s\n') % m.uipath(abs)
+            repo.ui.status(status)
+
+    renames = _findrenames(repo, m, added + unknown, removed + deleted,
+                           similarity)
+
+    if not dry_run:
+        _markchanges(repo, unknown + forgotten, deleted, renames)
+
+    for f in rejected:
+        if f in m.files():
+            return 1
+    return ret
+
+def marktouched(repo, files, similarity=0.0):
+    '''Assert that files have somehow been operated upon. files are relative to
+    the repo root.'''
+    m = matchfiles(repo, files)
+    rejected = []
+    m.bad = lambda x, y: rejected.append(x)
+
+    added, unknown, deleted, removed, forgotten = _interestingfiles(repo, m)
+
+    if repo.ui.verbose:
+        unknownset = set(unknown + forgotten)
+        toprint = unknownset.copy()
+        toprint.update(deleted)
+        for abs in sorted(toprint):
+            if abs in unknownset:
+                status = _('adding %s\n') % abs
+            else:
+                status = _('removing %s\n') % abs
+            repo.ui.status(status)
+
+    renames = _findrenames(repo, m, added + unknown, removed + deleted,
+                           similarity)
+
+    _markchanges(repo, unknown + forgotten, deleted, renames)
+
+    for f in rejected:
+        if f in m.files():
+            return 1
+    return 0
+
+def _interestingfiles(repo, matcher):
+    '''Walk dirstate with matcher, looking for files that addremove would care
+    about.
+
+    This is different from dirstate.status because it doesn't care about
+    whether files are modified or clean.'''
+    added, unknown, deleted, removed, forgotten = [], [], [], [], []
+    audit_path = pathutil.pathauditor(repo.root)
+
+    ctx = repo[None]
+    dirstate = repo.dirstate
+    walkresults = dirstate.walk(matcher, sorted(ctx.substate), True, False,
+                                full=False)
+    for abs, st in walkresults.iteritems():
+        dstate = dirstate[abs]
+        if dstate == '?' and audit_path.check(abs):
+            unknown.append(abs)
+        elif dstate != 'r' and not st:
+            deleted.append(abs)
+        elif dstate == 'r' and st:
+            forgotten.append(abs)
+        # for finding renames
+        elif dstate == 'r' and not st:
+            removed.append(abs)
+        elif dstate == 'a':
+            added.append(abs)
+
+    return added, unknown, deleted, removed, forgotten
+
+def _findrenames(repo, matcher, added, removed, similarity):
+    '''Find renames from removed files to added ones.'''
+    renames = {}
+    if similarity > 0:
+        for old, new, score in similar.findrenames(repo, added, removed,
+                                                   similarity):
+            if (repo.ui.verbose or not matcher.exact(old)
+                or not matcher.exact(new)):
+                repo.ui.status(_('recording removal of %s as rename to %s '
+                                 '(%d%% similar)\n') %
+                               (matcher.rel(old), matcher.rel(new),
+                                score * 100))
+            renames[new] = old
+    return renames
+
+def _markchanges(repo, unknown, deleted, renames):
+    '''Marks the files in unknown as added, the files in deleted as removed,
+    and the files in renames as copied.'''
+    wctx = repo[None]
+    wlock = repo.wlock()
+    try:
+        wctx.forget(deleted)
+        wctx.add(unknown)
+        for new, old in renames.iteritems():
+            wctx.copy(old, new)
+    finally:
+        wlock.release()
 
 def dirstatecopy(ui, repo, wctx, src, dst, dryrun=False, cwd=None):
     """Update the dirstate to reflect the intent of copying src to dst. For
@@ -717,6 +907,202 @@ def readrequires(opener, supported):
             missings.append(r)
     missings.sort()
     if missings:
-        raise error.RequirementError(_("unknown repository format: "
-            "requires features '%s' (upgrade Mercurial)") % "', '".join(missings))
+        raise error.RequirementError(
+            _("repository requires features unknown to this Mercurial: %s")
+            % " ".join(missings),
+            hint=_("see http://mercurial.selenic.com/wiki/MissingRequirement"
+                   " for more information"))
     return requirements
+
+class filecachesubentry(object):
+    def __init__(self, path, stat):
+        self.path = path
+        self.cachestat = None
+        self._cacheable = None
+
+        if stat:
+            self.cachestat = filecachesubentry.stat(self.path)
+
+            if self.cachestat:
+                self._cacheable = self.cachestat.cacheable()
+            else:
+                # None means we don't know yet
+                self._cacheable = None
+
+    def refresh(self):
+        if self.cacheable():
+            self.cachestat = filecachesubentry.stat(self.path)
+
+    def cacheable(self):
+        if self._cacheable is not None:
+            return self._cacheable
+
+        # we don't know yet, assume it is for now
+        return True
+
+    def changed(self):
+        # no point in going further if we can't cache it
+        if not self.cacheable():
+            return True
+
+        newstat = filecachesubentry.stat(self.path)
+
+        # we may not know if it's cacheable yet, check again now
+        if newstat and self._cacheable is None:
+            self._cacheable = newstat.cacheable()
+
+            # check again
+            if not self._cacheable:
+                return True
+
+        if self.cachestat != newstat:
+            self.cachestat = newstat
+            return True
+        else:
+            return False
+
+    @staticmethod
+    def stat(path):
+        try:
+            return util.cachestat(path)
+        except OSError, e:
+            if e.errno != errno.ENOENT:
+                raise
+
+class filecacheentry(object):
+    def __init__(self, paths, stat=True):
+        self._entries = []
+        for path in paths:
+            self._entries.append(filecachesubentry(path, stat))
+
+    def changed(self):
+        '''true if any entry has changed'''
+        for entry in self._entries:
+            if entry.changed():
+                return True
+        return False
+
+    def refresh(self):
+        for entry in self._entries:
+            entry.refresh()
+
+class filecache(object):
+    '''A property like decorator that tracks files under .hg/ for updates.
+
+    Records stat info when called in _filecache.
+
+    On subsequent calls, compares old stat info with new info, and recreates the
+    object when any of the files changes, updating the new stat info in
+    _filecache.
+
+    Mercurial either atomic renames or appends for files under .hg,
+    so to ensure the cache is reliable we need the filesystem to be able
+    to tell us if a file has been replaced. If it can't, we fallback to
+    recreating the object on every call (essentially the same behaviour as
+    propertycache).
+
+    '''
+    def __init__(self, *paths):
+        self.paths = paths
+
+    def join(self, obj, fname):
+        """Used to compute the runtime path of a cached file.
+
+        Users should subclass filecache and provide their own version of this
+        function to call the appropriate join function on 'obj' (an instance
+        of the class that its member function was decorated).
+        """
+        return obj.join(fname)
+
+    def __call__(self, func):
+        self.func = func
+        self.name = func.__name__
+        return self
+
+    def __get__(self, obj, type=None):
+        # do we need to check if the file changed?
+        if self.name in obj.__dict__:
+            assert self.name in obj._filecache, self.name
+            return obj.__dict__[self.name]
+
+        entry = obj._filecache.get(self.name)
+
+        if entry:
+            if entry.changed():
+                entry.obj = self.func(obj)
+        else:
+            paths = [self.join(obj, path) for path in self.paths]
+
+            # We stat -before- creating the object so our cache doesn't lie if
+            # a writer modified between the time we read and stat
+            entry = filecacheentry(paths, True)
+            entry.obj = self.func(obj)
+
+            obj._filecache[self.name] = entry
+
+        obj.__dict__[self.name] = entry.obj
+        return entry.obj
+
+    def __set__(self, obj, value):
+        if self.name not in obj._filecache:
+            # we add an entry for the missing value because X in __dict__
+            # implies X in _filecache
+            paths = [self.join(obj, path) for path in self.paths]
+            ce = filecacheentry(paths, False)
+            obj._filecache[self.name] = ce
+        else:
+            ce = obj._filecache[self.name]
+
+        ce.obj = value # update cached copy
+        obj.__dict__[self.name] = value # update copy returned by obj.x
+
+    def __delete__(self, obj):
+        try:
+            del obj.__dict__[self.name]
+        except KeyError:
+            raise AttributeError(self.name)
+
+class dirs(object):
+    '''a multiset of directory names from a dirstate or manifest'''
+
+    def __init__(self, map, skip=None):
+        self._dirs = {}
+        addpath = self.addpath
+        if util.safehasattr(map, 'iteritems') and skip is not None:
+            for f, s in map.iteritems():
+                if s[0] != skip:
+                    addpath(f)
+        else:
+            for f in map:
+                addpath(f)
+
+    def addpath(self, path):
+        dirs = self._dirs
+        for base in finddirs(path):
+            if base in dirs:
+                dirs[base] += 1
+                return
+            dirs[base] = 1
+
+    def delpath(self, path):
+        dirs = self._dirs
+        for base in finddirs(path):
+            if dirs[base] > 1:
+                dirs[base] -= 1
+                return
+            del dirs[base]
+
+    def __iter__(self):
+        return self._dirs.iterkeys()
+
+    def __contains__(self, d):
+        return d in self._dirs
+
+if util.safehasattr(parsers, 'dirs'):
+    dirs = parsers.dirs
+
+def finddirs(path):
+    pos = path.rfind('/')
+    while pos != -1:
+        yield path[:pos]
+        pos = path.rfind('/', 0, pos)

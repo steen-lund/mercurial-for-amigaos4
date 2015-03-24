@@ -1,5 +1,5 @@
 Mercurial supports a functional language for selecting a set of
-files. 
+files.
 
 Like other file patterns, this pattern type is indicated by a prefix,
 'set:'. The language supports a number of predicates which are joined
@@ -48,17 +48,17 @@ Some sample queries:
 
 - Find text files that contain a string::
 
-    hg locate "set:grep(magic) and not binary()"
+    hg files "set:grep(magic) and not binary()"
 
 - Find C files in a non-standard encoding::
 
-    hg locate "set:**.c and not encoding(ascii)"
+    hg files "set:**.c and not encoding('UTF-8')"
 
 - Revert copies of large binary files::
 
     hg revert "set:copied() and binary() and size('>1M')"
 
-- Remove files listed in files.lst that contain the letter a or b::
+- Remove files listed in foo.lst that contain the letter a or b::
 
     hg remove "set: 'listfile:foo.lst' and (**a* or **b*)"
 

@@ -1,3 +1,4 @@
+#require serve
 
   $ hgserve()
   > {
@@ -8,13 +9,7 @@
   >    cat hg.pid >> "$DAEMON_PIDS"
   >    echo % errors
   >    cat errors.log
-  >    sleep 1
-  >    if [ "$KILLQUIETLY" = "Y" ]; then
-  >        kill `cat hg.pid` 2>/dev/null
-  >    else
-  >        kill `cat hg.pid`
-  >    fi
-  >    sleep 1
+  >    "$TESTDIR/killdaemons.py" hg.pid
   > }
 
   $ hg init test
@@ -28,9 +23,9 @@ Without -v
   $ hg serve -a localhost -p $HGPORT -d --pid-file=hg.pid -E errors.log
   $ cat hg.pid >> "$DAEMON_PIDS"
   $ if [ -f access.log ]; then
-  $     echo 'access log created - .hg/hgrc respected'
+  >     echo 'access log created - .hg/hgrc respected'
+  > fi
   access log created - .hg/hgrc respected
-  $ fi
 
 errors
 
@@ -50,12 +45,14 @@ With -v and -p HGPORT2
 
 With -v and -p daytime (should fail because low port)
 
+#if no-root
   $ KILLQUIETLY=Y
   $ hgserve -p daytime
   abort: cannot start server at 'localhost:13': Permission denied
   abort: child process failed to start
   % errors
   $ KILLQUIETLY=N
+#endif
 
 With --prefix foo
 
@@ -80,3 +77,5 @@ With --prefix /foo/
   $ hgserve --prefix /foo/
   listening at http://localhost/foo/ (bound to 127.0.0.1:HGPORT1)
   % errors
+
+  $ cd ..

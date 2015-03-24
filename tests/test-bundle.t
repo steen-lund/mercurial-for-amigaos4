@@ -37,6 +37,15 @@ Setting up test
   $ cd ..
   $ hg init empty
 
+Bundle and phase
+
+  $ hg -R test phase --force --secret 0
+  $ hg -R test bundle phase.hg empty
+  searching for changes
+  no changes found (ignored 9 secret changesets)
+  [1]
+  $ hg -R test phase --draft -r 'head()'
+
 Bundle --all
 
   $ hg -R test bundle --all all.hg
@@ -75,6 +84,11 @@ Pull full.hg into test (using --cwd)
   searching for changes
   no changes found
 
+Verify that there are no leaked temporary files after pull (issue2797)
+
+  $ ls test/.hg | grep .hg10un
+  [1]
+
 Pull full.hg into empty (using --cwd)
 
   $ hg --cwd empty pull ../full.hg
@@ -90,7 +104,6 @@ Rollback empty
 
   $ hg -R empty rollback
   repository tip rolled back to revision -1 (undo pull)
-  working directory now based on revision -1
 
 Pull full.hg into empty again (using --cwd)
 
@@ -121,7 +134,6 @@ Rollback empty
 
   $ hg -R empty rollback
   repository tip rolled back to revision -1 (undo pull)
-  working directory now based on revision -1
 
 Pull full.hg into empty again (using -R)
 
@@ -198,8 +210,8 @@ Make sure bundlerepo doesn't leak tempfiles (issue2491)
 
 Pull ../full.hg into empty (with hook)
 
-  $ echo '[hooks]' >> .hg/hgrc
-  $ echo 'changegroup = python "$TESTDIR"/printenv.py changegroup' >> .hg/hgrc
+  $ echo "[hooks]" >> .hg/hgrc
+  $ echo "changegroup = python \"$TESTDIR/printenv.py\" changegroup" >> .hg/hgrc
 
 doesn't work (yet ?)
 
@@ -212,14 +224,13 @@ hg -R bundle://../full.hg verify
   adding manifests
   adding file changes
   added 9 changesets with 7 changes to 4 files (+1 heads)
-  changegroup hook: HG_NODE=f9ee2f85a263049e9ae6d37a0e67e96194ffb735 HG_SOURCE=pull HG_URL=bundle:../full.hg 
+  changegroup hook: HG_NODE=f9ee2f85a263049e9ae6d37a0e67e96194ffb735 HG_SOURCE=pull HG_URL=bundle:../full.hg
   (run 'hg heads' to see heads, 'hg merge' to merge)
 
 Rollback empty
 
   $ hg rollback
   repository tip rolled back to revision -1 (undo pull)
-  working directory now based on revision -1
   $ cd ..
 
 Log -R bundle:empty+full.hg
@@ -236,7 +247,7 @@ Pull full.hg into empty again (using -R; with hook)
   adding manifests
   adding file changes
   added 9 changesets with 7 changes to 4 files (+1 heads)
-  changegroup hook: HG_NODE=f9ee2f85a263049e9ae6d37a0e67e96194ffb735 HG_SOURCE=pull HG_URL=bundle:empty+full.hg 
+  changegroup hook: HG_NODE=f9ee2f85a263049e9ae6d37a0e67e96194ffb735 HG_SOURCE=pull HG_URL=bundle:empty+full.hg
   (run 'hg heads' to see heads, 'hg merge' to merge)
 
 Create partial clones
@@ -257,51 +268,60 @@ Create partial clones
 
 Log -R full.hg in partial
 
-  $ hg -R bundle://../full.hg log
+  $ hg -R bundle://../full.hg log -T phases
   changeset:   8:aa35859c02ea
   tag:         tip
+  phase:       draft
   parent:      3:eebf5a27f8ca
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     0.3m
   
   changeset:   7:a6a34bfa0076
+  phase:       draft
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     1.3m
   
   changeset:   6:7373c1169842
+  phase:       draft
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     1.3
   
   changeset:   5:1bb50a9436a7
+  phase:       draft
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     1.2
   
   changeset:   4:095197eb4973
+  phase:       draft
   parent:      0:f9ee2f85a263
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     1.1
   
   changeset:   3:eebf5a27f8ca
+  phase:       public
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     0.3
   
   changeset:   2:e38ba6f5b7e0
+  phase:       public
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     0.2
   
   changeset:   1:34c2bf6b0626
+  phase:       public
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     0.1
   
   changeset:   0:f9ee2f85a263
+  phase:       public
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     0.0
@@ -378,9 +398,12 @@ Outgoing -R full.hg vs partial2 in partial
 Outgoing -R does-not-exist.hg vs partial2 in partial
 
   $ hg -R bundle://../does-not-exist.hg outgoing ../partial2
-  abort: No such file or directory: ../does-not-exist.hg
+  abort: *../does-not-exist.hg* (glob)
   [255]
   $ cd ..
+
+hide outer repo
+  $ hg init
 
 Direct clone from bundle (all-history)
 
@@ -408,10 +431,10 @@ Direct clone from bundle (all-history)
   $ rm -r full-clone
 
 When cloning from a non-copiable repository into '', do not
-recurse infinitely (issue 2528)
+recurse infinitely (issue2528)
 
   $ hg clone full.hg ''
-  abort: No such file or directory
+  abort: empty destination path is not valid
   [255]
 
 test for http://mercurial.selenic.com/bts/issue216
@@ -434,6 +457,33 @@ Unbundle incremental bundles into fresh empty in one go
   adding file changes
   added 1 changesets with 1 changes to 1 files
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+
+View full contents of the bundle
+  $ hg -R test bundle --base null -r 3  ../partial.hg
+  4 changesets found
+  $ cd test
+  $ hg -R ../../partial.hg log -r "bundle()"
+  changeset:   0:f9ee2f85a263
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     0.0
+  
+  changeset:   1:34c2bf6b0626
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     0.1
+  
+  changeset:   2:e38ba6f5b7e0
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     0.2
+  
+  changeset:   3:eebf5a27f8ca
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     0.3
+  
+  $ cd ..
 
 test for 540d1059c802
 
@@ -486,11 +536,26 @@ note that percent encoding is not handled:
   [255]
   $ cd ..
 
+test to bundle revisions on the newly created branch (issue3828):
+
+  $ hg -q clone -U test test-clone
+  $ cd test
+
+  $ hg -q branch foo
+  $ hg commit -m "create foo branch"
+  $ hg -q outgoing ../test-clone
+  9:b4f5acb1ee27
+  $ hg -q bundle --branch foo foo.hg ../test-clone
+  $ hg -R foo.hg -q log -r "bundle()"
+  9:b4f5acb1ee27
+
+  $ cd ..
+
 test for http://mercurial.selenic.com/bts/issue1144
 
 test that verify bundle does not traceback
 
-partial history bundle, fails w/ unkown parent
+partial history bundle, fails w/ unknown parent
 
   $ hg -R bundle.hg verify
   abort: 00changelog.i@bbd179dfa0a7: unknown parent!
@@ -531,32 +596,36 @@ bundle single branch
   $ hg init branchy
   $ cd branchy
   $ echo a >a
+  $ echo x >x
   $ hg ci -Ama
   adding a
-  $ echo b >b
-  $ hg ci -Amb
-  adding b
-  $ echo b1 >b1
-  $ hg ci -Amb1
-  adding b1
-  $ hg up 0
-  0 files updated, 0 files merged, 2 files removed, 0 files unresolved
+  adding x
   $ echo c >c
+  $ echo xx >x
   $ hg ci -Amc
   adding c
-  created new head
   $ echo c1 >c1
   $ hg ci -Amc1
   adding c1
-  $ hg clone -q .#tip part
+  $ hg up 0
+  1 files updated, 0 files merged, 2 files removed, 0 files unresolved
+  $ echo b >b
+  $ hg ci -Amb
+  adding b
+  created new head
+  $ echo b1 >b1
+  $ echo xx >x
+  $ hg ci -Amb1
+  adding b1
+  $ hg clone -q -r2 . part
 
 == bundling via incoming
 
   $ hg in -R part --bundle incoming.hg --template "{node}\n" .
   comparing with .
   searching for changes
-  d2ae7f538514cd87c17547b0de4cea71fe1af9fb
-  5ece8e77363e2b5269e27c66828b72da29e4341a
+  1a38c1b849e8b70c756d2d80b0b9a3ac0b7ea11a
+  057f4db07f61970e1c11e83be79e9d08adc4dc31
 
 == bundling
 
@@ -566,12 +635,25 @@ bundle single branch
   all remote heads known locally
   2 changesets found
   list of changesets:
-  d2ae7f538514cd87c17547b0de4cea71fe1af9fb
-  5ece8e77363e2b5269e27c66828b72da29e4341a
+  1a38c1b849e8b70c756d2d80b0b9a3ac0b7ea11a
+  057f4db07f61970e1c11e83be79e9d08adc4dc31
   bundling: 1/2 changesets (50.00%)
   bundling: 2/2 changesets (100.00%)
   bundling: 1/2 manifests (50.00%)
   bundling: 2/2 manifests (100.00%)
-  bundling: b 1/2 files (50.00%)
-  bundling: b1 2/2 files (100.00%)
+  bundling: b 1/3 files (33.33%)
+  bundling: b1 2/3 files (66.67%)
+  bundling: x 3/3 files (100.00%)
 
+== Test for issue3441
+
+  $ hg clone -q -r0 . part2
+  $ hg -q -R part2 pull bundle.hg
+  $ hg -R part2 verify
+  checking changesets
+  checking manifests
+  crosschecking files in changesets and manifests
+  checking files
+  4 files, 3 changesets, 5 total revisions
+
+  $ cd ..

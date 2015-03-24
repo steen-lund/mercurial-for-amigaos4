@@ -1,17 +1,17 @@
 # French translations for Mercurial
 # Traductions françaises de Mercurial
 # Copyright (C) 2009 Matt Mackall <mpm@selenic.com> and others
-# 
+#
 # Quelques règles :
 # - dans l'aide d'une commande, la première ligne descriptive
 #   commence par un verbe au présent sans majuscule
 # - dans l'aide d'une commande, la description des options
 #   utilise un verbe à l'infinitif
-# 
+#
 # Note : la terminologie ci-dessous est loin d'être complète, figée ou
 #        parfaite. À compléter et à améliorer, particulièrement les
 #        termes comportant un point d'interrogation...
-# 
+#
 # Dictionnaire de termes courants :
 #  - to  apply a patch        appliquer un patch
 #  - a   branch               une branche
@@ -46,7 +46,7 @@
 #        untracked            non suivi, non géré, pas sous contrôle du dépôt,
 #                             hors révision ?
 #  - the working directory    le répertoire de travail
-# 
+#
 # Termes très courants repris de l'anglais - à utiliser sans guillemets
 # pour ne pas alourdir inutilement la traduction :
 #  - a   diff                 un diff ? (ou également un patch ? synonymes...)
@@ -54,7 +54,7 @@
 #  - a   patch                un patch
 #  - a   tag                  un tag
 #  - to  tag                  taguer
-# 
+#
 # Termes anglais avec une signification très spécifique, difficile à
 # paraphraser sans alourdir ou perdre le sens - à utiliser avec guillemets :
 #  - a   bundle               un \"bundle\"
@@ -62,7 +62,7 @@
 #  - a   changeset            un \"changeset\"
 #  - a   changegroup          un \"changegroup\"
 #  - the tip                  la révision \"tip\"
-# 
+#
 # Termes dont le classement / la traduction sont à déterminer :
 #  - a   commit               un commit, un \"commit\"
 #  - to  commit               \"committer\" ? (beuark, même dit tous les jours)
@@ -73,7 +73,7 @@
 #  - to  push                 propager ? (utilisé par svn pour commit)
 #                             publier ? pousser ?? envoyer ??
 #  - the series file (mq)     ?
-# 
+#
 # Notes :
 #  - (cédric) je verrais bien l'ajout d'une rubrique générale dans l'aide
 #    (par exemple 'hg help glossary') librement remplissable par chaque équipe
@@ -81,7 +81,7 @@
 #    qui vont être rencontrés dans mercurial - et en particulier permettrait
 #    de faire le lien avec des termes franglisants parfois utilisés
 #    (par ex. fusionner = "merger", etc.) ... ?
-# 
+#
 msgid ""
 msgstr ""
 "Project-Id-Version: Mercurial\n"
@@ -107,7 +107,7 @@ msgstr "COMMANDES"
 
 #, fuzzy
 msgid "    options:"
-msgstr "options :\n"
+msgstr "    options :"
 
 #, python-format
 msgid "    aliases: %s"
@@ -352,7 +352,7 @@ msgid ""
 msgstr ""
 "    Pour activer l'extension \"truc\" fournie avec Mercurial ou\n"
 "    présente dans le chemin de recherche de Python, déclarez-la\n"
-"    dans votre fichier de configuration hgrc comme suit :"
+"    dans votre fichier de configuration hgrc comme suit ::"
 
 #, fuzzy
 msgid ""
@@ -364,7 +364,7 @@ msgstr ""
 
 #, fuzzy
 msgid "You may also specify the full path to an extension::"
-msgstr "    Vous pouvez aussi indiquer l'endroit où elle se trouve :"
+msgstr "    Vous pouvez aussi indiquer l'endroit où elle se trouve ::"
 
 #, fuzzy
 msgid ""
@@ -380,7 +380,7 @@ msgid ""
 "scope, prepend its path with !::"
 msgstr ""
 "    Pour forcer la désactivation d'une extension activée par un\n"
-"    autre hgrc, précédez son chemin d'un point d'exclamation :"
+"    autre hgrc, précédez son chemin d'un point d'exclamation ::"
 
 #, fuzzy
 msgid ""
@@ -395,7 +395,6 @@ msgstr ""
 "      bar = !/vers/machin.py\n"
 "      # idem, mais aucun chemin n'avait été donné pour chose \n"
 "      chose = !\n"
-"    "
 
 msgid ""
 "When Mercurial accepts more than one revision, they may be specified\n"
@@ -3058,7 +3057,7 @@ msgstr ""
 
 #, fuzzy
 msgid "Common tasks (use \"hg help command\" for more details)::"
-msgstr "Tâches usuelles (utiliser \"hg help commande\" pour plus de détails):"
+msgstr "Tâches usuelles (utiliser \"hg help commande\" pour plus de détails)::"
 
 #, fuzzy
 msgid ""
@@ -3425,48 +3424,22 @@ msgstr "ajout de %s à la liste de patchs (fichier \"series\")\n"
 #, fuzzy
 msgid "remove patches from queue"
 msgstr ""
-"supprime des patchs de la pile\n"
-"\n"
-"    Les patchs ne doivent pas avoir été appliqués, et il est\n"
-"    nécessaire de fournir au moins un patch.\n"
-"\n"
-"    Avec -k/--keep, les fichiers sont préservés au sein du répertoire\n"
-"    de patchs.\n"
-"\n"
-"    Pour arrêter de gérer un patch et le déplacer de manière\n"
-"    permanente vers l'historique du dépôt, utilisez la commande\n"
-"    qfinish."
+"supprime des patchs de la pile"
 
 #, fuzzy
 msgid ""
 "    The patches must not be applied, and at least one patch is required. With\n"
 "    -k/--keep, the patch files are preserved in the patch directory."
 msgstr ""
-"supprime des patchs de la pile\n"
-"\n"
 "    Les patchs ne doivent pas avoir été appliqués, et il est\n"
-"    nécessaire de fournir au moins un patch.\n"
-"\n"
-"    Avec -k/--keep, les fichiers sont préservés au sein du répertoire\n"
-"    de patchs.\n"
-"\n"
-"    Pour arrêter de gérer un patch et le déplacer de manière\n"
-"    permanente vers l'historique du dépôt, utilisez la commande\n"
-"    qfinish."
+"    nécessaire de fournir au moins un patch. Avec -k/--keep, les\n"
+"    fichiers sont préservés au sein du répertoire de patchs."
 
 #, fuzzy
 msgid ""
 "    To stop managing a patch and move it into permanent history,\n"
 "    use the qfinish command."
 msgstr ""
-"supprime des patchs de la pile\n"
-"\n"
-"    Les patchs ne doivent pas avoir été appliqués, et il est\n"
-"    nécessaire de fournir au moins un patch.\n"
-"\n"
-"    Avec -k/--keep, les fichiers sont préservés au sein du répertoire\n"
-"    de patchs.\n"
-"\n"
 "    Pour arrêter de gérer un patch et le déplacer de manière\n"
 "    permanente vers l'historique du dépôt, utilisez la commande\n"
 "    qfinish."
@@ -4432,7 +4405,7 @@ msgstr ""
 
 #, fuzzy
 msgid "For example, if you can refer to a revision as \"foo\", then::"
-msgstr "Par exemple, si \"foo\" désigne une révision, alors :"
+msgstr "Par exemple, si \"foo\" désigne une révision, alors ::"
 
 #, fuzzy
 msgid ""

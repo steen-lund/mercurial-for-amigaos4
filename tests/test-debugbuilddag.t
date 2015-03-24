@@ -1,5 +1,3 @@
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "graphlog=" >> $HGRCPATH
 
 plain
 
@@ -7,44 +5,44 @@ plain
   $ hg debugbuilddag '+2:f +3:p2 @temp <f+4 @default /p2 +2' \
   > --config extensions.progress= --config progress.assume-tty=1 \
   > --config progress.delay=0 --config progress.refresh=0 \
-  > --config progress.width=60 2>&1 | \
-  > python $TESTDIR/filtercr.py
-  
-  building [                                          ]  0/12
-  building [                                          ]  0/12
-  building [                                          ]  0/12
-  building [                                          ]  0/12
-  building [==>                                       ]  1/12
-  building [==>                                       ]  1/12
-  building [==>                                       ]  1/12
-  building [==>                                       ]  1/12
-  building [======>                                   ]  2/12
-  building [======>                                   ]  2/12
-  building [=========>                                ]  3/12
-  building [=========>                                ]  3/12
-  building [=============>                            ]  4/12
-  building [=============>                            ]  4/12
-  building [=============>                            ]  4/12
-  building [=============>                            ]  4/12
-  building [=============>                            ]  4/12
-  building [=============>                            ]  4/12
-  building [================>                         ]  5/12
-  building [================>                         ]  5/12
-  building [====================>                     ]  6/12
-  building [====================>                     ]  6/12
-  building [=======================>                  ]  7/12
-  building [=======================>                  ]  7/12
-  building [===========================>              ]  8/12
-  building [===========================>              ]  8/12
-  building [===========================>              ]  8/12
-  building [===========================>              ]  8/12
-  building [==============================>           ]  9/12
-  building [==============================>           ]  9/12
-  building [==================================>       ] 10/12
-  building [==================================>       ] 10/12
-  building [=====================================>    ] 11/12
-  building [=====================================>    ] 11/12
-                                                              \r (esc)
+  > --config progress.format=topic,bar,number \
+  > --config progress.width=60
+  \r (no-eol) (esc)
+  building [                                          ]  0/12\r (no-eol) (esc)
+  building [                                          ]  0/12\r (no-eol) (esc)
+  building [                                          ]  0/12\r (no-eol) (esc)
+  building [                                          ]  0/12\r (no-eol) (esc)
+  building [==>                                       ]  1/12\r (no-eol) (esc)
+  building [==>                                       ]  1/12\r (no-eol) (esc)
+  building [==>                                       ]  1/12\r (no-eol) (esc)
+  building [==>                                       ]  1/12\r (no-eol) (esc)
+  building [======>                                   ]  2/12\r (no-eol) (esc)
+  building [======>                                   ]  2/12\r (no-eol) (esc)
+  building [=========>                                ]  3/12\r (no-eol) (esc)
+  building [=========>                                ]  3/12\r (no-eol) (esc)
+  building [=============>                            ]  4/12\r (no-eol) (esc)
+  building [=============>                            ]  4/12\r (no-eol) (esc)
+  building [=============>                            ]  4/12\r (no-eol) (esc)
+  building [=============>                            ]  4/12\r (no-eol) (esc)
+  building [=============>                            ]  4/12\r (no-eol) (esc)
+  building [=============>                            ]  4/12\r (no-eol) (esc)
+  building [================>                         ]  5/12\r (no-eol) (esc)
+  building [================>                         ]  5/12\r (no-eol) (esc)
+  building [====================>                     ]  6/12\r (no-eol) (esc)
+  building [====================>                     ]  6/12\r (no-eol) (esc)
+  building [=======================>                  ]  7/12\r (no-eol) (esc)
+  building [=======================>                  ]  7/12\r (no-eol) (esc)
+  building [===========================>              ]  8/12\r (no-eol) (esc)
+  building [===========================>              ]  8/12\r (no-eol) (esc)
+  building [===========================>              ]  8/12\r (no-eol) (esc)
+  building [===========================>              ]  8/12\r (no-eol) (esc)
+  building [==============================>           ]  9/12\r (no-eol) (esc)
+  building [==============================>           ]  9/12\r (no-eol) (esc)
+  building [==================================>       ] 10/12\r (no-eol) (esc)
+  building [==================================>       ] 10/12\r (no-eol) (esc)
+  building [=====================================>    ] 11/12\r (no-eol) (esc)
+  building [=====================================>    ] 11/12\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
 
 tags
   $ cat .hg/localtags
@@ -60,7 +58,7 @@ tip
   $ hg id
   000000000000
 glog
-  $ hg glog --template '{rev}: {desc} [{branches}] @ {date}\n'
+  $ hg log -G --template '{rev}: {desc} [{branches}] @ {date}\n'
   o  11: r11 [] @ 11.00
   |
   o  10: r10 [] @ 10.00
@@ -86,18 +84,19 @@ glog
   o  0: r0 [] @ 0.00
   
 
-overwritten files
+overwritten files, starting on a non-default branch
 
   $ rm -r .hg
   $ hg init
-  $ hg debugbuilddag '+2:f +3:p2 @temp <f+4 @default /p2 +2' -q -o
+  $ hg debugbuilddag '@start.@default.:f +3:p2 @temp <f+4 @default /p2 +2' -q -o
 tags
   $ cat .hg/localtags
-  2a8ed67d317e370eac733dccc501b12d7b9c441a f
-  4226a30965b7af58f94d0cda7e6c2c9c63e6bf90 p2
+  f778700ebd50fcf282b23a4446bd155da6453eb6 f
+  bbccf169769006e2490efd2a02f11c3d38d462bd p2
 dag
   $ hg debugdag -t -b
-  +2:f
+  @start+1
+  @default+1:f
   +3:p2
   @temp*f+3
   @default*/p2+2:tip
@@ -105,7 +104,7 @@ tip
   $ hg id
   000000000000
 glog
-  $ hg glog --template '{rev}: {desc} [{branches}] @ {date}\n'
+  $ hg log -G --template '{rev}: {desc} [{branches}] @ {date}\n'
   o  11: r11 [] @ 11.00
   |
   o  10: r10 [] @ 10.00
@@ -128,10 +127,10 @@ glog
   |/
   o  1: r1 [] @ 1.00
   |
-  o  0: r0 [] @ 0.00
+  o  0: r0 [start] @ 0.00
   
 glog of
-  $ hg glog --template '{rev}: {desc} [{branches}]\n' of
+  $ hg log -G --template '{rev}: {desc} [{branches}]\n' of
   o  11: r11 []
   |
   o  10: r10 []
@@ -154,13 +153,13 @@ glog of
   |/
   o  1: r1 []
   |
-  o  0: r0 []
+  o  0: r0 [start]
   
 tags
   $ hg tags -v
-  tip                               11:58a51e5eb988
-  p2                                 4:4226a30965b7 local
-  f                                  1:2a8ed67d317e local
+  tip                               11:9ffe238a67a2
+  p2                                 4:bbccf1697690 local
+  f                                  1:f778700ebd50 local
 cat of
   $ hg cat of --rev tip
   r11
@@ -181,7 +180,7 @@ tip
   $ hg id
   000000000000
 glog
-  $ hg glog --template '{rev}: {desc} [{branches}] @ {date}\n'
+  $ hg log -G --template '{rev}: {desc} [{branches}] @ {date}\n'
   o  11: r11 [] @ 11.00
   |
   o  10: r10 [] @ 10.00
@@ -207,7 +206,7 @@ glog
   o  0: r0 [] @ 0.00
   
 glog mf
-  $ hg glog --template '{rev}: {desc} [{branches}]\n' mf
+  $ hg log -G --template '{rev}: {desc} [{branches}]\n' mf
   o  11: r11 []
   |
   o  10: r10 []

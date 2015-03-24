@@ -13,8 +13,12 @@ os.environ["SSH_CLIENT"] = "127.0.0.1 1 2"
 log = open("dummylog", "ab")
 log.write("Got arguments")
 for i, arg in enumerate(sys.argv[1:]):
-    log.write(" %d:%s" % (i+1, arg))
+    log.write(" %d:%s" % (i + 1, arg))
 log.write("\n")
 log.close()
-r = os.system(sys.argv[2])
+hgcmd = sys.argv[2]
+if os.name == 'nt':
+    # hack to make simple unix single quote quoting work on windows
+    hgcmd = hgcmd.replace("'", '"')
+r = os.system(hgcmd)
 sys.exit(bool(r))

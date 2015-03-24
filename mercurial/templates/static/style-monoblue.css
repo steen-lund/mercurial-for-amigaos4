@@ -204,8 +204,8 @@ table tr td {
 table tr td.nowrap {
   white-space: nowrap;
 }
-table tr td.closed { 
-  background-color: #99f; 
+table tr td.closed {
+  background-color: #99f;
 }
 /*
 table tr.parity0:hover,
@@ -260,6 +260,10 @@ div.diff pre span {
   font-size: 1.2em;
   padding: 3px 0;
 }
+span.difflineplus { color:#008800; }
+span.difflineminus { color:#cc0000; }
+span.difflineat { color:#990099; }
+
 td.source {
   white-space: pre;
   font-family: monospace;
@@ -477,3 +481,78 @@ ul#graphnodes li .info {
 	position: relative;
 }
 /** end of canvas **/
+
+/** comparison **/
+.legend {
+    margin-left: 20px;
+    padding: 1.5% 0 1.5% 0;
+}
+
+.legendinfo {
+    border: 1px solid #999;
+    font-size: 80%;
+    text-align: center;
+    padding: 0.5%;
+}
+
+.equal {
+    background-color: #ffffff;
+}
+
+.delete {
+    background-color: #faa;
+    color: #333;
+}
+
+.insert {
+    background-color: #ffa;
+}
+
+.replace {
+    background-color: #e8e8e8;
+}
+
+.comparison {
+    overflow-x: auto;
+}
+
+.comparison table td {
+    padding: 0px 5px;
+}
+
+.header th {
+    font-weight: bold;
+}
+
+.block {
+    border-top: 1px solid #999;
+}
+/** end of comparison **/
+
+.breadcrumb a:hover {
+    text-decoration:underline;
+}
+
+.scroll-loading {
+  -webkit-animation: change_color 1s linear 0s infinite alternate;
+  -moz-animation: change_color 1s linear 0s infinite alternate;
+  -o-animation: change_color 1s linear 0s infinite alternate;
+  animation: change_color 1s linear 0s infinite alternate;
+}
+
+@-webkit-keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+@-moz-keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+@-o-keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+@keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+
+.scroll-loading-error {
+    background-color: #FFCCCC !important;
+}

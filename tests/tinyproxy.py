@@ -12,7 +12,7 @@ Any help will be greatly appreciated.           SUZUKI Hisao
 
 __version__ = "0.2.1"
 
-import BaseHTTPServer, select, socket, SocketServer, urlparse
+import BaseHTTPServer, select, socket, SocketServer, urlparse, os
 
 class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
     __base = BaseHTTPServer.BaseHTTPRequestHandler
@@ -23,7 +23,8 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
 
     def handle(self):
         (ip, port) =  self.client_address
-        if hasattr(self, 'allowed_clients') and ip not in self.allowed_clients:
+        allowed = getattr(self, 'allowed_clients', None)
+        if allowed is not None and ip not in allowed:
             self.raw_requestline = self.rfile.readline()
             if self.parse_request():
                 self.send_error(403)
@@ -46,7 +47,7 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
         try: soc.connect(host_port)
         except socket.error, arg:
             try: msg = arg[1]
-            except: msg = arg
+            except (IndexError, TypeError): msg = arg
             self.send_error(404, msg)
             return 0
         return 1
@@ -106,7 +107,10 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
                         out = self.connection
                     else:
                         out = soc
-                    data = i.recv(8192)
+                    try:
+                        data = i.recv(8192)
+                    except socket.error:
+                        break
                     if data:
                         out.send(data)
                         count = 0
@@ -121,7 +125,12 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
     do_DELETE = do_GET
 
 class ThreadingHTTPServer (SocketServer.ThreadingMixIn,
-                           BaseHTTPServer.HTTPServer): pass
+                           BaseHTTPServer.HTTPServer):
+    def __init__(self, *args, **kwargs):
+        BaseHTTPServer.HTTPServer.__init__(self, *args, **kwargs)
+        a = open("proxy.pid", "w")
+        a.write(str(os.getpid()) + "\n")
+        a.close()
 
 if __name__ == '__main__':
     from sys import argv

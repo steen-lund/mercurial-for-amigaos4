@@ -42,8 +42,6 @@ Poke at a clone:
   0 files, 0 changesets, 0 total revisions
   $ ls .hg
   00changelog.i
-  branch
-  dirstate
   hgrc
   requires
   store
@@ -51,3 +49,5 @@ Poke at a clone:
 Should be empty:
 
   $ ls .hg/store
+
+  $ cd ..

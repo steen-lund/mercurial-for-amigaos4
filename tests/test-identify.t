@@ -1,10 +1,14 @@
-  $ "$TESTDIR/hghave" no-outer-repo || exit 80
+#require serve
+
+#if no-outer-repo
 
 no repo
 
   $ hg id
   abort: there is no Mercurial repository here (.hg not found)
   [255]
+
+#endif
 
 create repo
 
@@ -51,8 +55,10 @@ other local repo
   $ cd ..
   $ hg -R test id
   cb9a9f314b8b+ tip
+#if no-outer-repo
   $ hg id test
   cb9a9f314b8b+ tip
+#endif
 
 with remote http repo
 
@@ -103,15 +109,24 @@ test remote identify with bookmarks
   $ hg id --bookmarks -r . http://localhost:$HGPORT1/
   Y Z
 
+test invalid lookup
+
+  $ hg id -r noNoNO http://localhost:$HGPORT1/
+  abort: unknown revision 'noNoNO'!
+  [255]
+
 Make sure we do not obscure unknown requires file entries (issue2649)
 
   $ echo fake >> .hg/requires
   $ hg id
-  abort: unknown repository format: requires features 'fake' (upgrade Mercurial)!
+  abort: repository requires features unknown to this Mercurial: fake!
+  (see http://mercurial.selenic.com/wiki/MissingRequirement for more information)
   [255]
 
   $ cd ..
+#if no-outer-repo
   $ hg id test
-  abort: unknown repository format: requires features 'fake' (upgrade Mercurial)!
+  abort: repository requires features unknown to this Mercurial: fake!
+  (see http://mercurial.selenic.com/wiki/MissingRequirement for more information)
   [255]
-
+#endif

@@ -11,6 +11,7 @@ from mercurial import encoding, util
 from mercurial.i18n import _
 
 from common import NoRepo, commit, converter_source, checktool
+from common import makedatetimestamp
 import cvsps
 
 class convert_cvs(converter_source):
@@ -70,7 +71,9 @@ class convert_cvs(converter_source):
                 cs.author = self.recode(cs.author)
                 self.lastbranch[cs.branch] = id
                 cs.comment = self.recode(cs.comment)
-                date = util.datestr(cs.date)
+                if self.ui.configbool('convert', 'localtimezone'):
+                    cs.date = makedatetimestamp(cs.date[0])
+                date = util.datestr(cs.date, '%Y-%m-%d %H:%M:%S %1%2')
                 self.tags.update(dict.fromkeys(cs.tags, id))
 
                 files = {}
@@ -121,12 +124,13 @@ class convert_cvs(converter_source):
                         pf = open(cvspass)
                         for line in pf.read().splitlines():
                             part1, part2 = line.split(' ', 1)
+                            # /1 :pserver:user@example.com:2401/cvsroot/foo
+                            # Ah<Z
                             if part1 == '/1':
-                                # /1 :pserver:user@example.com:2401/cvsroot/foo Ah<Z
                                 part1, part2 = part2.split(' ', 1)
                                 format = format1
+                            # :pserver:user@example.com:/cvsroot/foo Ah<Z
                             else:
-                                # :pserver:user@example.com:/cvsroot/foo Ah<Z
                                 format = format0
                             if part1 == format:
                                 passw = part2
@@ -201,7 +205,7 @@ class convert_cvs(converter_source):
     def getfile(self, name, rev):
 
         def chunkedread(fp, count):
-            # file-objects returned by socked.makefile() do not handle
+            # file-objects returned by socket.makefile() do not handle
             # large read() requests very well.
             chunksize = 65536
             output = StringIO()
@@ -216,7 +220,7 @@ class convert_cvs(converter_source):
 
         self._parse()
         if rev.endswith("(DEAD)"):
-            raise IOError
+            return None, None
 
         args = ("-N -P -kk -r %s --" % rev).split()
         args.append(self.cvsrepo + '/' + name)
@@ -254,7 +258,9 @@ class convert_cvs(converter_source):
                 else:
                     raise util.Abort(_("unknown CVS response: %s") % line)
 
-    def getchanges(self, rev):
+    def getchanges(self, rev, full):
+        if full:
+            raise util.Abort(_("convert from cvs do not support --full"))
         self._parse()
         return sorted(self.files[rev].iteritems()), {}
 

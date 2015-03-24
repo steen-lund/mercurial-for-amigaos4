@@ -1,4 +1,4 @@
-  $ "$TESTDIR/hghave" symlink || exit 80
+#require symlink
 
   $ origdir=`pwd`
 
@@ -18,7 +18,7 @@ files
 
   $ cd "$origdir"
   $ cd archive
-  $ $TESTDIR/readlink.py dangling
+  $ "$TESTDIR/readlink.py" dangling
   dangling -> nothing
 
 tar
@@ -26,13 +26,15 @@ tar
   $ cd "$origdir"
   $ tar xf archive.tar
   $ cd tar
-  $ $TESTDIR/readlink.py dangling
+  $ "$TESTDIR/readlink.py" dangling
   dangling -> nothing
 
 zip
 
   $ cd "$origdir"
-  $ unzip archive.zip > /dev/null
+  $ unzip archive.zip > /dev/null 2>&1
   $ cd zip
-  $ $TESTDIR/readlink.py dangling
+  $ "$TESTDIR/readlink.py" dangling
   dangling -> nothing
+
+  $ cd ..

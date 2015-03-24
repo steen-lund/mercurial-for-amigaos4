@@ -89,7 +89,7 @@ class gnuarch_source(converter_source, commandline):
 
             # Get the complete list of revisions for that tree version
             output, status = self.runlines('revisions', '-r', '-f', treeversion)
-            self.checkexit(status, 'failed retrieveing revisions for %s'
+            self.checkexit(status, 'failed retrieving revisions for %s'
                            % treeversion)
 
             # No new iteration unless a revision has a continuation-of header
@@ -137,13 +137,14 @@ class gnuarch_source(converter_source, commandline):
         if rev != self.lastrev:
             raise util.Abort(_('internal calling inconsistency'))
 
-        # Raise IOError if necessary (i.e. deleted files).
         if not os.path.lexists(os.path.join(self.tmppath, name)):
-            raise IOError
+            return None, None
 
         return self._getfile(name, rev)
 
-    def getchanges(self, rev):
+    def getchanges(self, rev, full):
+        if full:
+            raise util.Abort(_("convert from arch do not support --full"))
         self._update(rev)
         changes = []
         copies = {}
@@ -184,7 +185,7 @@ class gnuarch_source(converter_source, commandline):
         cmdline = [self.execmd, cmd]
         cmdline += args
         cmdline = [util.shellquote(arg) for arg in cmdline]
-        cmdline += ['>', util.nulldev, '2>', util.nulldev]
+        cmdline += ['>', os.devnull, '2>', os.devnull]
         cmdline = util.quotecommand(' '.join(cmdline))
         self.ui.debug(cmdline, '\n')
         return os.system(cmdline)

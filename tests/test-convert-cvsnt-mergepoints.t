@@ -1,5 +1,5 @@
+#require cvs
 
-  $ "$TESTDIR/hghave" cvs || exit 80
   $ filterpath()
   > {
   >     eval "$@" | sed "s:$CVSROOT:*REPO*:g"
@@ -22,7 +22,6 @@ output of 'cvs ci' varies unpredictably, so discard most of it
   > }
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "convert = " >> $HGRCPATH
-  $ echo "graphlog = " >> $HGRCPATH
 
 create cvs repository
 
@@ -33,6 +32,7 @@ create cvs repository
   $ CVS_OPTIONS=-f
   $ export CVS_OPTIONS
   $ cd ..
+  $ rmdir cvsmaster
   $ filterpath cvscall -Q -d "$CVSROOT" init
 
 checkout #1: add foo.txt
@@ -43,7 +43,7 @@ checkout #1: add foo.txt
   $ cvscall -Q add foo
   $ cd foo
   $ echo foo > foo.txt
-  $ cvscall -Q add foo.txt 
+  $ cvscall -Q add foo.txt
   $ cvsci -m "add foo.txt" foo.txt
   $ cd ../..
   $ rm -rf cvsworktmp
@@ -91,6 +91,8 @@ script)
   $ echo xyzzy > foo.txt
   $ cvsci -m "merge1+clobber" foo.txt
 
+#if unix-permissions
+
 return to trunk and merge MYBRANCH1_2
 
   $ cvscall -Q update -P -A
@@ -101,7 +103,7 @@ return to trunk and merge MYBRANCH1_2
   Merging differences between 1.1 and 1.1.2.2.2.1 into foo.txt
   $ cvsci -m "merge2" foo.txt
   $ REALCVS=`which cvs`
-  $ echo "for x in \$*; do if [ \"\$x\" = \"rlog\" ]; then echo \"RCS file: $CVSROOT/foo/foo.txt,v\"; cat $TESTDIR/test-convert-cvsnt-mergepoints.rlog; exit 0; fi; done; $REALCVS \$*" > ../cvs
+  $ echo "for x in \$*; do if [ \"\$x\" = \"rlog\" ]; then echo \"RCS file: $CVSROOT/foo/foo.txt,v\"; cat \"$TESTDIR/test-convert-cvsnt-mergepoints.rlog\"; exit 0; fi; done; $REALCVS \$*" > ../cvs
   $ chmod +x ../cvs
   $ PATH=..:${PATH} hg debugcvsps --parents foo
   collecting CVS rlog
@@ -114,7 +116,7 @@ return to trunk and merge MYBRANCH1_2
   Author: user
   Branch: HEAD
   Tag: (none) 
-  Branchpoints: MYBRANCH1_1, MYBRANCH1 
+  Branchpoints: MYBRANCH1, MYBRANCH1_1 
   Log:
   foo.txt
   
@@ -200,3 +202,6 @@ return to trunk and merge MYBRANCH1_2
   Members: 
   	foo.txt:1.1.4.1->1.1.4.2 
   
+#endif
+
+  $ cd ..

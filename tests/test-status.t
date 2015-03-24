@@ -100,6 +100,13 @@ hg status . in repo root:
   ? ../1/in_b_1
   ? in_b_2
   ? ../in_b
+
+combining patterns with root and patterns without a root works
+
+  $ hg st a/in_a re:.*b$
+  ? a/in_a
+  ? b/in_b
+
   $ cd ..
 
   $ hg init repo2
@@ -127,7 +134,7 @@ hg status:
 hg status modified added removed deleted unknown never-existed ignored:
 
   $ hg status modified added removed deleted unknown never-existed ignored
-  never-existed: No such file or directory
+  never-existed: * (glob)
   A added
   R removed
   ! deleted
@@ -158,6 +165,48 @@ hg status -A:
   C .hgignore
   C modified
 
+  $ hg status -A -Tjson
+  [
+   {
+    "path": "added",
+    "status": "A"
+   },
+   {
+    "copy": "modified",
+    "path": "copied",
+    "status": "A"
+   },
+   {
+    "path": "removed",
+    "status": "R"
+   },
+   {
+    "path": "deleted",
+    "status": "!"
+   },
+   {
+    "path": "unknown",
+    "status": "?"
+   },
+   {
+    "path": "ignored",
+    "status": "I"
+   },
+   {
+    "path": ".hgignore",
+    "status": "C"
+   },
+   {
+    "path": "modified",
+    "status": "C"
+   }
+  ]
+
+  $ hg status -A -Tpickle > pickle
+  >>> import pickle
+  >>> print sorted((x['status'], x['path']) for x in pickle.load(open("pickle")))
+  [('!', 'deleted'), ('?', 'pickle'), ('?', 'unknown'), ('A', 'added'), ('A', 'copied'), ('C', '.hgignore'), ('C', 'modified'), ('I', 'ignored'), ('R', 'removed')]
+  $ rm pickle
 
   $ echo "^ignoreddir$" > .hgignore
   $ mkdir ignoreddir
@@ -263,12 +312,127 @@ hg status -C --change 1 added modified copied removed deleted:
     modified
   R removed
 
-hg status -A --change 1:
+hg status -A --change 1 and revset:
 
-  $ hg status -A --change 1
+  $ hg status -A --change '1|1'
   M modified
   A added
   A copied
     modified
   R removed
   C deleted
+
+  $ cd ..
+
+hg status of binary file starting with '\1\n', a separator for metadata:
+
+  $ hg init repo5
+  $ cd repo5
+  >>> open("010a", "wb").write("\1\nfoo")
+  $ hg ci -q -A -m 'initial checkin'
+  $ hg status -A
+  C 010a
+
+  >>> open("010a", "wb").write("\1\nbar")
+  $ hg status -A
+  M 010a
+  $ hg ci -q -m 'modify 010a'
+  $ hg status -A --rev 0:1
+  M 010a
+
+  $ touch empty
+  $ hg ci -q -A -m 'add another file'
+  $ hg status -A --rev 1:2 010a
+  C 010a
+
+  $ cd ..
+
+test "hg status" with "directory pattern" which matches against files
+only known on target revision.
+
+  $ hg init repo6
+  $ cd repo6
+
+  $ echo a > a.txt
+  $ hg add a.txt
+  $ hg commit -m '#0'
+  $ mkdir -p 1/2/3/4/5
+  $ echo b > 1/2/3/4/5/b.txt
+  $ hg add 1/2/3/4/5/b.txt
+  $ hg commit -m '#1'
+
+  $ hg update -C 0 > /dev/null
+  $ hg status -A
+  C a.txt
+
+the directory matching against specified pattern should be removed,
+because directory existence prevents 'dirstate.walk()' from showing
+warning message about such pattern.
+
+  $ test ! -d 1
+  $ hg status -A --rev 1 1/2/3/4/5/b.txt
+  R 1/2/3/4/5/b.txt
+  $ hg status -A --rev 1 1/2/3/4/5
+  R 1/2/3/4/5/b.txt
+  $ hg status -A --rev 1 1/2/3
+  R 1/2/3/4/5/b.txt
+  $ hg status -A --rev 1 1
+  R 1/2/3/4/5/b.txt
+
+  $ hg status --config ui.formatdebug=True --rev 1 1
+  status = [
+      {*'path': '1/2/3/4/5/b.txt'*}, (glob)
+  ]
+
+#if windows
+  $ hg --config ui.slash=false status -A --rev 1 1
+  R 1\2\3\4\5\b.txt
+#endif
+
+  $ cd ..
+
+Status after move overwriting a file (issue4458)
+=================================================
+
+
+  $ hg init issue4458
+  $ cd issue4458
+  $ echo a > a
+  $ echo b > b
+  $ hg commit -Am base
+  adding a
+  adding b
+
+
+with --force
+
+  $ hg mv b --force a
+  $ hg st --copies
+  M a
+    b
+  R b
+  $ hg revert --all
+  reverting a
+  undeleting b
+  $ rm *.orig
+
+without force
+
+  $ hg rm a
+  $ hg st --copies
+  R a
+  $ hg mv b a
+  $ hg st --copies
+  M a
+    b
+  R b
+
+Other "bug" highlight, the revision status does not report the copy information.
+This is buggy behavior.
+
+  $ hg commit -m 'blah'
+  $ hg st --copies --change .
+  M a
+  R b
+
+  $ cd ..

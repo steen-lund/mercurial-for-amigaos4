@@ -17,7 +17,7 @@ from bzr import bzr_source
 from p4 import p4_source
 import filemap
 
-import os, shutil
+import os, shutil, shlex
 from mercurial import hg, util, encoding
 from mercurial.i18n import _
 
@@ -118,8 +118,52 @@ class converter(object):
             self.readauthormap(opts.get('authormap'))
             self.authorfile = self.dest.authorfile()
 
-        self.splicemap = mapfile(ui, opts.get('splicemap'))
+        self.splicemap = self.parsesplicemap(opts.get('splicemap'))
         self.branchmap = mapfile(ui, opts.get('branchmap'))
+
+    def parsesplicemap(self, path):
+        """ check and validate the splicemap format and
+            return a child/parents dictionary.
+            Format checking has two parts.
+            1. generic format which is same across all source types
+            2. specific format checking which may be different for
+               different source type.  This logic is implemented in
+               checkrevformat function in source files like
+               hg.py, subversion.py etc.
+        """
+
+        if not path:
+            return {}
+        m = {}
+        try:
+            fp = open(path, 'r')
+            for i, line in enumerate(fp):
+                line = line.splitlines()[0].rstrip()
+                if not line:
+                    # Ignore blank lines
+                    continue
+                # split line
+                lex = shlex.shlex(line, posix=True)
+                lex.whitespace_split = True
+                lex.whitespace += ','
+                line = list(lex)
+                # check number of parents
+                if not (2 <= len(line) <= 3):
+                    raise util.Abort(_('syntax error in %s(%d): child parent1'
+                                       '[,parent2] expected') % (path, i + 1))
+                for part in line:
+                    self.source.checkrevformat(part)
+                child, p1, p2 = line[0], line[1:2], line[2:]
+                if p1 == p2:
+                    m[child] = p1
+                else:
+                    m[child] = p1 + p2
+         # if file does not exist or error reading, exit
+        except IOError:
+            raise util.Abort(_('splicemap file not found or error reading %s:')
+                               % path)
+        return m
+
 
     def walktree(self, heads):
         '''Return a mapping that identifies the uncommitted parents of every
@@ -127,12 +171,18 @@ class converter(object):
         visit = heads
         known = set()
         parents = {}
+        numcommits = self.source.numcommits()
         while visit:
             n = visit.pop(0)
-            if n in known or n in self.map:
+            if n in known:
                 continue
+            if n in self.map:
+                m = self.map[n]
+                if m == SKIPREV or self.dest.hascommitfrommap(m):
+                    continue
             known.add(n)
-            self.ui.progress(_('scanning'), len(known), unit=_('revisions'))
+            self.ui.progress(_('scanning'), len(known), unit=_('revisions'),
+                             total=numcommits)
             commit = self.cachecommit(n)
             parents[n] = []
             for p in commit.parents:
@@ -142,9 +192,32 @@ class converter(object):
 
         return parents
 
+    def mergesplicemap(self, parents, splicemap):
+        """A splicemap redefines child/parent relationships. Check the
+        map contains valid revision identifiers and merge the new
+        links in the source graph.
+        """
+        for c in sorted(splicemap):
+            if c not in parents:
+                if not self.dest.hascommitforsplicemap(self.map.get(c, c)):
+                    # Could be in source but not converted during this run
+                    self.ui.warn(_('splice map revision %s is not being '
+                                   'converted, ignoring\n') % c)
+                continue
+            pc = []
+            for p in splicemap[c]:
+                # We do not have to wait for nodes already in dest.
+                if self.dest.hascommitforsplicemap(self.map.get(p, p)):
+                    continue
+                # Parent is not in dest and not being converted, not good
+                if p not in parents:
+                    raise util.Abort(_('unknown splice map parent: %s') % p)
+                pc.append(p)
+            parents[c] = pc
+
     def toposort(self, parents, sortmode):
         '''Return an ordering such that every uncommitted changeset is
-        preceeded by all its uncommitted ancestors.'''
+        preceded by all its uncommitted ancestors.'''
 
         def mapchildren(parents):
             """Return a (children, roots) tuple where 'children' maps parent
@@ -152,7 +225,7 @@ class converter(object):
             revisions without parents. 'parents' must be a mapping of revision
             identifier to its parents ones.
             """
-            visit = parents.keys()
+            visit = sorted(parents)
             seen = set()
             children = {}
             roots = []
@@ -167,7 +240,7 @@ class converter(object):
                 children.setdefault(n, [])
                 hasparent = False
                 for p in parents[n]:
-                    if not p in self.map:
+                    if p not in self.map:
                         visit.append(p)
                         hasparent = True
                     children.setdefault(p, []).append(n)
@@ -204,6 +277,14 @@ class converter(object):
                 return sorted(nodes, key=keyfn)[0]
             return picknext
 
+        def makeclosesorter():
+            """Close order sort."""
+            keyfn = lambda n: ('close' not in self.commitcache[n].extra,
+                               self.commitcache[n].sortkey)
+            def picknext(nodes):
+                return sorted(nodes, key=keyfn)[0]
+            return picknext
+
         def makedatesorter():
             """Sort revisions by date."""
             dates = {}
@@ -223,6 +304,8 @@ class converter(object):
             picknext = makedatesorter()
         elif sortmode == 'sourcesort':
             picknext = makesourcesorter()
+        elif sortmode == 'closesort':
+            picknext = makeclosesorter()
         else:
             raise util.Abort(_('unknown sort mode: %s') % sortmode)
 
@@ -257,7 +340,7 @@ class converter(object):
     def writeauthormap(self):
         authorfile = self.authorfile
         if authorfile:
-            self.ui.status(_('Writing author map file %s\n') % authorfile)
+            self.ui.status(_('writing author map file %s\n') % authorfile)
             ofile = open(authorfile, 'w+')
             for author in self.authors:
                 ofile.write("%s=%s\n" % (author, self.authors[author]))
@@ -274,7 +357,7 @@ class converter(object):
             try:
                 srcauthor, dstauthor = line.split('=', 1)
             except ValueError:
-                msg = _('Ignoring bad line in author map file %s: %s\n')
+                msg = _('ignoring bad line in author map file %s: %s\n')
                 self.ui.warn(msg % (authorfile, line.rstrip()))
                 continue
 
@@ -294,14 +377,19 @@ class converter(object):
     def cachecommit(self, rev):
         commit = self.source.getcommit(rev)
         commit.author = self.authors.get(commit.author, commit.author)
-        commit.branch = self.branchmap.get(commit.branch, commit.branch)
+        # If commit.branch is None, this commit is coming from the source
+        # repository's default branch and destined for the default branch in the
+        # destination repository. For such commits, passing a literal "None"
+        # string to branchmap.get() below allows the user to map "None" to an
+        # alternate default branch in the destination repository.
+        commit.branch = self.branchmap.get(str(commit.branch), commit.branch)
         self.commitcache[rev] = commit
         return commit
 
     def copy(self, rev):
         commit = self.commitcache[rev]
-
-        changes = self.source.getchanges(rev)
+        full = self.opts.get('full')
+        changes = self.source.getchanges(rev, full)
         if isinstance(changes, basestring):
             if changes == SKIPREV:
                 dest = SKIPREV
@@ -319,7 +407,7 @@ class converter(object):
                                   self.commitcache[prev].branch))
         self.dest.setbranch(commit.branch, pbranches)
         try:
-            parents = self.splicemap[rev].replace(',', ' ').split()
+            parents = self.splicemap[rev]
             self.ui.status(_('spliced in %s as parents of %s\n') %
                            (parents, rev))
             parents = [self.map.get(p, p) for p in parents]
@@ -327,7 +415,7 @@ class converter(object):
             parents = [b[0] for b in pbranches]
         source = progresssource(self.ui, self.source, len(files))
         newnode = self.dest.putcommit(files, copies, parents, commit,
-                                      source, self.map)
+                                      source, self.map, full)
         source.close()
         self.source.converted(rev, newnode)
         self.map[rev] = newnode
@@ -340,6 +428,7 @@ class converter(object):
             self.ui.status(_("scanning source...\n"))
             heads = self.source.getheads()
             parents = self.walktree(heads)
+            self.mergesplicemap(parents, self.splicemap)
             self.ui.status(_("sorting...\n"))
             t = self.toposort(parents, sortmode)
             num = len(t)
@@ -422,13 +511,15 @@ def convert(ui, src, dest=None, revmapfile=None, **opts):
             shutil.rmtree(path, True)
         raise
 
-    sortmodes = ('branchsort', 'datesort', 'sourcesort')
+    sortmodes = ('branchsort', 'datesort', 'sourcesort', 'closesort')
     sortmode = [m for m in sortmodes if opts.get(m)]
     if len(sortmode) > 1:
         raise util.Abort(_('more than one sort mode specified'))
     sortmode = sortmode and sortmode[0] or defaultsort
     if sortmode == 'sourcesort' and not srcc.hasnativeorder():
         raise util.Abort(_('--sourcesort is not supported by this data source'))
+    if sortmode == 'closesort' and not srcc.hasnativeclose():
+        raise util.Abort(_('--closesort is not supported by this data source'))
 
     fmap = opts.get('filemap')
     if fmap:
@@ -436,10 +527,7 @@ def convert(ui, src, dest=None, revmapfile=None, **opts):
         destc.setfilemapmode(True)
 
     if not revmapfile:
-        try:
-            revmapfile = destc.revmapfile()
-        except:
-            revmapfile = os.path.join(destc, "map")
+        revmapfile = destc.revmapfile()
 
     c = converter(ui, srcc, destc, revmapfile, opts)
     c.convert(sortmode)

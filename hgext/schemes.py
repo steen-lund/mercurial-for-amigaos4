@@ -44,6 +44,8 @@ import os, re
 from mercurial import extensions, hg, templater, util
 from mercurial.i18n import _
 
+testedwith = 'internal'
+
 
 class ShortRepository(object):
     def __init__(self, url, scheme, templater):
@@ -59,8 +61,11 @@ class ShortRepository(object):
         return '<ShortRepository: %s>' % self.scheme
 
     def instance(self, ui, url, create):
-        # Should this use urlmod.url(), or is manual parsing better?
-        url = url.split('://', 1)[1]
+        # Should this use the util.url class, or is manual parsing better?
+        try:
+            url = url.split('://', 1)[1]
+        except IndexError:
+            raise util.Abort(_("no '://' in scheme url '%s'") % url)
         parts = url.split('/', self.parts)
         if len(parts) > self.parts:
             tail = parts[-1]
@@ -72,9 +77,10 @@ class ShortRepository(object):
         return hg._peerlookup(url).instance(ui, url, create)
 
 def hasdriveletter(orig, path):
-    for scheme in schemes:
-        if path.startswith(scheme + ':'):
-            return False
+    if path:
+        for scheme in schemes:
+            if path.startswith(scheme + ':'):
+                return False
     return orig(path)
 
 schemes = {

@@ -12,7 +12,7 @@ from mercurial.hgweb import common
 from mercurial.i18n import _
 
 def _splitURI(uri):
-    """ Return path and query splited from uri
+    """Return path and query that has been split from uri
 
     Just like CGI environment, the path is unquoted, the query is
     not.
@@ -60,7 +60,10 @@ class _httprequesthandler(BaseHTTPServer.BaseHTTPRequestHandler):
         self._log_any(self.server.accesslog, format, *args)
 
     def log_request(self, code='-', size='-'):
-        xheaders = [h for h in self.headers.items() if h[0].startswith('x-')]
+        xheaders = []
+        if util.safehasattr(self, 'headers'):
+            xheaders = [h for h in self.headers.items()
+                        if h[0].startswith('x-')]
         self.log_message('"%s" %s %s%s',
                          self.requestline, str(code), str(size),
                          ''.join([' %s:%s' % h for h in sorted(xheaders)]))
@@ -78,6 +81,7 @@ class _httprequesthandler(BaseHTTPServer.BaseHTTPRequestHandler):
         except Exception:
             self._start_response("500 Internal Server Error", [])
             self._write("Internal Server Error")
+            self._done()
             tb = "".join(traceback.format_exception(*sys.exc_info()))
             self.log_error("Exception happened during processing "
                            "request '%s':\n%s", self.path, tb)
@@ -129,13 +133,16 @@ class _httprequesthandler(BaseHTTPServer.BaseHTTPRequestHandler):
                                               SocketServer.ForkingMixIn)
         env['wsgi.run_once'] = 0
 
-        self.close_connection = True
         self.saved_status = None
         self.saved_headers = []
         self.sent_headers = False
         self.length = None
+        self._chunked = None
         for chunk in self.server.application(env, self._start_response):
             self._write(chunk)
+        if not self.sent_headers:
+            self.send_headers()
+        self._done()
 
     def send_headers(self):
         if not self.saved_status:
@@ -144,20 +151,20 @@ class _httprequesthandler(BaseHTTPServer.BaseHTTPRequestHandler):
         saved_status = self.saved_status.split(None, 1)
         saved_status[0] = int(saved_status[0])
         self.send_response(*saved_status)
-        should_close = True
+        self.length = None
+        self._chunked = False
         for h in self.saved_headers:
             self.send_header(*h)
             if h[0].lower() == 'content-length':
-                should_close = False
                 self.length = int(h[1])
-        # The value of the Connection header is a list of case-insensitive
-        # tokens separated by commas and optional whitespace.
-        if 'close' in [token.strip().lower() for token in
-                       self.headers.get('connection', '').split(',')]:
-            should_close = True
-        if should_close:
-            self.send_header('Connection', 'close')
-        self.close_connection = should_close
+        if (self.length is None and
+            saved_status[0] != common.HTTP_NOT_MODIFIED):
+            self._chunked = (not self.close_connection and
+                             self.request_version == "HTTP/1.1")
+            if self._chunked:
+                self.send_header('Transfer-Encoding', 'chunked')
+            else:
+                self.send_header('Connection', 'close')
         self.end_headers()
         self.sent_headers = True
 
@@ -180,8 +187,15 @@ class _httprequesthandler(BaseHTTPServer.BaseHTTPRequestHandler):
                 raise AssertionError("Content-length header sent, but more "
                                      "bytes than specified are being written.")
             self.length = self.length - len(data)
+        elif self._chunked and data:
+            data = '%x\r\n%s\r\n' % (len(data), data)
         self.wfile.write(data)
         self.wfile.flush()
+
+    def _done(self):
+        if self._chunked:
+            self.wfile.write('0\r\n\r\n')
+            self.wfile.flush()
 
 class _httprequesthandleropenssl(_httprequesthandler):
     """HTTPS handler based on pyOpenSSL"""
@@ -195,7 +209,7 @@ class _httprequesthandleropenssl(_httprequesthandler):
             OpenSSL.SSL.Context
         except ImportError:
             raise util.Abort(_("SSL support is unavailable"))
-        ctx = OpenSSL.SSL.Context(OpenSSL.SSL.SSLv23_METHOD)
+        ctx = OpenSSL.SSL.Context(OpenSSL.SSL.TLSv1_METHOD)
         ctx.use_privatekey_file(ssl_cert)
         ctx.use_certificate_file(ssl_cert)
         sock = socket.socket(httpserver.address_family, httpserver.socket_type)
@@ -236,8 +250,9 @@ class _httprequesthandlerssl(_httprequesthandler):
             ssl.wrap_socket
         except ImportError:
             raise util.Abort(_("SSL support is unavailable"))
-        httpserver.socket = ssl.wrap_socket(httpserver.socket, server_side=True,
-            certfile=ssl_cert, ssl_version=ssl.PROTOCOL_SSLv23)
+        httpserver.socket = ssl.wrap_socket(
+            httpserver.socket, server_side=True,
+            certfile=ssl_cert, ssl_version=ssl.PROTOCOL_TLSv1)
 
     def setup(self):
         self.connection = self.request
@@ -246,9 +261,10 @@ class _httprequesthandlerssl(_httprequesthandler):
 
 try:
     from threading import activeCount
+    activeCount() # silence pyflakes
     _mixin = SocketServer.ThreadingMixIn
 except ImportError:
-    if hasattr(os, "fork"):
+    if util.safehasattr(os, "fork"):
         _mixin = SocketServer.ForkingMixIn
     else:
         class _mixin(object):
@@ -308,7 +324,21 @@ def create_server(ui, app):
         cls = MercurialHTTPServer
 
     # ugly hack due to python issue5853 (for threaded use)
-    import mimetypes; mimetypes.init()
+    try:
+        import mimetypes
+        mimetypes.init()
+    except UnicodeDecodeError:
+        # Python 2.x's mimetypes module attempts to decode strings
+        # from Windows' ANSI APIs as ascii (fail), then re-encode them
+        # as ascii (clown fail), because the default Python Unicode
+        # codec is hardcoded as ascii.
+
+        sys.argv # unwrap demand-loader so that reload() works
+        reload(sys) # resurrect sys.setdefaultencoding()
+        oldenc = sys.getdefaultencoding()
+        sys.setdefaultencoding("latin1") # or any full 8-bit encoding
+        mimetypes.init()
+        sys.setdefaultencoding(oldenc)
 
     address = ui.config('web', 'address', '')
     port = util.getport(ui.config('web', 'port', 8000))

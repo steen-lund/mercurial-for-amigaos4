@@ -20,47 +20,12 @@
  of the GNU General Public License, incorporated herein by reference.
 */
 
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "util.h"
-
-/* Definitions to get compatibility with python 2.4 and earlier which
-   does not have Py_ssize_t. See also PEP 353.
-   Note: msvc (8 or earlier) does not have ssize_t, so we use Py_ssize_t.
-*/
-#if PY_VERSION_HEX < 0x02050000 && !defined(PY_SSIZE_T_MIN)
-typedef int Py_ssize_t;
-#define PY_SSIZE_T_MAX INT_MAX
-#define PY_SSIZE_T_MIN INT_MIN
-#endif
-
-#ifdef _WIN32
-#ifdef _MSC_VER
-/* msvc 6.0 has problems */
-#define inline __inline
-typedef unsigned long uint32_t;
-#else
-#include <stdint.h>
-#endif
-static uint32_t ntohl(uint32_t x)
-{
-	return ((x & 0x000000ffUL) << 24) |
-		((x & 0x0000ff00UL) <<  8) |
-		((x & 0x00ff0000UL) >>  8) |
-		((x & 0xff000000UL) >> 24);
-}
-#else
-/* not windows */
-#include <sys/types.h>
-#if defined __BEOS__ && !defined __HAIKU__
-#include <ByteOrder.h>
-#else
-#include <arpa/inet.h>
-#endif
-#include <inttypes.h>
-#endif
 
 #if defined(__amigaos4__)
 #define ntohl(x) x
@@ -78,7 +43,7 @@ struct flist {
 	struct frag *base, *head, *tail;
 };
 
-static struct flist *lalloc(int size)
+static struct flist *lalloc(Py_ssize_t size)
 {
 	struct flist *a = NULL;
 
@@ -108,7 +73,7 @@ static void lfree(struct flist *a)
 	}
 }
 
-static int lsize(struct flist *a)
+static Py_ssize_t lsize(struct flist *a)
 {
 	return a->tail - a->head;
 }
@@ -237,12 +202,11 @@ static struct flist *combine(struct flist *a, struct flist *b)
 }
 
 /* decode a binary patch into a hunk list */
-static struct flist *decode(const char *bin, int len)
+static struct flist *decode(const char *bin, Py_ssize_t len)
 {
 	struct flist *l;
 	struct frag *lt;
-	const char *data = bin + 12, *end = bin + len;
-	char decode[12]; /* for dealing with alignment issues */
+	int pos = 0;
 
 	/* assume worst case size, we won't have many of these lists */
 	l = lalloc(len / 12);
@@ -251,22 +215,18 @@ static struct flist *decode(const char *bin, int len)
 
 	lt = l->tail;
 
-	while (data <= end) {
-		memcpy(decode, bin, 12);
-		lt->start = ntohl(*(uint32_t *)decode);
-		lt->end = ntohl(*(uint32_t *)(decode + 4));
-		lt->len = ntohl(*(uint32_t *)(decode + 8));
+	while (pos >= 0 && pos < len) {
+		lt->start = getbe32(bin + pos);
+		lt->end = getbe32(bin + pos + 4);
+		lt->len = getbe32(bin + pos + 8);
 		if (lt->start > lt->end)
 			break; /* sanity check */
-		bin = data + lt->len;
-		if (bin < data)
-			break; /* big data + big (bogus) len can wrap around */
-		lt->data = data;
-		data = bin + 12;
+		lt->data = bin + pos + 12;
+		pos += 12 + lt->len;
 		lt++;
 	}
 
-	if (bin != end) {
+	if (pos != len) {
 		if (!PyErr_Occurred())
 			PyErr_SetString(mpatch_Error, "patch cannot be decoded");
 		lfree(l);
@@ -278,9 +238,9 @@ static struct flist *decode(const char *bin, int len)
 }
 
 /* calculate the size of resultant text */
-static int calcsize(int len, struct flist *l)
+static Py_ssize_t calcsize(Py_ssize_t len, struct flist *l)
 {
-	int outlen = 0, last = 0;
+	Py_ssize_t outlen = 0, last = 0;
 	struct frag *f = l->head;
 
 	while (f != l->tail) {
@@ -300,7 +260,7 @@ static int calcsize(int len, struct flist *l)
 	return outlen;
 }
 
-static int apply(char *buf, const char *orig, int len, struct flist *l)
+static int apply(char *buf, const char *orig, Py_ssize_t len, struct flist *l)
 {
 	struct frag *f = l->head;
 	int last = 0;
@@ -325,10 +285,9 @@ static int apply(char *buf, const char *orig, int len, struct flist *l)
 }
 
 /* recursively generate a patch of all bins between start and end */
-static struct flist *fold(PyObject *bins, int start, int end)
+static struct flist *fold(PyObject *bins, Py_ssize_t start, Py_ssize_t end)
 {
-	int len;
-	Py_ssize_t blen;
+	Py_ssize_t len, blen;
 	const char *buffer;
 
 	if (start + 1 == end) {
@@ -354,8 +313,7 @@ patches(PyObject *self, PyObject *args)
 	struct flist *patch;
 	const char *in;
 	char *out;
-	int len, outlen;
-	Py_ssize_t inlen;
+	Py_ssize_t len, outlen, inlen;
 
 	if (!PyArg_ParseTuple(args, "OO:mpatch", &text, &bins))
 		return NULL;
@@ -398,34 +356,26 @@ cleanup:
 static PyObject *
 patchedsize(PyObject *self, PyObject *args)
 {
-	long orig, start, end, len, outlen = 0, last = 0;
-	int patchlen;
-	char *bin, *binend, *data;
-	char decode[12]; /* for dealing with alignment issues */
+	long orig, start, end, len, outlen = 0, last = 0, pos = 0;
+	Py_ssize_t patchlen;
+	char *bin;
 
 	if (!PyArg_ParseTuple(args, "ls#", &orig, &bin, &patchlen))
 		return NULL;
 
-	binend = bin + patchlen;
-	data = bin + 12;
-
-	while (data <= binend) {
-		memcpy(decode, bin, 12);
-		start = ntohl(*(uint32_t *)decode);
-		end = ntohl(*(uint32_t *)(decode + 4));
-		len = ntohl(*(uint32_t *)(decode + 8));
+	while (pos >= 0 && pos < patchlen) {
+		start = getbe32(bin + pos);
+		end = getbe32(bin + pos + 4);
+		len = getbe32(bin + pos + 8);
 		if (start > end)
 			break; /* sanity check */
-		bin = data + len;
-		if (bin < data)
-			break; /* big data + big (bogus) len can wrap around */
-		data = bin + 12;
+		pos += 12 + len;
 		outlen += start - last;
 		last = end;
 		outlen += len;
 	}
 
-	if (bin != binend) {
+	if (pos != patchlen) {
 		if (!PyErr_Occurred())
 			PyErr_SetString(mpatch_Error, "patch cannot be decoded");
 		return NULL;

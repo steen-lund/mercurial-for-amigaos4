@@ -1,3 +1,4 @@
+#require serve
 
   $ hg init test
   $ cd test
@@ -108,7 +109,7 @@
 
 tip - two revisions
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/log/tip/a')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log/tip/a')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -147,6 +148,7 @@ tip - two revisions
   <ul>
   <li><a href="/file/01de2d66a28d/a">file</a></li>
   <li><a href="/diff/01de2d66a28d/a">diff</a></li>
+  <li><a href="/comparison/01de2d66a28d/a">comparison</a></li>
   <li><a href="/annotate/01de2d66a28d/a">annotate</a></li>
   <li class="active">file log</li>
   <li><a href="/raw-file/01de2d66a28d/a">raw</a></li>
@@ -154,17 +156,23 @@ tip - two revisions
   <ul>
   <li><a href="/help">help</a></li>
   </ul>
+  <p></p>
+  <div class="atom-logo">
+  <a href="/atom-log/01de2d66a28d/a" title="subscribe to atom feed">
+  <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
+  </a>
+  </div>
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>log a</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="navigate">
@@ -178,17 +186,19 @@ tip - two revisions
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
-   <tr class="parity0">
-    <td class="age">Thu Jan 01 00:00:00 1970 +0000</td>
+  <tbody class="stripes2">
+   <tr>
+    <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>
     <td class="author">test</td>
     <td class="description"><a href="/rev/01de2d66a28d">second a</a></td>
    </tr>
-   <tr class="parity1">
-    <td class="age">Thu Jan 01 00:00:00 1970 +0000</td>
+   <tr>
+    <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>
     <td class="author">test</td>
     <td class="description"><a href="/rev/5ed941583260">first a</a></td>
    </tr>
   
+  </tbody>
   </table>
   
   <div class="navigate">
@@ -209,7 +219,7 @@ tip - two revisions
 
 second version - two revisions
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/log/3/a')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log/3/a')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -248,6 +258,7 @@ second version - two revisions
   <ul>
   <li><a href="/file/01de2d66a28d/a">file</a></li>
   <li><a href="/diff/01de2d66a28d/a">diff</a></li>
+  <li><a href="/comparison/01de2d66a28d/a">comparison</a></li>
   <li><a href="/annotate/01de2d66a28d/a">annotate</a></li>
   <li class="active">file log</li>
   <li><a href="/raw-file/01de2d66a28d/a">raw</a></li>
@@ -255,17 +266,23 @@ second version - two revisions
   <ul>
   <li><a href="/help">help</a></li>
   </ul>
+  <p></p>
+  <div class="atom-logo">
+  <a href="/atom-log/01de2d66a28d/a" title="subscribe to atom feed">
+  <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
+  </a>
+  </div>
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>log a</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="navigate">
@@ -279,17 +296,19 @@ second version - two revisions
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
-   <tr class="parity0">
-    <td class="age">Thu Jan 01 00:00:00 1970 +0000</td>
+  <tbody class="stripes2">
+   <tr>
+    <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>
     <td class="author">test</td>
     <td class="description"><a href="/rev/01de2d66a28d">second a</a></td>
    </tr>
-   <tr class="parity1">
-    <td class="age">Thu Jan 01 00:00:00 1970 +0000</td>
+   <tr>
+    <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>
     <td class="author">test</td>
     <td class="description"><a href="/rev/5ed941583260">first a</a></td>
    </tr>
   
+  </tbody>
   </table>
   
   <div class="navigate">
@@ -310,7 +329,7 @@ second version - two revisions
 
 first deleted - one revision
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/log/2/a')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log/2/a')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -349,6 +368,7 @@ first deleted - one revision
   <ul>
   <li><a href="/file/5ed941583260/a">file</a></li>
   <li><a href="/diff/5ed941583260/a">diff</a></li>
+  <li><a href="/comparison/5ed941583260/a">comparison</a></li>
   <li><a href="/annotate/5ed941583260/a">annotate</a></li>
   <li class="active">file log</li>
   <li><a href="/raw-file/5ed941583260/a">raw</a></li>
@@ -356,17 +376,23 @@ first deleted - one revision
   <ul>
   <li><a href="/help">help</a></li>
   </ul>
+  <p></p>
+  <div class="atom-logo">
+  <a href="/atom-log/5ed941583260/a" title="subscribe to atom feed">
+  <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
+  </a>
+  </div>
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>log a</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="navigate">
@@ -380,12 +406,14 @@ first deleted - one revision
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
-   <tr class="parity0">
-    <td class="age">Thu Jan 01 00:00:00 1970 +0000</td>
+  <tbody class="stripes2">
+   <tr>
+    <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>
     <td class="author">test</td>
     <td class="description"><a href="/rev/5ed941583260">first a</a></td>
    </tr>
   
+  </tbody>
   </table>
   
   <div class="navigate">
@@ -406,7 +434,7 @@ first deleted - one revision
 
 first version - one revision
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/log/1/a')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log/1/a')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -445,6 +473,7 @@ first version - one revision
   <ul>
   <li><a href="/file/5ed941583260/a">file</a></li>
   <li><a href="/diff/5ed941583260/a">diff</a></li>
+  <li><a href="/comparison/5ed941583260/a">comparison</a></li>
   <li><a href="/annotate/5ed941583260/a">annotate</a></li>
   <li class="active">file log</li>
   <li><a href="/raw-file/5ed941583260/a">raw</a></li>
@@ -452,17 +481,23 @@ first version - one revision
   <ul>
   <li><a href="/help">help</a></li>
   </ul>
+  <p></p>
+  <div class="atom-logo">
+  <a href="/atom-log/5ed941583260/a" title="subscribe to atom feed">
+  <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
+  </a>
+  </div>
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>log a</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="navigate">
@@ -476,12 +511,14 @@ first version - one revision
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
-   <tr class="parity0">
-    <td class="age">Thu Jan 01 00:00:00 1970 +0000</td>
+  <tbody class="stripes2">
+   <tr>
+    <td class="age">Thu, 01 Jan 1970 00:00:00 +0000</td>
     <td class="author">test</td>
     <td class="description"><a href="/rev/5ed941583260">first a</a></td>
    </tr>
   
+  </tbody>
   </table>
   
   <div class="navigate">
@@ -502,7 +539,7 @@ first version - one revision
 
 before addition - error
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/log/0/a')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log/0/a')
   404 Not Found
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -529,20 +566,22 @@ before addition - error
   <li><a href="/tags">tags</a></li>
   <li><a href="/bookmarks">bookmarks</a></li>
   <li><a href="/branches">branches</a></li>
+  </ul>
+  <ul>
   <li><a href="/help">help</a></li>
   </ul>
   </div>
   
   <div class="main">
   
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>error</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30"></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="description">
@@ -566,10 +605,10 @@ before addition - error
 
 should show base link, use spartan because it shows it
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/log/tip/c?style=spartan')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log/tip/c?style=spartan')
   200 Script output follows
   
-  <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+  <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
   <html>
   <head>
   <link rel="icon" href="/static/hgicon.png" type="image/png">
@@ -598,17 +637,17 @@ should show base link, use spartan because it shows it
   <a type="application/atom+xml" href="/atom-log/tip/c" title="Atom feed for test:c">atom</a>
   </div>
   
-  <h2>c revision history</h2>
+  <h2><a href="/">Mercurial</a>  / c revision history</h2>
   
   <p>navigate: <small class="navigate"><a href="/log/1a6696706df2/c?style=spartan">(0)</a> <a href="/log/tip/c?style=spartan">tip</a> </small></p>
   
   <table class="logEntry parity0">
    <tr>
-    <th><span class="age">Thu Jan 01 00:00:00 1970 +0000</span>:</th>
+    <th class="label"><span class="age">Thu, 01 Jan 1970 00:00:00 +0000</span>:</th>
     <th class="firstline"><a href="/rev/b7682196df1c?style=spartan">change c</a></th>
    </tr>
    <tr>
-    <th class="revision">revision 1:</td>
+    <th class="revision">revision 1:</th>
     <td class="node">
      <a href="/file/b7682196df1c/c?style=spartan">b7682196df1c</a>
      <a href="/diff/b7682196df1c/c?style=spartan">(diff)</a>
@@ -622,18 +661,18 @@ should show base link, use spartan because it shows it
    </tr>
    <tr>
     <th class="date">date:</th>
-    <td class="date">Thu Jan 01 00:00:00 1970 +0000</td>
+    <td class="date">Thu, 01 Jan 1970 00:00:00 +0000</td>
    </tr>
   </table>
   
   
   <table class="logEntry parity1">
    <tr>
-    <th><span class="age">Thu Jan 01 00:00:00 1970 +0000</span>:</th>
+    <th class="label"><span class="age">Thu, 01 Jan 1970 00:00:00 +0000</span>:</th>
     <th class="firstline"><a href="/rev/1a6696706df2?style=spartan">mv b</a></th>
    </tr>
    <tr>
-    <th class="revision">revision 0:</td>
+    <th class="revision">revision 0:</th>
     <td class="node">
      <a href="/file/1a6696706df2/c?style=spartan">1a6696706df2</a>
      <a href="/diff/1a6696706df2/c?style=spartan">(diff)</a>
@@ -655,7 +694,7 @@ should show base link, use spartan because it shows it
    </tr>
    <tr>
     <th class="date">date:</th>
-    <td class="date">Thu Jan 01 00:00:00 1970 +0000</td>
+    <td class="date">Thu, 01 Jan 1970 00:00:00 +0000</td>
    </tr>
   </table>
   
@@ -675,7 +714,7 @@ should show base link, use spartan because it shows it
 
 rss log
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/rss-log/tip/a')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'rss-log/tip/a')
   200 Script output follows
   
   <?xml version="1.0" encoding="ascii"?>
@@ -706,7 +745,7 @@ rss log
 
 atom log
 
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/atom-log/tip/a')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'atom-log/tip/a')
   200 Script output follows
   
   <?xml version="1.0" encoding="ascii"?>
@@ -727,9 +766,36 @@ atom log
     <updated>1970-01-01T00:00:00+00:00</updated>
     <published>1970-01-01T00:00:00+00:00</published>
     <content type="xhtml">
-     <div xmlns="http://www.w3.org/1999/xhtml">
-      <pre xml:space="preserve">second a</pre>
-     </div>
+  	<table xmlns="http://www.w3.org/1999/xhtml">
+  	<tr>
+  		<th style="text-align:left;">changeset</th>
+  		<td>01de2d66a28d</td>
+                </tr>
+                <tr>
+                                <th style="text-align:left;">branch</th>
+                                <td></td>
+                </tr>
+                <tr>
+                                <th style="text-align:left;">bookmark</th>
+  		<td></td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;">tag</th>
+  		<td></td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;">user</th>
+  		<td>&#116;&#101;&#115;&#116;</td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;vertical-align:top;">description</th>
+  		<td>second a</td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;vertical-align:top;">files</th>
+  		<td></td>
+  	</tr>
+  	</table>
     </content>
    </entry>
    <entry>
@@ -743,9 +809,36 @@ atom log
     <updated>1970-01-01T00:00:00+00:00</updated>
     <published>1970-01-01T00:00:00+00:00</published>
     <content type="xhtml">
-     <div xmlns="http://www.w3.org/1999/xhtml">
-      <pre xml:space="preserve">first a</pre>
-     </div>
+  	<table xmlns="http://www.w3.org/1999/xhtml">
+  	<tr>
+  		<th style="text-align:left;">changeset</th>
+  		<td>5ed941583260</td>
+                </tr>
+                <tr>
+                                <th style="text-align:left;">branch</th>
+                                <td></td>
+                </tr>
+                <tr>
+                                <th style="text-align:left;">bookmark</th>
+  		<td></td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;">tag</th>
+  		<td></td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;">user</th>
+  		<td>&#116;&#101;&#115;&#116;</td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;vertical-align:top;">description</th>
+  		<td>first a</td>
+  	</tr>
+  	<tr>
+  		<th style="text-align:left;vertical-align:top;">files</th>
+  		<td></td>
+  	</tr>
+  	</table>
     </content>
    </entry>
   
@@ -754,3 +847,5 @@ atom log
 errors
 
   $ cat errors.log
+
+  $ cd ..

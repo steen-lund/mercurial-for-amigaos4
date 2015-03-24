@@ -1,13 +1,18 @@
+"""usage: %s DOC ...
+
+where DOC is the name of a document
+"""
+
 import os, sys, textwrap
 # import from the live mercurial repo
 sys.path.insert(0, "..")
 # fall back to pure modules if required C extensions are not available
 sys.path.append(os.path.join('..', 'mercurial', 'pure'))
 from mercurial import demandimport; demandimport.enable()
-from mercurial import encoding
+from mercurial import minirst
 from mercurial.commands import table, globalopts
-from mercurial.i18n import _
-from mercurial.help import helptable
+from mercurial.i18n import gettext, _
+from mercurial.help import helptable, loaddoc
 from mercurial import extensions
 
 def get_desc(docstr):
@@ -34,11 +39,19 @@ def get_opts(opts):
             shortopt, longopt, default, desc, optlabel = opt
         else:
             shortopt, longopt, default, desc = opt
+            optlabel = _("VALUE")
         allopts = []
         if shortopt:
             allopts.append("-%s" % shortopt)
         if longopt:
             allopts.append("--%s" % longopt)
+        if isinstance(default, list):
+            allopts[-1] += " <%s[+]>" % optlabel
+        elif (default is not None) and not isinstance(default, bool):
+            allopts[-1] += " <%s>" % optlabel
+        if '\n' in desc:
+            # only remove line breaks and indentation
+            desc = ' '.join(l.lstrip() for l in desc.split('\n'))
         desc += default and _(" (default: %s)") % default or ""
         yield (", ".join(allopts), desc)
 
@@ -49,7 +62,7 @@ def get_cmd(cmd, cmdtable):
 
     d['cmd'] = cmds[0]
     d['aliases'] = cmd.split("|")[1:]
-    d['desc'] = get_desc(attr[0].__doc__)
+    d['desc'] = get_desc(gettext(attr[0].__doc__))
     d['opts'] = list(get_opts(attr[1]))
 
     s = 'hg ' + cmds[0]
@@ -62,48 +75,30 @@ def get_cmd(cmd, cmdtable):
 
     return d
 
-def section(ui, s):
-    ui.write("%s\n%s\n\n" % (s, "-" * encoding.colwidth(s)))
-
-def subsection(ui, s):
-    ui.write("%s\n%s\n\n" % (s, '"' * encoding.colwidth(s)))
-
-def subsubsection(ui, s):
-    ui.write("%s\n%s\n\n" % (s, "." * encoding.colwidth(s)))
-
-def subsubsubsection(ui, s):
-    ui.write("%s\n%s\n\n" % (s, "#" * encoding.colwidth(s)))
-
-
-def show_doc(ui):
+def showdoc(ui):
     # print options
-    section(ui, _("Options"))
+    ui.write(minirst.section(_("Options")))
+    multioccur = False
     for optstr, desc in get_opts(globalopts):
         ui.write("%s\n    %s\n\n" % (optstr, desc))
+        if optstr.endswith("[+]>"):
+            multioccur = True
+    if multioccur:
+        ui.write(_("\n[+] marked option can be specified multiple times\n"))
+        ui.write("\n")
 
     # print cmds
-    section(ui, _("Commands"))
-    commandprinter(ui, table, subsection)
+    ui.write(minirst.section(_("Commands")))
+    commandprinter(ui, table, minirst.subsection)
 
-    # print topics
-    for names, sec, doc in helptable:
-        if names[0] == "config":
-            # The config help topic is included in the hgrc.5 man
-            # page.
-            continue
-        for name in names:
-            ui.write(".. _%s:\n" % name)
-        ui.write("\n")
-        section(ui, sec)
-        if hasattr(doc, '__call__'):
-            doc = doc()
-        ui.write(doc)
-        ui.write("\n")
+    # print help topics
+    # The config help topic is included in the hgrc.5 man page.
+    helpprinter(ui, helptable, minirst.section, exclude=['config'])
 
-    section(ui, _("Extensions"))
-    ui.write(_("This section contains help for extensions that are distributed "
-               "together with Mercurial. Help for other extensions is available "
-               "in the help system."))
+    ui.write(minirst.section(_("Extensions")))
+    ui.write(_("This section contains help for extensions that are "
+               "distributed together with Mercurial. Help for other "
+               "extensions is available in the help system."))
     ui.write("\n\n"
              ".. contents::\n"
              "   :class: htmlonly\n"
@@ -112,12 +107,39 @@ def show_doc(ui):
 
     for extensionname in sorted(allextensionnames()):
         mod = extensions.load(None, extensionname, None)
-        subsection(ui, extensionname)
-        ui.write("%s\n\n" % mod.__doc__)
+        ui.write(minirst.subsection(extensionname))
+        ui.write("%s\n\n" % gettext(mod.__doc__))
         cmdtable = getattr(mod, 'cmdtable', None)
         if cmdtable:
-            subsubsection(ui, _('Commands'))
-            commandprinter(ui, cmdtable, subsubsubsection)
+            ui.write(minirst.subsubsection(_('Commands')))
+            commandprinter(ui, cmdtable, minirst.subsubsubsection)
+
+def showtopic(ui, topic):
+    extrahelptable = [
+        (["common"], '', loaddoc('common')),
+        (["hg.1"], '', loaddoc('hg.1')),
+        (["hgignore.5"], '', loaddoc('hgignore.5')),
+        (["hgrc.5"], '', loaddoc('hgrc.5')),
+        (["hgignore.5.gendoc"], '', loaddoc('hgignore')),
+        (["hgrc.5.gendoc"], '', loaddoc('config')),
+    ]
+    helpprinter(ui, helptable + extrahelptable, None, include=[topic])
+
+def helpprinter(ui, helptable, sectionfunc, include=[], exclude=[]):
+    for names, sec, doc in helptable:
+        if exclude and names[0] in exclude:
+            continue
+        if include and names[0] not in include:
+            continue
+        for name in names:
+            ui.write(".. _%s:\n" % name)
+        ui.write("\n")
+        if sectionfunc:
+            ui.write(sectionfunc(sec))
+        if callable(doc):
+            doc = doc()
+        ui.write(doc)
+        ui.write("\n")
 
 def commandprinter(ui, cmdtable, sectionfunc):
     h = {}
@@ -132,7 +154,9 @@ def commandprinter(ui, cmdtable, sectionfunc):
         if f.startswith("debug"):
             continue
         d = get_cmd(h[f], cmdtable)
-        sectionfunc(ui, d['cmd'])
+        ui.write(sectionfunc(d['cmd']))
+        # short description
+        ui.write(d['desc'][0])
         # synopsis
         ui.write("::\n\n")
         synopsislines = d['synopsis'].splitlines()
@@ -148,12 +172,18 @@ def commandprinter(ui, cmdtable, sectionfunc):
         if opt_output:
             opts_len = max([len(line[0]) for line in opt_output])
             ui.write(_("Options:\n\n"))
+            multioccur = False
             for optstr, desc in opt_output:
                 if desc:
                     s = "%-*s  %s" % (opts_len, optstr, desc)
                 else:
                     s = optstr
                 ui.write("%s\n" % s)
+                if optstr.endswith("[+]>"):
+                    multioccur = True
+            if multioccur:
+                ui.write(_("\n[+] marked option can be specified"
+                           " multiple times\n"))
             ui.write("\n")
         # aliases
         if d['aliases']:
@@ -164,4 +194,11 @@ def allextensionnames():
     return extensions.enabled().keys() + extensions.disabled().keys()
 
 if __name__ == "__main__":
-    show_doc(sys.stdout)
+    doc = 'hg.1.gendoc'
+    if len(sys.argv) > 1:
+        doc = sys.argv[1]
+
+    if doc == 'hg.1.gendoc':
+        showdoc(sys.stdout)
+    else:
+        showtopic(sys.stdout, sys.argv[1])

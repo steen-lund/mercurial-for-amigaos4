@@ -27,7 +27,7 @@
 #   On 64-bit systems, make sure it's assigned a 32-bit app pool.
 #
 # - In the application, setup a wildcard script handler mapping of type
-#   IpsapiModule with the shim dll as its executable. This file MUST reside
+#   IsapiModule with the shim dll as its executable. This file MUST reside
 #   in the same directory as the shim. Remove all other handlers, if you wish.
 #
 # - Make sure the ISAPI and CGI restrictions (configured globally on the
@@ -50,8 +50,9 @@ import sys
 #sys.path.insert(0, r'c:\path\to\python\lib')
 
 # Enable tracing. Run 'python -m win32traceutil' to debug
-if hasattr(sys, 'isapidllhandle'):
+if getattr(sys, 'isapidllhandle', None) is not None:
     import win32traceutil
+    win32traceutil.SetupForPrint # silence unused import warning
 
 # To serve pages in local charset instead of UTF-8, remove the two lines below
 import os
@@ -90,6 +91,6 @@ def __ExtensionFactory__():
     return isapi_wsgi.ISAPISimpleHandler(handler)
 
 if __name__=='__main__':
-    from isapi.install import *
+    from isapi.install import ISAPIParameters, HandleCommandLine
     params = ISAPIParameters()
     HandleCommandLine(params)

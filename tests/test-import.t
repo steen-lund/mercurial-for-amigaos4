@@ -10,6 +10,11 @@
   $ echo line 2 >> a/a
   $ hg --cwd a ci -u someone -d '1 0' -m'second change'
 
+import with no args:
+
+  $ hg --cwd a import
+  abort: need at least one patch to import
+  [255]
 
 generate patches for the test
 
@@ -18,6 +23,8 @@ generate patches for the test
 
 
 import exported patch
+(this also tests that editor is not invoked, if the patch contains the
+commit message and '--edit' is not specified)
 
   $ hg clone -r0 a b
   adding changesets
@@ -26,10 +33,10 @@ import exported patch
   added 1 changesets with 2 changes to 2 files
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg --cwd b import ../exported-tip.patch
+  $ HGEDITOR=cat hg --cwd b import ../exported-tip.patch
   applying ../exported-tip.patch
 
-message and committer should be same
+message and committer and date should be same
 
   $ hg --cwd b tip
   changeset:   1:1d4bd90af0e4
@@ -42,12 +49,13 @@ message and committer should be same
 
 
 import exported patch with external patcher
+(this also tests that editor is invoked, if the '--edit' is specified,
+regardless of the commit message in the patch)
 
   $ cat > dummypatch.py <<EOF
   > print 'patching file a'
   > file('a', 'wb').write('line2\n')
   > EOF
-  $ chmod +x dummypatch.py
   $ hg clone -r0 a b
   adding changesets
   adding manifests
@@ -55,14 +63,25 @@ import exported patch with external patcher
   added 1 changesets with 2 changes to 2 files
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg --config ui.patch='python ../dummypatch.py' --cwd b import ../exported-tip.patch
+  $ HGEDITOR=cat hg --config ui.patch='python ../dummypatch.py' --cwd b import --edit ../exported-tip.patch
   applying ../exported-tip.patch
+  second change
+  
+  
+  HG: Enter commit message.  Lines beginning with 'HG:' are removed.
+  HG: Leave message empty to abort commit.
+  HG: --
+  HG: user: someone
+  HG: branch 'default'
+  HG: changed a
   $ cat b/a
   line2
   $ rm -r b
 
 
 import of plain diff should fail without message
+(this also tests that editor is invoked, if the patch doesn't contain
+the commit message, regardless of '--edit')
 
   $ hg clone -r0 a b
   adding changesets
@@ -71,10 +90,39 @@ import of plain diff should fail without message
   added 1 changesets with 2 changes to 2 files
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg --cwd b import ../diffed-tip.patch
+  $ cat > $TESTTMP/editor.sh <<EOF
+  > env | grep HGEDITFORM
+  > cat \$1
+  > EOF
+  $ HGEDITOR="sh $TESTTMP/editor.sh" hg --cwd b import ../diffed-tip.patch
   applying ../diffed-tip.patch
+  HGEDITFORM=import.normal.normal
+  
+  
+  HG: Enter commit message.  Lines beginning with 'HG:' are removed.
+  HG: Leave message empty to abort commit.
+  HG: --
+  HG: user: test
+  HG: branch 'default'
+  HG: changed a
   abort: empty commit message
   [255]
+
+Test avoiding editor invocation at applying the patch with --exact,
+even if commit message is empty
+
+  $ echo a >> b/a
+  $ hg --cwd b commit -m ' '
+  $ hg --cwd b tip -T "{node}\n"
+  d8804f3f5396d800812f579c8452796a5993bdb2
+  $ hg --cwd b export -o ../empty-log.diff .
+  $ hg --cwd b update -q -C ".^1"
+  $ hg --cwd b --config extensions.strip= strip -q tip
+  $ HGEDITOR=cat hg --cwd b import --exact ../empty-log.diff
+  applying ../empty-log.diff
+  $ hg --cwd b tip -T "{node}\n"
+  d8804f3f5396d800812f579c8452796a5993bdb2
+
   $ rm -r b
 
 
@@ -93,6 +141,8 @@ import of plain diff should be ok with message
 
 
 import of plain diff with specific date and user
+(this also tests that editor is not invoked, if
+'--message'/'--logfile' is specified and '--edit' is not)
 
   $ hg clone -r0 a b
   adding changesets
@@ -124,6 +174,8 @@ import of plain diff with specific date and user
 
 
 import of plain diff should be ok with --no-commit
+(this also tests that editor is not invoked, if '--no-commit' is
+specified, regardless of '--edit')
 
   $ hg clone -r0 a b
   adding changesets
@@ -132,7 +184,7 @@ import of plain diff should be ok with --no-commit
   added 1 changesets with 2 changes to 2 files
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg --cwd b import --no-commit ../diffed-tip.patch
+  $ HGEDITOR=cat hg --cwd b import --no-commit --edit ../diffed-tip.patch
   applying ../diffed-tip.patch
   $ hg --cwd b diff --nodates
   diff -r 80971e65b431 a
@@ -199,7 +251,6 @@ import two patches in one stream
   $ hg init b
   $ hg --cwd a export 0:tip | hg --cwd b import -
   applying patch from stdin
-  applied 80971e65b431
   $ hg --cwd a id
   1d4bd90af0e4 tip
   $ hg --cwd b id
@@ -229,7 +280,7 @@ override commit message
   > msg.set_payload('email commit message\n' + patch)
   > msg['Subject'] = 'email patch'
   > msg['From'] = 'email patcher'
-  > sys.stdout.write(msg.as_string())
+  > file(sys.argv[2], 'wb').write(msg.as_string())
   > EOF
 
 
@@ -242,7 +293,7 @@ plain diff in email, subject, message body
   added 1 changesets with 2 changes to 2 files
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ python mkmsg.py diffed-tip.patch > msg.patch
+  $ python mkmsg.py diffed-tip.patch msg.patch
   $ hg --cwd b import ../msg.patch
   applying ../msg.patch
   $ hg --cwd b tip | grep email
@@ -304,7 +355,8 @@ hg export in email, should use patch header
   added 1 changesets with 2 changes to 2 files
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ python mkmsg.py exported-tip.patch | hg --cwd b import -
+  $ python mkmsg.py exported-tip.patch msg.patch
+  $ cat msg.patch | hg --cwd b import -
   applying patch from stdin
   $ hg --cwd b tip | grep second
   summary:     second change
@@ -321,7 +373,7 @@ The '---' tests the gitsendmail handling without proper mail headers
   > msg.set_payload('email patch\n\nnext line\n---\n' + patch)
   > msg['Subject'] = '[PATCH] email patch'
   > msg['From'] = 'email patcher'
-  > sys.stdout.write(msg.as_string())
+  > file(sys.argv[2], 'wb').write(msg.as_string())
   > EOF
 
 
@@ -334,13 +386,13 @@ plain diff in email, [PATCH] subject, message body with subject
   added 1 changesets with 2 changes to 2 files
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ python mkmsg2.py diffed-tip.patch | hg --cwd b import -
+  $ python mkmsg2.py diffed-tip.patch msg.patch
+  $ cat msg.patch | hg --cwd b import -
   applying patch from stdin
   $ hg --cwd b tip --template '{desc}\n'
   email patch
   
   next line
-  ---
   $ rm -r b
 
 
@@ -356,15 +408,26 @@ patches: import patch1 patch2; rollback
   $ hg clone -qr0 a b
   $ hg --cwd b parents --template 'parent: {rev}\n'
   parent: 0
-  $ hg --cwd b import ../patch1 ../patch2
+  $ hg --cwd b import -v ../patch1 ../patch2
   applying ../patch1
+  patching file a
+  committing files:
+  a
+  committing manifest
+  committing changelog
+  created 1d4bd90af0e4
   applying ../patch2
-  applied 1d4bd90af0e4
+  patching file a
+  committing files:
+  a
+  committing manifest
+  committing changelog
+  created 6d019af21222
   $ hg --cwd b rollback
-  repository tip rolled back to revision 1 (undo commit)
-  working directory now based on revision 1
+  repository tip rolled back to revision 0 (undo import)
+  working directory now based on revision 0
   $ hg --cwd b parents --template 'parent: {rev}\n'
-  parent: 1
+  parent: 0
   $ rm -r b
 
 
@@ -432,7 +495,8 @@ Test fuzziness (ambiguous patch location, fuzz=2)
   $ hg import --no-commit -v fuzzy-tip.patch
   applying fuzzy-tip.patch
   patching file a
-  Hunk #1 succeeded at 1 with fuzz 2 (offset -2 lines).
+  Hunk #1 succeeded at 2 with fuzz 1 (offset 0 lines).
+  applied to working directory
   $ hg revert -a
   reverting a
 
@@ -448,7 +512,8 @@ test fuzziness with eol=auto
   $ hg --config patch.eol=auto import --no-commit -v fuzzy-tip.patch
   applying fuzzy-tip.patch
   patching file a
-  Hunk #1 succeeded at 1 with fuzz 2 (offset -2 lines).
+  Hunk #1 succeeded at 2 with fuzz 1 (offset 0 lines).
+  applied to working directory
   $ cd ..
 
 
@@ -530,7 +595,7 @@ Test importing a patch ending with a binary file removal
   $ hg init binaryremoval
   $ cd binaryremoval
   $ echo a > a
-  $ python -c "file('b', 'wb').write('a\x00b')"
+  $ $PYTHON -c "file('b', 'wb').write('a\x00b')"
   $ hg ci -Am addall
   adding a
   adding b
@@ -590,6 +655,9 @@ test -p0
   $ echo a > a
   $ hg ci -Am t
   adding a
+  $ hg import -p foo
+  abort: invalid value 'foo' for option -p, expected int
+  [255]
   $ hg import -p0 - << EOF
   > foobar
   > --- a	Sat Apr 12 22:43:58 2008 -0400
@@ -617,7 +685,7 @@ test paths outside repo root
   > rename to bar
   > EOF
   applying patch from stdin
-  abort: path contains illegal component: ../outside/foo
+  abort: path contains illegal component: ../outside/foo (glob)
   [255]
   $ cd ..
 
@@ -648,9 +716,9 @@ test import with similarity and git and strip (issue295 et al.)
   applying ../rename.diff
   patching file a
   patching file b
-  removing a
   adding b
   recording removal of a as rename to b (88% similar)
+  applied to working directory
   $ hg st -C
   A b
     a
@@ -663,8 +731,8 @@ test import with similarity and git and strip (issue295 et al.)
   applying ../rename.diff
   patching file a
   patching file b
-  removing a
   adding b
+  applied to working directory
   $ hg st -C
   A b
   R a
@@ -680,6 +748,7 @@ Issue1495: add empty file from the end of patch
   adding a
   $ hg ci -m "commit"
   $ cat > a.patch <<EOF
+  > add a, b
   > diff --git a/a b/a
   > --- a/a
   > +++ b/a
@@ -690,8 +759,24 @@ Issue1495: add empty file from the end of patch
   > EOF
   $ hg import --no-commit a.patch
   applying a.patch
-  $ cd ..
 
+apply a good patch followed by an empty patch (mainly to ensure
+that dirstate is *not* updated when import crashes)
+  $ hg update -q -C .
+  $ rm b
+  $ touch empty.patch
+  $ hg import a.patch empty.patch
+  applying a.patch
+  applying empty.patch
+  transaction abort!
+  rollback completed
+  abort: empty.patch: no diffs found
+  [255]
+  $ hg tip --template '{rev}  {desc|firstline}\n'
+  0  commit
+  $ hg -q status
+  M a
+  $ cd ..
 
 create file when source is not /dev/null
 
@@ -725,6 +810,7 @@ some people have patches like the following too
   $ cat foo
   a
 
+  $ cd ..
 
 Issue1859: first line mistaken for email headers
 
@@ -759,7 +845,7 @@ Issue1859: first line mistaken for email headers
   $ cd ..
 
 
---- in commit message
+in commit message
 
   $ hg init commitconfusion
   $ cd commitconfusion
@@ -820,6 +906,7 @@ Issue1859: first line mistaken for email headers
   # HG changeset patch
   # User User B
   # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
   # Node ID eb56ab91903632294ac504838508cb370c0901d2
   # Parent  0000000000000000000000000000000000000000
   from: tricky!
@@ -875,12 +962,16 @@ Issue2102: hg export and hg import speak different languages
   > new mode 100755
   > EOF
   applying patch from stdin
+
+#if execbit
+
   $ hg sum
   parent: 1:d59915696727 tip
    help management of empty pkg and lib directories in perforce
   branch: default
   commit: (clean)
   update: (current)
+
   $ hg diff --git -c tip
   diff --git a/lib/place-holder b/lib/place-holder
   new file mode 100644
@@ -899,6 +990,39 @@ Issue2102: hg export and hg import speak different languages
   diff --git a/src/cmd/gc/mksys.bash b/src/cmd/gc/mksys.bash
   old mode 100644
   new mode 100755
+
+#else
+
+  $ hg sum
+  parent: 1:28f089cc9ccc tip
+   help management of empty pkg and lib directories in perforce
+  branch: default
+  commit: (clean)
+  update: (current)
+
+  $ hg diff --git -c tip
+  diff --git a/lib/place-holder b/lib/place-holder
+  new file mode 100644
+  --- /dev/null
+  +++ b/lib/place-holder
+  @@ -0,0 +1,2 @@
+  +perforce does not maintain empty directories.
+  +this file helps.
+  diff --git a/pkg/place-holder b/pkg/place-holder
+  new file mode 100644
+  --- /dev/null
+  +++ b/pkg/place-holder
+  @@ -0,0 +1,2 @@
+  +perforce does not maintain empty directories.
+  +this file helps.
+
+/* The mode change for mksys.bash is missing here, because on platforms  */
+/* that don't support execbits, mode changes in patches are ignored when */
+/* they are imported. This is obviously also the reason for why the hash */
+/* in the created changeset is different to the one you see above the    */
+/* #else clause */
+
+#endif
   $ cd ..
 
 
@@ -928,3 +1052,428 @@ diff lines looking like headers
   $ diff want have
   $ cd ..
 
+import a unified diff with no lines of context (diff -U0)
+
+  $ hg init diffzero
+  $ cd diffzero
+  $ cat > f << EOF
+  > c2
+  > c4
+  > c5
+  > EOF
+  $ hg commit -Am0
+  adding f
+
+  $ hg import --no-commit - << EOF
+  > # HG changeset patch
+  > # User test
+  > # Date 0 0
+  > # Node ID f4974ab632f3dee767567b0576c0ec9a4508575c
+  > # Parent  8679a12a975b819fae5f7ad3853a2886d143d794
+  > 1
+  > diff -r 8679a12a975b -r f4974ab632f3 f
+  > --- a/f	Thu Jan 01 00:00:00 1970 +0000
+  > +++ b/f	Thu Jan 01 00:00:00 1970 +0000
+  > @@ -0,0 +1,1 @@
+  > +c1
+  > @@ -1,0 +3,1 @@
+  > +c3
+  > @@ -3,1 +4,0 @@
+  > -c5
+  > EOF
+  applying patch from stdin
+
+  $ cat f
+  c1
+  c2
+  c3
+  c4
+
+  $ cd ..
+
+no segfault while importing a unified diff which start line is zero but chunk
+size is non-zero
+
+  $ hg init startlinezero
+  $ cd startlinezero
+  $ echo foo > foo
+  $ hg commit -Amfoo
+  adding foo
+
+  $ hg import --no-commit - << EOF
+  > diff a/foo b/foo
+  > --- a/foo
+  > +++ b/foo
+  > @@ -0,1 +0,1 @@
+  >  foo
+  > EOF
+  applying patch from stdin
+
+  $ cd ..
+
+Test corner case involving fuzz and skew
+
+  $ hg init morecornercases
+  $ cd morecornercases
+
+  $ cat > 01-no-context-beginning-of-file.diff <<EOF
+  > diff --git a/a b/a
+  > --- a/a
+  > +++ b/a
+  > @@ -1,0 +1,1 @@
+  > +line
+  > EOF
+
+  $ cat > 02-no-context-middle-of-file.diff <<EOF
+  > diff --git a/a b/a
+  > --- a/a
+  > +++ b/a
+  > @@ -1,1 +1,1 @@
+  > -2
+  > +add some skew
+  > @@ -2,0 +2,1 @@
+  > +line
+  > EOF
+
+  $ cat > 03-no-context-end-of-file.diff <<EOF
+  > diff --git a/a b/a
+  > --- a/a
+  > +++ b/a
+  > @@ -10,0 +10,1 @@
+  > +line
+  > EOF
+
+  $ cat > 04-middle-of-file-completely-fuzzed.diff <<EOF
+  > diff --git a/a b/a
+  > --- a/a
+  > +++ b/a
+  > @@ -1,1 +1,1 @@
+  > -2
+  > +add some skew
+  > @@ -2,2 +2,3 @@
+  >  not matching, should fuzz
+  >  ... a bit
+  > +line
+  > EOF
+
+  $ cat > a <<EOF
+  > 1
+  > 2
+  > 3
+  > 4
+  > EOF
+  $ hg ci -Am adda a
+  $ for p in *.diff; do
+  >   hg import -v --no-commit $p
+  >   cat a
+  >   hg revert -aqC a
+  >   # patch -p1 < $p
+  >   # cat a
+  >   # hg revert -aC a
+  > done
+  applying 01-no-context-beginning-of-file.diff
+  patching file a
+  applied to working directory
+  1
+  line
+  2
+  3
+  4
+  applying 02-no-context-middle-of-file.diff
+  patching file a
+  Hunk #1 succeeded at 2 (offset 1 lines).
+  Hunk #2 succeeded at 4 (offset 1 lines).
+  applied to working directory
+  1
+  add some skew
+  3
+  line
+  4
+  applying 03-no-context-end-of-file.diff
+  patching file a
+  Hunk #1 succeeded at 5 (offset -6 lines).
+  applied to working directory
+  1
+  2
+  3
+  4
+  line
+  applying 04-middle-of-file-completely-fuzzed.diff
+  patching file a
+  Hunk #1 succeeded at 2 (offset 1 lines).
+  Hunk #2 succeeded at 5 with fuzz 2 (offset 1 lines).
+  applied to working directory
+  1
+  add some skew
+  3
+  4
+  line
+  $ cd ..
+
+Test partial application
+------------------------
+
+prepare a stack of patches depending on each other
+
+  $ hg init partial
+  $ cd partial
+  $ cat << EOF > a
+  > one
+  > two
+  > three
+  > four
+  > five
+  > six
+  > seven
+  > EOF
+  $ hg add a
+  $ echo 'b' > b
+  $ hg add b
+  $ hg commit -m 'initial' -u Babar
+  $ cat << EOF > a
+  > one
+  > two
+  > 3
+  > four
+  > five
+  > six
+  > seven
+  > EOF
+  $ hg commit -m 'three' -u Celeste
+  $ cat << EOF > a
+  > one
+  > two
+  > 3
+  > 4
+  > five
+  > six
+  > seven
+  > EOF
+  $ hg commit -m 'four' -u Rataxes
+  $ cat << EOF > a
+  > one
+  > two
+  > 3
+  > 4
+  > 5
+  > six
+  > seven
+  > EOF
+  $ echo bb >> b
+  $ hg commit -m 'five' -u Arthur
+  $ echo 'Babar' > jungle
+  $ hg add jungle
+  $ hg ci -m 'jungle' -u Zephir
+  $ echo 'Celeste' >> jungle
+  $ hg ci -m 'extended jungle' -u Cornelius
+  $ hg log -G --template '{desc|firstline} [{author}] {diffstat}\n'
+  @  extended jungle [Cornelius] 1: +1/-0
+  |
+  o  jungle [Zephir] 1: +1/-0
+  |
+  o  five [Arthur] 2: +2/-1
+  |
+  o  four [Rataxes] 1: +1/-1
+  |
+  o  three [Celeste] 1: +1/-1
+  |
+  o  initial [Babar] 2: +8/-0
+  
+
+Importing with some success and some errors:
+
+  $ hg update --rev 'desc(initial)'
+  2 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg export --rev 'desc(five)' | hg import --partial -
+  applying patch from stdin
+  patching file a
+  Hunk #1 FAILED at 1
+  1 out of 1 hunks FAILED -- saving rejects to file a.rej
+  patch applied partially
+  (fix the .rej files and run `hg commit --amend`)
+  [1]
+
+  $ hg log -G --template '{desc|firstline} [{author}] {diffstat}\n'
+  @  five [Arthur] 1: +1/-0
+  |
+  | o  extended jungle [Cornelius] 1: +1/-0
+  | |
+  | o  jungle [Zephir] 1: +1/-0
+  | |
+  | o  five [Arthur] 2: +2/-1
+  | |
+  | o  four [Rataxes] 1: +1/-1
+  | |
+  | o  three [Celeste] 1: +1/-1
+  |/
+  o  initial [Babar] 2: +8/-0
+  
+  $ hg export
+  # HG changeset patch
+  # User Arthur
+  # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
+  # Node ID 26e6446bb2526e2be1037935f5fca2b2706f1509
+  # Parent  8e4f0351909eae6b9cf68c2c076cb54c42b54b2e
+  five
+  
+  diff -r 8e4f0351909e -r 26e6446bb252 b
+  --- a/b	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/b	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,1 +1,2 @@
+   b
+  +bb
+  $ hg status -c .
+  C a
+  C b
+  $ ls
+  a
+  a.rej
+  b
+
+Importing with zero success:
+
+  $ hg update --rev 'desc(initial)'
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg export --rev 'desc(four)' | hg import --partial -
+  applying patch from stdin
+  patching file a
+  Hunk #1 FAILED at 0
+  1 out of 1 hunks FAILED -- saving rejects to file a.rej
+  patch applied partially
+  (fix the .rej files and run `hg commit --amend`)
+  [1]
+
+  $ hg log -G --template '{desc|firstline} [{author}] {diffstat}\n'
+  @  four [Rataxes] 0: +0/-0
+  |
+  | o  five [Arthur] 1: +1/-0
+  |/
+  | o  extended jungle [Cornelius] 1: +1/-0
+  | |
+  | o  jungle [Zephir] 1: +1/-0
+  | |
+  | o  five [Arthur] 2: +2/-1
+  | |
+  | o  four [Rataxes] 1: +1/-1
+  | |
+  | o  three [Celeste] 1: +1/-1
+  |/
+  o  initial [Babar] 2: +8/-0
+  
+  $ hg export
+  # HG changeset patch
+  # User Rataxes
+  # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
+  # Node ID cb9b1847a74d9ad52e93becaf14b98dbcc274e1e
+  # Parent  8e4f0351909eae6b9cf68c2c076cb54c42b54b2e
+  four
+  
+  $ hg status -c .
+  C a
+  C b
+  $ ls
+  a
+  a.rej
+  b
+
+Importing with unknown file:
+
+  $ hg update --rev 'desc(initial)'
+  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg export --rev 'desc("extended jungle")' | hg import --partial -
+  applying patch from stdin
+  unable to find 'jungle' for patching
+  1 out of 1 hunks FAILED -- saving rejects to file jungle.rej
+  patch applied partially
+  (fix the .rej files and run `hg commit --amend`)
+  [1]
+
+  $ hg log -G --template '{desc|firstline} [{author}] {diffstat}\n'
+  @  extended jungle [Cornelius] 0: +0/-0
+  |
+  | o  four [Rataxes] 0: +0/-0
+  |/
+  | o  five [Arthur] 1: +1/-0
+  |/
+  | o  extended jungle [Cornelius] 1: +1/-0
+  | |
+  | o  jungle [Zephir] 1: +1/-0
+  | |
+  | o  five [Arthur] 2: +2/-1
+  | |
+  | o  four [Rataxes] 1: +1/-1
+  | |
+  | o  three [Celeste] 1: +1/-1
+  |/
+  o  initial [Babar] 2: +8/-0
+  
+  $ hg export
+  # HG changeset patch
+  # User Cornelius
+  # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
+  # Node ID 1fb1f86bef43c5a75918178f8d23c29fb0a7398d
+  # Parent  8e4f0351909eae6b9cf68c2c076cb54c42b54b2e
+  extended jungle
+  
+  $ hg status -c .
+  C a
+  C b
+  $ ls
+  a
+  a.rej
+  b
+  jungle.rej
+
+Importing multiple failing patches:
+
+  $ hg update --rev 'desc(initial)'
+  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ echo 'B' > b # just to make another commit
+  $ hg commit -m "a new base"
+  created new head
+  $ hg export --rev 'desc("four") + desc("extended jungle")' | hg import --partial -
+  applying patch from stdin
+  patching file a
+  Hunk #1 FAILED at 0
+  1 out of 1 hunks FAILED -- saving rejects to file a.rej
+  patch applied partially
+  (fix the .rej files and run `hg commit --amend`)
+  [1]
+  $ hg log -G --template '{desc|firstline} [{author}] {diffstat}\n'
+  @  four [Rataxes] 0: +0/-0
+  |
+  o  a new base [test] 1: +1/-1
+  |
+  | o  extended jungle [Cornelius] 0: +0/-0
+  |/
+  | o  four [Rataxes] 0: +0/-0
+  |/
+  | o  five [Arthur] 1: +1/-0
+  |/
+  | o  extended jungle [Cornelius] 1: +1/-0
+  | |
+  | o  jungle [Zephir] 1: +1/-0
+  | |
+  | o  five [Arthur] 2: +2/-1
+  | |
+  | o  four [Rataxes] 1: +1/-1
+  | |
+  | o  three [Celeste] 1: +1/-1
+  |/
+  o  initial [Babar] 2: +8/-0
+  
+  $ hg export
+  # HG changeset patch
+  # User Rataxes
+  # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
+  # Node ID a9d7b6d0ffbb4eb12b7d5939250fcd42e8930a1d
+  # Parent  f59f8d2e95a8ca5b1b4ca64320140da85f3b44fd
+  four
+  
+  $ hg status -c .
+  C a
+  C b

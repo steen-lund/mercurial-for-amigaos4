@@ -4,7 +4,7 @@
   >     shift
   >     echo "Pushing as user $user"
   >     echo 'hgrc = """'
-  >     sed -e 1,2d b/.hg/hgrc | grep -v fakegroups.py
+  >     sed -n '/\[[ha]/,$p' b/.hg/hgrc | grep -v fakegroups.py
   >     echo '"""'
   >     if test -f acl.config; then
   >         echo 'acl.config = """'
@@ -70,9 +70,6 @@
   updating to branch default
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
 
-  $ echo '[extensions]' >> $HGRCPATH
-  $ echo 'acl =' >> $HGRCPATH
-
   $ config=b/.hg/hgrc
 
 Extension disabled for lack of a hook
@@ -85,12 +82,15 @@ Extension disabled for lack of a hook
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -100,6 +100,7 @@ Extension disabled for lack of a hook
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -119,9 +120,9 @@ Extension disabled for lack of a hook
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 0 (undo push)
-  working directory now based on revision 0
   0:6675d58eff77
   
 
@@ -140,13 +141,16 @@ Extension disabled for lack of acl.sources
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -156,6 +160,7 @@ Extension disabled for lack of acl.sources
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -177,9 +182,9 @@ Extension disabled for lack of acl.sources
   calling hook pretxnchangegroup.acl: hgext.acl.hook
   acl: changes have source "push" - skipping
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 0 (undo push)
-  working directory now based on revision 0
   0:6675d58eff77
   
 
@@ -199,13 +204,16 @@ No [acl.allow]/[acl.deny]
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -215,6 +223,7 @@ No [acl.allow]/[acl.deny]
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -234,20 +243,21 @@ No [acl.allow]/[acl.deny]
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow not enabled
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 0 (undo push)
-  working directory now based on revision 0
   0:6675d58eff77
   
 
@@ -267,13 +277,16 @@ Empty [acl.allow]
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -283,6 +296,7 @@ Empty [acl.allow]
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -302,16 +316,16 @@ Empty [acl.allow]
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 0 entries for user fred
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: user fred not allowed on foo/file.txt
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset ef1ea85a6374
+  error: pretxnchangegroup.acl hook failed: acl: user "fred" not allowed on "foo/file.txt" (changeset "ef1ea85a6374")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset ef1ea85a6374
+  abort: acl: user "fred" not allowed on "foo/file.txt" (changeset "ef1ea85a6374")
   no rollback information available
   0:6675d58eff77
   
@@ -333,12 +347,16 @@ fred is allowed inside foo/
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -348,6 +366,7 @@ fred is allowed inside foo/
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -367,20 +386,20 @@ fred is allowed inside foo/
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user fred
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: user fred not allowed on quux/file.py
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset 911600dab2ae
+  error: pretxnchangegroup.acl hook failed: acl: user "fred" not allowed on "quux/file.py" (changeset "911600dab2ae")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset 911600dab2ae
+  abort: acl: user "fred" not allowed on "quux/file.py" (changeset "911600dab2ae")
   no rollback information available
   0:6675d58eff77
   
@@ -403,12 +422,16 @@ Empty [acl.deny]
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -418,6 +441,7 @@ Empty [acl.deny]
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -437,16 +461,16 @@ Empty [acl.deny]
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "barney"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 0 entries for user barney
   acl: acl.deny enabled, 0 entries for user barney
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: user barney not allowed on foo/file.txt
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset ef1ea85a6374
+  error: pretxnchangegroup.acl hook failed: acl: user "barney" not allowed on "foo/file.txt" (changeset "ef1ea85a6374")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset ef1ea85a6374
+  abort: acl: user "barney" not allowed on "foo/file.txt" (changeset "ef1ea85a6374")
   no rollback information available
   0:6675d58eff77
   
@@ -470,12 +494,16 @@ fred is allowed inside foo/, but not foo/bar/ (case matters)
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -485,6 +513,7 @@ fred is allowed inside foo/, but not foo/bar/ (case matters)
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -504,20 +533,20 @@ fred is allowed inside foo/, but not foo/bar/ (case matters)
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user fred
   acl: acl.deny enabled, 1 entries for user fred
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: user fred not allowed on quux/file.py
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset 911600dab2ae
+  error: pretxnchangegroup.acl hook failed: acl: user "fred" not allowed on "quux/file.py" (changeset "911600dab2ae")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset 911600dab2ae
+  abort: acl: user "fred" not allowed on "quux/file.py" (changeset "911600dab2ae")
   no rollback information available
   0:6675d58eff77
   
@@ -542,12 +571,16 @@ fred is allowed inside foo/, but not foo/Bar/
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -557,6 +590,7 @@ fred is allowed inside foo/, but not foo/Bar/
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -576,18 +610,18 @@ fred is allowed inside foo/, but not foo/Bar/
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user fred
   acl: acl.deny enabled, 2 entries for user fred
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: user fred denied on foo/Bar/file.txt
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset f9cafe1212c8
+  error: pretxnchangegroup.acl hook failed: acl: user "fred" denied on "foo/Bar/file.txt" (changeset "f9cafe1212c8")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset f9cafe1212c8
+  abort: acl: user "fred" denied on "foo/Bar/file.txt" (changeset "f9cafe1212c8")
   no rollback information available
   0:6675d58eff77
   
@@ -611,12 +645,16 @@ fred is allowed inside foo/, but not foo/Bar/
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -626,6 +664,7 @@ fred is allowed inside foo/, but not foo/Bar/
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -645,16 +684,16 @@ fred is allowed inside foo/, but not foo/Bar/
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "barney"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 0 entries for user barney
   acl: acl.deny enabled, 0 entries for user barney
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: user barney not allowed on foo/file.txt
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset ef1ea85a6374
+  error: pretxnchangegroup.acl hook failed: acl: user "barney" not allowed on "foo/file.txt" (changeset "ef1ea85a6374")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset ef1ea85a6374
+  abort: acl: user "barney" not allowed on "foo/file.txt" (changeset "ef1ea85a6374")
   no rollback information available
   0:6675d58eff77
   
@@ -682,12 +721,16 @@ barney is allowed everywhere
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -697,6 +740,7 @@ barney is allowed everywhere
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -716,20 +760,21 @@ barney is allowed everywhere
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "barney"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user barney
   acl: acl.deny enabled, 0 entries for user barney
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 0 (undo push)
-  working directory now based on revision 0
   0:6675d58eff77
   
 
@@ -756,13 +801,16 @@ wilma can change files with a .txt extension
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -772,6 +820,7 @@ wilma can change files with a .txt extension
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -791,20 +840,20 @@ wilma can change files with a .txt extension
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "wilma"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user wilma
   acl: acl.deny enabled, 0 entries for user wilma
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: user wilma not allowed on quux/file.py
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset 911600dab2ae
+  error: pretxnchangegroup.acl hook failed: acl: user "wilma" not allowed on "quux/file.py" (changeset "911600dab2ae")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset 911600dab2ae
+  abort: acl: user "wilma" not allowed on "quux/file.py" (changeset "911600dab2ae")
   no rollback information available
   0:6675d58eff77
   
@@ -835,12 +884,16 @@ file specified by acl.config does not exist
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -850,6 +903,7 @@ file specified by acl.config does not exist
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -869,6 +923,7 @@ file specified by acl.config does not exist
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "barney"
   error: pretxnchangegroup.acl hook raised an exception: [Errno 2] No such file or directory: '../acl.config'
   transaction abort!
   rollback completed
@@ -907,12 +962,16 @@ betty is allowed inside foo/ by a acl.config file
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -922,6 +981,7 @@ betty is allowed inside foo/ by a acl.config file
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -941,20 +1001,20 @@ betty is allowed inside foo/ by a acl.config file
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "betty"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user betty
   acl: acl.deny enabled, 0 entries for user betty
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: user betty not allowed on quux/file.py
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset 911600dab2ae
+  error: pretxnchangegroup.acl hook failed: acl: user "betty" not allowed on "quux/file.py" (changeset "911600dab2ae")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset 911600dab2ae
+  abort: acl: user "betty" not allowed on "quux/file.py" (changeset "911600dab2ae")
   no rollback information available
   0:6675d58eff77
   
@@ -991,12 +1051,16 @@ acl.config can set only [acl.allow]/[acl.deny]
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -1006,6 +1070,7 @@ acl.config can set only [acl.allow]/[acl.deny]
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1025,20 +1090,21 @@ acl.config can set only [acl.allow]/[acl.deny]
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "barney"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user barney
   acl: acl.deny enabled, 0 entries for user barney
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 0 (undo push)
-  working directory now based on revision 0
   0:6675d58eff77
   
 
@@ -1056,6 +1122,8 @@ fred is always allowed
   $ do_push fred
   Pushing as user fred
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1066,13 +1134,16 @@ fred is always allowed
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -1082,6 +1153,7 @@ fred is always allowed
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1101,20 +1173,21 @@ fred is always allowed
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user fred
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 0 (undo push)
-  working directory now based on revision 0
   0:6675d58eff77
   
 
@@ -1126,6 +1199,8 @@ no one is allowed inside foo/Bar/
   $ do_push fred
   Pushing as user fred
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1138,13 +1213,16 @@ no one is allowed inside foo/Bar/
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -1154,6 +1232,7 @@ no one is allowed inside foo/Bar/
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1173,18 +1252,18 @@ no one is allowed inside foo/Bar/
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow enabled, 1 entries for user fred
   acl: acl.deny enabled, 1 entries for user fred
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: user fred denied on foo/Bar/file.txt
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset f9cafe1212c8
+  error: pretxnchangegroup.acl hook failed: acl: user "fred" denied on "foo/Bar/file.txt" (changeset "f9cafe1212c8")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset f9cafe1212c8
+  abort: acl: user "fred" denied on "foo/Bar/file.txt" (changeset "f9cafe1212c8")
   no rollback information available
   0:6675d58eff77
   
@@ -1203,6 +1282,8 @@ OS-level groups
   $ do_push fred
   Pushing as user fred
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1213,12 +1294,16 @@ OS-level groups
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -1228,6 +1313,7 @@ OS-level groups
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1247,21 +1333,22 @@ OS-level groups
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: "group1" not defined in [acl.groups]
   acl: acl.allow enabled, 1 entries for user fred
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 0 (undo push)
-  working directory now based on revision 0
   0:6675d58eff77
   
 
@@ -1273,6 +1360,8 @@ OS-level groups
   $ do_push fred
   Pushing as user fred
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1285,13 +1374,16 @@ OS-level groups
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  invalid branchheads cache (served): tip differs
+  listing keys for "bookmarks"
   3 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
-  adding changesets
   bundling: 1/3 changesets (33.33%)
   bundling: 2/3 changesets (66.67%)
   bundling: 3/3 changesets (100.00%)
@@ -1301,6 +1393,7 @@ OS-level groups
   bundling: foo/Bar/file.txt 1/3 files (33.33%)
   bundling: foo/file.txt 2/3 files (66.67%)
   bundling: quux/file.py 3/3 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1320,6 +1413,7 @@ OS-level groups
   files: 3/3 chunks (100.00%)
   added 3 changesets with 3 changes to 3 files
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "fred"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: "group1" not defined in [acl.groups]
@@ -1327,13 +1421,12 @@ OS-level groups
   acl: "group1" not defined in [acl.groups]
   acl: acl.deny enabled, 1 entries for user fred
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: user fred denied on foo/Bar/file.txt
-  error: pretxnchangegroup.acl hook failed: acl: access denied for changeset f9cafe1212c8
+  error: pretxnchangegroup.acl hook failed: acl: user "fred" denied on "foo/Bar/file.txt" (changeset "f9cafe1212c8")
   transaction abort!
   rollback completed
-  abort: acl: access denied for changeset f9cafe1212c8
+  abort: acl: user "fred" denied on "foo/Bar/file.txt" (changeset "f9cafe1212c8")
   no rollback information available
   0:6675d58eff77
   
@@ -1361,6 +1454,7 @@ Branch acl tests setup
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg branch foobar
   marked working directory as branch foobar
+  (branches are permanent and global, did you want a bookmark?)
   $ hg commit -m 'create foobar'
   $ echo 'foo contents' > abc.txt
   $ hg add abc.txt
@@ -1390,6 +1484,8 @@ No branch acls specified
   $ do_push astro
   Pushing as user astro
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1398,13 +1494,16 @@ No branch acls specified
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   4 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
   e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
-  adding changesets
   bundling: 1/4 changesets (25.00%)
   bundling: 2/4 changesets (50.00%)
   bundling: 3/4 changesets (75.00%)
@@ -1417,6 +1516,7 @@ No branch acls specified
   bundling: foo/Bar/file.txt 2/4 files (50.00%)
   bundling: foo/file.txt 3/4 files (75.00%)
   bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1441,22 +1541,23 @@ No branch acls specified
   files: 4/4 chunks (100.00%)
   added 4 changesets with 4 changes to 4 files (+1 heads)
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "astro"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches not enabled
   acl: acl.allow not enabled
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   acl: branch access granted: "e8fc755d4d82" on branch "foobar"
-  acl: allowing changeset e8fc755d4d82
+  acl: path access granted: "e8fc755d4d82"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 2 (undo push)
-  working directory now based on revision 2
   2:fb35475503ef
   
 
@@ -1467,6 +1568,8 @@ Branch acl deny test
   $ do_push astro
   Pushing as user astro
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1477,14 +1580,16 @@ Branch acl deny test
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   4 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
   e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
-  adding changesets
   bundling: 1/4 changesets (25.00%)
   bundling: 2/4 changesets (50.00%)
   bundling: 3/4 changesets (75.00%)
@@ -1497,6 +1602,7 @@ Branch acl deny test
   bundling: foo/Bar/file.txt 2/4 files (50.00%)
   bundling: foo/file.txt 3/4 files (75.00%)
   bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1521,16 +1627,17 @@ Branch acl deny test
   files: 4/4 chunks (100.00%)
   added 4 changesets with 4 changes to 4 files (+1 heads)
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "astro"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches enabled, 1 entries for user astro
   acl: acl.allow not enabled
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   error: pretxnchangegroup.acl hook failed: acl: user "astro" denied on branch "foobar" (changeset "e8fc755d4d82")
   transaction abort!
   rollback completed
@@ -1546,6 +1653,8 @@ Branch acl empty allow test
   $ do_push astro
   Pushing as user astro
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1555,13 +1664,16 @@ Branch acl empty allow test
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   4 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
   e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
-  adding changesets
   bundling: 1/4 changesets (25.00%)
   bundling: 2/4 changesets (50.00%)
   bundling: 3/4 changesets (75.00%)
@@ -1574,6 +1686,7 @@ Branch acl empty allow test
   bundling: foo/Bar/file.txt 2/4 files (50.00%)
   bundling: foo/file.txt 3/4 files (75.00%)
   bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1598,6 +1711,7 @@ Branch acl empty allow test
   files: 4/4 chunks (100.00%)
   added 4 changesets with 4 changes to 4 files (+1 heads)
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "astro"
   acl: acl.allow.branches enabled, 0 entries for user astro
   acl: acl.deny.branches not enabled
   acl: acl.allow not enabled
@@ -1618,6 +1732,8 @@ Branch acl allow other
   $ do_push astro
   Pushing as user astro
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1628,13 +1744,16 @@ Branch acl allow other
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   4 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
   e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
-  adding changesets
   bundling: 1/4 changesets (25.00%)
   bundling: 2/4 changesets (50.00%)
   bundling: 3/4 changesets (75.00%)
@@ -1647,6 +1766,7 @@ Branch acl allow other
   bundling: foo/Bar/file.txt 2/4 files (50.00%)
   bundling: foo/file.txt 3/4 files (75.00%)
   bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1671,6 +1791,7 @@ Branch acl allow other
   files: 4/4 chunks (100.00%)
   added 4 changesets with 4 changes to 4 files (+1 heads)
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "astro"
   acl: acl.allow.branches enabled, 0 entries for user astro
   acl: acl.deny.branches not enabled
   acl: acl.allow not enabled
@@ -1685,6 +1806,8 @@ Branch acl allow other
   $ do_push george
   Pushing as user george
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1695,13 +1818,16 @@ Branch acl allow other
   query 1; heads
   searching for changes
   all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   4 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
   e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
-  adding changesets
   bundling: 1/4 changesets (25.00%)
   bundling: 2/4 changesets (50.00%)
   bundling: 3/4 changesets (75.00%)
@@ -1714,6 +1840,7 @@ Branch acl allow other
   bundling: foo/Bar/file.txt 2/4 files (50.00%)
   bundling: foo/file.txt 3/4 files (75.00%)
   bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1738,22 +1865,23 @@ Branch acl allow other
   files: 4/4 chunks (100.00%)
   added 4 changesets with 4 changes to 4 files (+1 heads)
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "george"
   acl: acl.allow.branches enabled, 1 entries for user george
   acl: acl.deny.branches not enabled
   acl: acl.allow not enabled
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   acl: branch access granted: "e8fc755d4d82" on branch "foobar"
-  acl: allowing changeset e8fc755d4d82
+  acl: path access granted: "e8fc755d4d82"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 2 (undo push)
-  working directory now based on revision 2
   2:fb35475503ef
   
 
@@ -1768,6 +1896,8 @@ push foobar into the remote
   $ do_push george
   Pushing as user george
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1779,14 +1909,16 @@ push foobar into the remote
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   4 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
   e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
-  adding changesets
   bundling: 1/4 changesets (25.00%)
   bundling: 2/4 changesets (50.00%)
   bundling: 3/4 changesets (75.00%)
@@ -1799,6 +1931,7 @@ push foobar into the remote
   bundling: foo/Bar/file.txt 2/4 files (50.00%)
   bundling: foo/file.txt 3/4 files (75.00%)
   bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1823,22 +1956,23 @@ push foobar into the remote
   files: 4/4 chunks (100.00%)
   added 4 changesets with 4 changes to 4 files (+1 heads)
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "george"
   acl: acl.allow.branches enabled, 1 entries for user george
   acl: acl.deny.branches not enabled
   acl: acl.allow not enabled
   acl: acl.deny not enabled
   acl: branch access granted: "ef1ea85a6374" on branch "default"
-  acl: allowing changeset ef1ea85a6374
+  acl: path access granted: "ef1ea85a6374"
   acl: branch access granted: "f9cafe1212c8" on branch "default"
-  acl: allowing changeset f9cafe1212c8
+  acl: path access granted: "f9cafe1212c8"
   acl: branch access granted: "911600dab2ae" on branch "default"
-  acl: allowing changeset 911600dab2ae
+  acl: path access granted: "911600dab2ae"
   acl: branch access granted: "e8fc755d4d82" on branch "foobar"
-  acl: allowing changeset e8fc755d4d82
+  acl: path access granted: "e8fc755d4d82"
   updating the branch cache
-  checking for updated bookmarks
+  listing keys for "phases"
+  try to push obsolete markers to remote
   repository tip rolled back to revision 2 (undo push)
-  working directory now based on revision 2
   2:fb35475503ef
   
 Branch acl conflicting deny
@@ -1851,6 +1985,8 @@ Branch acl conflicting deny
   $ do_push george
   Pushing as user george
   hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
   [acl]
   sources = push
   [extensions]
@@ -1863,14 +1999,16 @@ Branch acl conflicting deny
   query 1; heads
   searching for changes
   all remote heads known locally
-  invalidating branch cache (tip differs)
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
   4 changesets found
   list of changesets:
   ef1ea85a6374b77d6da9dcda9541f498f2d17df7
   f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
   911600dab2ae7a9baff75958b84fe606851ce955
   e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
-  adding changesets
   bundling: 1/4 changesets (25.00%)
   bundling: 2/4 changesets (50.00%)
   bundling: 3/4 changesets (75.00%)
@@ -1883,6 +2021,7 @@ Branch acl conflicting deny
   bundling: foo/Bar/file.txt 2/4 files (50.00%)
   bundling: foo/file.txt 3/4 files (75.00%)
   bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
   changesets: 1 chunks
   add changeset ef1ea85a6374
   changesets: 2 chunks
@@ -1907,6 +2046,7 @@ Branch acl conflicting deny
   files: 4/4 chunks (100.00%)
   added 4 changesets with 4 changes to 4 files (+1 heads)
   calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "george"
   acl: acl.allow.branches not enabled
   acl: acl.deny.branches enabled, 1 entries for user george
   acl: acl.allow not enabled
@@ -1918,3 +2058,167 @@ Branch acl conflicting deny
   no rollback information available
   2:fb35475503ef
   
+User 'astro' must not be denied
+
+  $ init_config
+  $ echo "[acl.deny.branches]" >> $config
+  $ echo "default = !astro" >> $config
+  $ do_push astro
+  Pushing as user astro
+  hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
+  [acl]
+  sources = push
+  [extensions]
+  [acl.deny.branches]
+  default = !astro
+  """
+  pushing to ../b
+  query 1; heads
+  searching for changes
+  all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
+  4 changesets found
+  list of changesets:
+  ef1ea85a6374b77d6da9dcda9541f498f2d17df7
+  f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
+  911600dab2ae7a9baff75958b84fe606851ce955
+  e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
+  bundling: 1/4 changesets (25.00%)
+  bundling: 2/4 changesets (50.00%)
+  bundling: 3/4 changesets (75.00%)
+  bundling: 4/4 changesets (100.00%)
+  bundling: 1/4 manifests (25.00%)
+  bundling: 2/4 manifests (50.00%)
+  bundling: 3/4 manifests (75.00%)
+  bundling: 4/4 manifests (100.00%)
+  bundling: abc.txt 1/4 files (25.00%)
+  bundling: foo/Bar/file.txt 2/4 files (50.00%)
+  bundling: foo/file.txt 3/4 files (75.00%)
+  bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
+  changesets: 1 chunks
+  add changeset ef1ea85a6374
+  changesets: 2 chunks
+  add changeset f9cafe1212c8
+  changesets: 3 chunks
+  add changeset 911600dab2ae
+  changesets: 4 chunks
+  add changeset e8fc755d4d82
+  adding manifests
+  manifests: 1/4 chunks (25.00%)
+  manifests: 2/4 chunks (50.00%)
+  manifests: 3/4 chunks (75.00%)
+  manifests: 4/4 chunks (100.00%)
+  adding file changes
+  adding abc.txt revisions
+  files: 1/4 chunks (25.00%)
+  adding foo/Bar/file.txt revisions
+  files: 2/4 chunks (50.00%)
+  adding foo/file.txt revisions
+  files: 3/4 chunks (75.00%)
+  adding quux/file.py revisions
+  files: 4/4 chunks (100.00%)
+  added 4 changesets with 4 changes to 4 files (+1 heads)
+  calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "astro"
+  acl: acl.allow.branches not enabled
+  acl: acl.deny.branches enabled, 0 entries for user astro
+  acl: acl.allow not enabled
+  acl: acl.deny not enabled
+  acl: branch access granted: "ef1ea85a6374" on branch "default"
+  acl: path access granted: "ef1ea85a6374"
+  acl: branch access granted: "f9cafe1212c8" on branch "default"
+  acl: path access granted: "f9cafe1212c8"
+  acl: branch access granted: "911600dab2ae" on branch "default"
+  acl: path access granted: "911600dab2ae"
+  acl: branch access granted: "e8fc755d4d82" on branch "foobar"
+  acl: path access granted: "e8fc755d4d82"
+  updating the branch cache
+  listing keys for "phases"
+  try to push obsolete markers to remote
+  repository tip rolled back to revision 2 (undo push)
+  2:fb35475503ef
+  
+
+Non-astro users must be denied
+
+  $ do_push george
+  Pushing as user george
+  hgrc = """
+  [hooks]
+  pretxnchangegroup.acl = python:hgext.acl.hook
+  [acl]
+  sources = push
+  [extensions]
+  [acl.deny.branches]
+  default = !astro
+  """
+  pushing to ../b
+  query 1; heads
+  searching for changes
+  all remote heads known locally
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
+  4 changesets found
+  list of changesets:
+  ef1ea85a6374b77d6da9dcda9541f498f2d17df7
+  f9cafe1212c8c6fa1120d14a556e18cc44ff8bdd
+  911600dab2ae7a9baff75958b84fe606851ce955
+  e8fc755d4d8217ee5b0c2bb41558c40d43b92c01
+  bundling: 1/4 changesets (25.00%)
+  bundling: 2/4 changesets (50.00%)
+  bundling: 3/4 changesets (75.00%)
+  bundling: 4/4 changesets (100.00%)
+  bundling: 1/4 manifests (25.00%)
+  bundling: 2/4 manifests (50.00%)
+  bundling: 3/4 manifests (75.00%)
+  bundling: 4/4 manifests (100.00%)
+  bundling: abc.txt 1/4 files (25.00%)
+  bundling: foo/Bar/file.txt 2/4 files (50.00%)
+  bundling: foo/file.txt 3/4 files (75.00%)
+  bundling: quux/file.py 4/4 files (100.00%)
+  adding changesets
+  changesets: 1 chunks
+  add changeset ef1ea85a6374
+  changesets: 2 chunks
+  add changeset f9cafe1212c8
+  changesets: 3 chunks
+  add changeset 911600dab2ae
+  changesets: 4 chunks
+  add changeset e8fc755d4d82
+  adding manifests
+  manifests: 1/4 chunks (25.00%)
+  manifests: 2/4 chunks (50.00%)
+  manifests: 3/4 chunks (75.00%)
+  manifests: 4/4 chunks (100.00%)
+  adding file changes
+  adding abc.txt revisions
+  files: 1/4 chunks (25.00%)
+  adding foo/Bar/file.txt revisions
+  files: 2/4 chunks (50.00%)
+  adding foo/file.txt revisions
+  files: 3/4 chunks (75.00%)
+  adding quux/file.py revisions
+  files: 4/4 chunks (100.00%)
+  added 4 changesets with 4 changes to 4 files (+1 heads)
+  calling hook pretxnchangegroup.acl: hgext.acl.hook
+  acl: checking access for user "george"
+  acl: acl.allow.branches not enabled
+  acl: acl.deny.branches enabled, 1 entries for user george
+  acl: acl.allow not enabled
+  acl: acl.deny not enabled
+  error: pretxnchangegroup.acl hook failed: acl: user "george" denied on branch "default" (changeset "ef1ea85a6374")
+  transaction abort!
+  rollback completed
+  abort: acl: user "george" denied on branch "default" (changeset "ef1ea85a6374")
+  no rollback information available
+  2:fb35475503ef
+  
+

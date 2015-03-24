@@ -10,16 +10,21 @@
 
 from mercurial.i18n import _
 from mercurial import patch, cmdutil, scmutil, util, templater, commands
+from mercurial import encoding
 import os
 import time, datetime
+
+cmdtable = {}
+command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 def maketemplater(ui, repo, tmpl):
     tmpl = templater.parsestring(tmpl, quoted=False)
     try:
-        t = cmdutil.changeset_templater(ui, repo, False, None, None, False)
+        t = cmdutil.changeset_templater(ui, repo, False, None, tmpl,
+                                        None, False)
     except SyntaxError, inst:
         raise util.Abort(inst.args[0])
-    t.use_template(tmpl)
     return t
 
 def changedlines(ui, repo, ctx1, ctx2, fns):
@@ -67,7 +72,7 @@ def countrate(ui, repo, amap, *pats, **opts):
         else:
             parents = ctx.parents()
             if len(parents) > 1:
-                ui.note(_('Revision %d is a merge, ignoring...\n') % (rev,))
+                ui.note(_('revision %d is a merge, ignoring...\n') % (rev,))
                 return
 
             ctx1 = parents[0]
@@ -85,6 +90,22 @@ def countrate(ui, repo, amap, *pats, **opts):
     return rate
 
 
+@command('churn',
+    [('r', 'rev', [],
+     _('count rate for the specified revision or revset'), _('REV')),
+    ('d', 'date', '',
+     _('count rate for revisions matching date spec'), _('DATE')),
+    ('t', 'template', '{author|email}',
+     _('template to group changesets'), _('TEMPLATE')),
+    ('f', 'dateformat', '',
+     _('strftime-compatible format for grouping by date'), _('FORMAT')),
+    ('c', 'changesets', False, _('count rate by number of changesets')),
+    ('s', 'sort', False, _('sort by key (default: sort by count)')),
+    ('', 'diffstat', False, _('display added/removed lines separately')),
+    ('', 'aliases', '', _('file with email aliases'), _('FILE')),
+    ] + commands.walkopts,
+    _("hg churn [-d DATE] [-r REV] [--aliases FILE] [FILE]"),
+    inferrepo=True)
 def churn(ui, repo, *pats, **opts):
     '''histogram of changes to the repository
 
@@ -101,16 +122,16 @@ def churn(ui, repo, *pats, **opts):
     Examples::
 
       # display count of changed lines for every committer
-      hg churn -t '{author|email}'
+      hg churn -t "{author|email}"
 
       # display daily activity graph
-      hg churn -f '%H' -s -c
+      hg churn -f "%H" -s -c
 
       # display activity of developers by month
-      hg churn -f '%Y-%m' -s -c
+      hg churn -f "%Y-%m" -s -c
 
       # display count of lines changed in every year
-      hg churn -f '%Y' -s
+      hg churn -f "%Y" -s
 
     It is possible to map alternate email addresses to a main address
     by providing a file using the following format::
@@ -119,9 +140,10 @@ def churn(ui, repo, *pats, **opts):
 
     Such a file may be specified with the --aliases option, otherwise
     a .hgchurn file will be looked for in the working directory root.
+    Aliases will be split from the rightmost "=".
     '''
     def pad(s, l):
-        return (s + " " * l)[:l]
+        return s + " " * (l - encoding.colwidth(s))
 
     amap = {}
     aliases = opts.get('aliases')
@@ -130,20 +152,22 @@ def churn(ui, repo, *pats, **opts):
     if aliases:
         for l in open(aliases, "r"):
             try:
-                alias, actual = l.split('=' in l and '=' or None, 1)
+                alias, actual = l.rsplit('=' in l and '=' or None, 1)
                 amap[alias.strip()] = actual.strip()
             except ValueError:
                 l = l.strip()
                 if l:
-                    ui.warn(_("skipping malformed alias: %s\n" % l))
+                    ui.warn(_("skipping malformed alias: %s\n") % l)
                 continue
 
     rate = countrate(ui, repo, amap, *pats, **opts).items()
     if not rate:
         return
 
-    sortkey = ((not opts.get('sort')) and (lambda x: -sum(x[1])) or None)
-    rate.sort(key=sortkey)
+    if opts.get('sort'):
+        rate.sort()
+    else:
+        rate.sort(key=lambda x: (-sum(x[1]), x))
 
     # Be careful not to have a zero maxcount (issue833)
     maxcount = float(max(sum(v) for k, v in rate)) or 1.0
@@ -174,24 +198,3 @@ def churn(ui, repo, *pats, **opts):
 
     for name, count in rate:
         ui.write(format(name, count))
-
-
-cmdtable = {
-    "churn":
-        (churn,
-         [('r', 'rev', [],
-           _('count rate for the specified revision or range'), _('REV')),
-          ('d', 'date', '',
-           _('count rate for revisions matching date spec'), _('DATE')),
-          ('t', 'template', '{author|email}',
-           _('template to group changesets'), _('TEMPLATE')),
-          ('f', 'dateformat', '',
-           _('strftime-compatible format for grouping by date'), _('FORMAT')),
-          ('c', 'changesets', False, _('count rate by number of changesets')),
-          ('s', 'sort', False, _('sort by key (default: sort by count)')),
-          ('', 'diffstat', False, _('display added/removed lines separately')),
-          ('', 'aliases', '',
-           _('file with email aliases'), _('FILE')),
-          ] + commands.walkopts,
-         _("hg churn [-d DATE] [-r REV] [--aliases FILE] [FILE]")),
-}

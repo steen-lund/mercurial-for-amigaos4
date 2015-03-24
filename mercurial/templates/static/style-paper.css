@@ -60,6 +60,12 @@ body {
   border: 0;
 }
 
+.atom-logo img{
+  width: 14px;
+  height: 14px;
+  border: 0;
+}
+
 .menu a { color: black; display: block; }
 
 .search {
@@ -88,8 +94,12 @@ a { text-decoration:none; }
 .age { white-space:nowrap; }
 .date { white-space:nowrap; }
 .indexlinks { white-space:nowrap; }
-.parity0 { background-color: #f0f0f0; }
-.parity1 { background-color: white; }
+.parity0,
+.stripes4 > :nth-child(4n+1),
+.stripes2 > :nth-child(2n+1) { background-color: #f0f0f0; }
+.parity1,
+.stripes4 > :nth-child(4n+3),
+.stripes2 > :nth-child(2n+2) { background-color: white; }
 .plusline { color: green; }
 .minusline { color: #dc143c; } /* crimson */
 .atline { color: purple; }
@@ -158,7 +168,7 @@ pre { margin: 0; }
 h2 { font-size: 120%; border-bottom: 1px solid #999; }
 h2 a { color: #000; }
 h3 {
-  margin-top: -.7em;
+  margin-top: +.7em;
   font-size: 100%;
 }
 
@@ -182,7 +192,7 @@ h3 {
 }
 .bigtable tr { border: none; }
 .bigtable .age { width: 7em; }
-.bigtable .author { width: 12em; }
+.bigtable .author { width: 15em; }
 .bigtable .description { }
 .bigtable .description .base { font-size: 70%; float: right; line-height: 1.66; }
 .bigtable .node { width: 5em; font-family: monospace;}
@@ -202,6 +212,58 @@ h3 {
 .sourcelast { border-top: 1px solid #999; }
 .source a { color: #999; font-size: smaller; font-family: monospace;}
 .bottomline { border-bottom: 1px solid #999; }
+
+.sourcelines {
+  font-size: 90%;
+  position: relative;
+  counter-reset: lineno;
+}
+
+.wrap > span {
+    white-space: pre-wrap;
+}
+
+.linewraptoggle {
+    float: right;
+}
+
+.diffblocks { counter-reset: lineno; }
+.diffblocks > div { counter-increment: lineno; }
+
+.sourcelines > span {
+  display: inline-block;
+  width: 100%;
+  padding: 1px 0px;
+  counter-increment: lineno;
+}
+
+.sourcelines > span:before {
+  -moz-user-select: -moz-none;
+  -khtml-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  display: inline-block;
+  width: 4em;
+  margin-right: 1em;
+  font-size: smaller;
+  color: #999;
+  text-align: right;
+  content: counters(lineno, ".");
+  float: left;
+}
+
+.sourcelines > span:target, tr:target td {
+  background-color: #bfdfff;
+}
+
+.sourcelines > a {
+    display: inline-block;
+    position: absolute;
+    left: 0px;
+    width: 4em;
+    height: 1em;
+}
 
 .fileline { font-family: monospace; }
 .fileline img { border: 0; }
@@ -274,4 +336,73 @@ ul#graphnodes li .info {
 	font-size: 70%;
 	position: relative;
 	top: -3px;
+}
+
+/* Comparison */
+.legend {
+    padding: 1.5% 0 1.5% 0;
+}
+
+.legendinfo {
+    border: 1px solid #999;
+    font-size: 80%;
+    text-align: center;
+    padding: 0.5%;
+}
+
+.equal {
+    background-color: #ffffff;
+}
+
+.delete {
+    background-color: #faa;
+    color: #333;
+}
+
+.insert {
+    background-color: #ffa;
+}
+
+.replace {
+    background-color: #e8e8e8;
+}
+
+.header {
+    text-align: center;
+}
+
+.block {
+    border-top: 1px solid #999;
+}
+
+.breadcrumb {
+    color: gray;
+}
+
+.breadcrumb a {
+    color: blue;
+}
+
+.scroll-loading {
+  -webkit-animation: change_color 1s linear 0s infinite alternate;
+  -moz-animation: change_color 1s linear 0s infinite alternate;
+  -o-animation: change_color 1s linear 0s infinite alternate;
+  animation: change_color 1s linear 0s infinite alternate;
+}
+
+@-webkit-keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+@-moz-keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+@-o-keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+@keyframes change_color {
+  from { background-color: #A0CEFF; } to {  }
+}
+
+.scroll-loading-error {
+    background-color: #FFCCCC !important;
 }

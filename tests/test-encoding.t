@@ -5,7 +5,7 @@ Test character encoding
 
 we need a repo with some legacy latin-1 changesets
 
-  $ hg unbundle $TESTDIR/bundles/legacy-encoding.hg
+  $ hg unbundle "$TESTDIR/bundles/legacy-encoding.hg"
   adding changesets
   adding manifests
   adding file changes
@@ -42,6 +42,11 @@ these should work
   $ HGENCODING=latin-1 hg tag `cat latin-1-tag`
   $ HGENCODING=latin-1 hg branch `cat latin-1-tag`
   marked working directory as branch \xe9 (esc)
+  (branches are permanent and global, did you want a bookmark?)
+  $ HGENCODING=latin-1 hg ci -m 'latin1 branch'
+  $ hg -q rollback
+  $ HGENCODING=latin-1 hg branch
+  \xe9 (esc)
   $ HGENCODING=latin-1 hg ci -m 'latin1 branch'
   $ rm .hg/branch
 
@@ -174,6 +179,24 @@ hg tags (utf-8)
   tip                                5:a52c0692f24a
   \xc3\xa9                                  3:ca661e7520de (esc)
 
+hg tags (JSON)
+
+  $ hg tags -Tjson
+  [
+   {
+    "node": "a52c0692f24ad921c0a31e1736e7635a8b23b670",
+    "rev": 5,
+    "tag": "tip",
+    "type": ""
+   },
+   {
+    "node": "ca661e7520dec3f5438a63590c350bebadb04989",
+    "rev": 3,
+    "tag": "\xc3\xa9", (esc)
+    "type": ""
+   }
+  ]
+
 hg branches (ascii)
 
   $ HGENCODING=ascii hg branches
@@ -234,7 +257,8 @@ hg log (utf-8)
 hg log (dolphin)
 
   $ HGENCODING=dolphin hg log
-  abort: unknown encoding: dolphin, please check your locale settings
+  abort: unknown encoding: dolphin
+  (please check your locale settings)
   [255]
   $ HGENCODING=ascii hg branch `cat latin-1-tag`
   abort: decoding near '\xe9': 'ascii' codec can't decode byte 0xe9 in position 0: ordinal not in range(128)! (esc)
@@ -246,4 +270,5 @@ Test roundtrip encoding of lookup tables when not using UTF-8 (issue2763)
 
   $ HGENCODING=latin-1 hg up `cat latin-1-tag`
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
- 
+
+  $ cd ..

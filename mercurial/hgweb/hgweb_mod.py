@@ -6,8 +6,10 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-import os
-from mercurial import ui, hg, hook, error, encoding, templater
+import os, re
+from mercurial import ui, hg, hook, error, encoding, templater, util, repoview
+from mercurial.templatefilters import websub
+from mercurial.i18n import _
 from common import get_stat, ErrorResponse, permhooks, caching
 from common import HTTP_OK, HTTP_NOT_MODIFIED, HTTP_BAD_REQUEST
 from common import HTTP_NOT_FOUND, HTTP_SERVER_ERROR
@@ -24,6 +26,32 @@ perms = {
     'pushkey': 'push',
 }
 
+def makebreadcrumb(url, prefix=''):
+    '''Return a 'URL breadcrumb' list
+
+    A 'URL breadcrumb' is a list of URL-name pairs,
+    corresponding to each of the path items on a URL.
+    This can be used to create path navigation entries.
+    '''
+    if url.endswith('/'):
+        url = url[:-1]
+    if prefix:
+        url = '/' + prefix + url
+    relpath = url
+    if relpath.startswith('/'):
+        relpath = relpath[1:]
+
+    breadcrumb = []
+    urlel = url
+    pathitems = [''] + relpath.split('/')
+    for pathel in reversed(pathitems):
+        if not pathel or not urlel:
+            break
+        breadcrumb.append({'url': urlel, 'name': pathel})
+        urlel = os.path.dirname(urlel)
+    return reversed(breadcrumb)
+
+
 class hgweb(object):
     def __init__(self, repo, name=None, baseui=None):
         if isinstance(repo, str):
@@ -31,21 +59,27 @@ class hgweb(object):
                 u = baseui.copy()
             else:
                 u = ui.ui()
-            self.repo = hg.repository(u, repo)
+            r = hg.repository(u, repo)
         else:
-            self.repo = repo
+            # we trust caller to give us a private copy
+            r = repo
 
-        self.repo.ui.setconfig('ui', 'report_untrusted', 'off')
-        self.repo.ui.setconfig('ui', 'interactive', 'off')
+        r = self._getview(r)
+        r.ui.setconfig('ui', 'report_untrusted', 'off', 'hgweb')
+        r.baseui.setconfig('ui', 'report_untrusted', 'off', 'hgweb')
+        r.ui.setconfig('ui', 'nontty', 'true', 'hgweb')
+        r.baseui.setconfig('ui', 'nontty', 'true', 'hgweb')
+        self.repo = r
         hook.redirect(True)
+        self.repostate = ((-1, -1), (-1, -1))
         self.mtime = -1
-        self.size = -1
         self.reponame = name
         self.archives = 'zip', 'gz', 'bz2'
         self.stripecount = 1
         # a repo owner may set web.templates in .hg/hgrc to get any file
         # readable by the user running the CGI script
         self.templatepath = self.config('web', 'templates')
+        self.websubtable = self.loadwebsub()
 
     # The CGI scripts are often run by a user different from the repo owner.
     # Trust the settings from the .hg/hgrc files by default.
@@ -61,23 +95,40 @@ class hgweb(object):
         return self.repo.ui.configlist(section, name, default,
                                        untrusted=untrusted)
 
+    def _getview(self, repo):
+        viewconfig = repo.ui.config('web', 'view', 'served',
+                                    untrusted=True)
+        if viewconfig == 'all':
+            return repo.unfiltered()
+        elif viewconfig in repoview.filtertable:
+            return repo.filtered(viewconfig)
+        else:
+            return repo.filtered('served')
+
     def refresh(self, request=None):
-        if request:
-            self.repo.ui.environ = request.env
         st = get_stat(self.repo.spath)
-        # compare changelog size in addition to mtime to catch
-        # rollbacks made less than a second ago
-        if st.st_mtime != self.mtime or st.st_size != self.size:
-            self.mtime = st.st_mtime
-            self.size = st.st_size
-            self.repo = hg.repository(self.repo.ui, self.repo.root)
+        pst = get_stat(self.repo.spath, 'phaseroots')
+        # changelog mtime and size, phaseroots mtime and size
+        repostate = ((st.st_mtime, st.st_size), (pst.st_mtime, pst.st_size))
+        # we need to compare file size in addition to mtime to catch
+        # changes made less than a second ago
+        if repostate != self.repostate:
+            r = hg.repository(self.repo.baseui, self.repo.url())
+            self.repo = self._getview(r)
             self.maxchanges = int(self.config("web", "maxchanges", 10))
             self.stripecount = int(self.config("web", "stripes", 1))
-            self.maxshortchanges = int(self.config("web", "maxshortchanges", 60))
+            self.maxshortchanges = int(self.config("web", "maxshortchanges",
+                                                   60))
             self.maxfiles = int(self.config("web", "maxfiles", 10))
             self.allowpull = self.configbool("web", "allowpull", True)
             encoding.encoding = self.config("web", "encoding",
                                             encoding.encoding)
+            # update these last to avoid threads seeing empty settings
+            self.repostate = repostate
+            # mtime is needed for ETag
+            self.mtime = st.st_mtime
+        if request:
+            self.repo.ui.environ = request.env
 
     def run(self):
         if not os.environ.get('GATEWAY_INTERFACE', '').startswith("CGI/1."):
@@ -129,11 +180,15 @@ class hgweb(object):
                 # A client that sends unbundle without 100-continue will
                 # break if we respond early.
                 if (cmd == 'unbundle' and
-                    req.env.get('HTTP_EXPECT',
-                                '').lower() != '100-continue'):
+                    (req.env.get('HTTP_EXPECT',
+                                 '').lower() != '100-continue') or
+                    req.env.get('X-HgHttp2', '')):
                     req.drain()
-                req.respond(inst, protocol.HGTYPE)
-                return '0\n%s\n' % inst.message
+                else:
+                    req.headers.append(('Connection', 'Close'))
+                req.respond(inst, protocol.HGTYPE,
+                            body='0\n%s\n' % inst.message)
+                return ''
 
         # translate user-visible url structure to internal structure
 
@@ -147,10 +202,8 @@ class hgweb(object):
                 cmd = cmd[style + 1:]
 
             # avoid accepting e.g. style parameter as command
-            if hasattr(webcommands, cmd):
+            if util.safehasattr(webcommands, cmd):
                 req.form['cmd'] = [cmd]
-            else:
-                cmd = ''
 
             if cmd == 'static':
                 req.form['file'] = ['/'.join(args)]
@@ -202,10 +255,11 @@ class hgweb(object):
 
             return content
 
-        except error.LookupError, err:
+        except (error.LookupError, error.RepoLookupError), err:
             req.respond(HTTP_NOT_FOUND, ctype)
             msg = str(err)
-            if 'manifest' not in msg:
+            if (util.safehasattr(err, 'name') and
+                not isinstance(err,  error.ManifestLookupError)):
                 msg = 'revision not found: %s' % err.name
             return tmpl('error', error=msg)
         except (error.RepoError, error.RevlogError), inst:
@@ -217,6 +271,47 @@ class hgweb(object):
                 # Not allowed to return a body on a 304
                 return ['']
             return tmpl('error', error=inst.message)
+
+    def loadwebsub(self):
+        websubtable = []
+        websubdefs = self.repo.ui.configitems('websub')
+        # we must maintain interhg backwards compatibility
+        websubdefs += self.repo.ui.configitems('interhg')
+        for key, pattern in websubdefs:
+            # grab the delimiter from the character after the "s"
+            unesc = pattern[1]
+            delim = re.escape(unesc)
+
+            # identify portions of the pattern, taking care to avoid escaped
+            # delimiters. the replace format and flags are optional, but
+            # delimiters are required.
+            match = re.match(
+                r'^s%s(.+)(?:(?<=\\\\)|(?<!\\))%s(.*)%s([ilmsux])*$'
+                % (delim, delim, delim), pattern)
+            if not match:
+                self.repo.ui.warn(_("websub: invalid pattern for %s: %s\n")
+                                  % (key, pattern))
+                continue
+
+            # we need to unescape the delimiter for regexp and format
+            delim_re = re.compile(r'(?<!\\)\\%s' % delim)
+            regexp = delim_re.sub(unesc, match.group(1))
+            format = delim_re.sub(unesc, match.group(2))
+
+            # the pattern allows for 6 regexp flags, so set them if necessary
+            flagin = match.group(3)
+            flags = 0
+            if flagin:
+                for flag in flagin.upper():
+                    flags |= re.__dict__[flag]
+
+            try:
+                regexp = re.compile(regexp, flags)
+                websubtable.append((regexp, format))
+            except re.error:
+                self.repo.ui.warn(_("websub: invalid regexp for %s: %s\n")
+                                  % (key, regexp))
+        return websubtable
 
     def templater(self, req):
 
@@ -235,17 +330,12 @@ class hgweb(object):
         port = port != default_port and (":" + port) or ""
         urlbase = '%s://%s%s' % (proto, req.env['SERVER_NAME'], port)
         logourl = self.config("web", "logourl", "http://mercurial.selenic.com/")
+        logoimg = self.config("web", "logoimg", "hglogo.png")
         staticurl = self.config("web", "staticurl") or req.url + 'static/'
         if not staticurl.endswith('/'):
             staticurl += '/'
 
         # some functions for the templater
-
-        def header(**map):
-            yield tmpl('header', encoding=encoding.encoding, **map)
-
-        def footer(**map):
-            yield tmpl("footer", **map)
 
         def motd(**map):
             yield self.config("web", "motd", "")
@@ -270,18 +360,24 @@ class hgweb(object):
                              or req.env.get('REPO_NAME')
                              or req.url.strip('/') or self.repo.root)
 
+        def websubfilter(text):
+            return websub(text, self.websubtable)
+
         # create the templater
 
         tmpl = templater.templater(mapfile,
+                                   filters={"websub": websubfilter},
                                    defaults={"url": req.url,
                                              "logourl": logourl,
+                                             "logoimg": logoimg,
                                              "staticurl": staticurl,
                                              "urlbase": urlbase,
                                              "repo": self.reponame,
-                                             "header": header,
-                                             "footer": footer,
+                                             "encoding": encoding.encoding,
                                              "motd": motd,
-                                             "sessionvars": sessionvars
+                                             "sessionvars": sessionvars,
+                                             "pathdef": makebreadcrumb(req.url),
+                                             "style": style,
                                             })
         return tmpl
 
@@ -298,5 +394,5 @@ class hgweb(object):
         }
 
     def check_perm(self, req, op):
-        for hook in permhooks:
-            hook(self, req, op)
+        for permhook in permhooks:
+            permhook(self, req, op)

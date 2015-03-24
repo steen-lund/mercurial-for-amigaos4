@@ -4,7 +4,6 @@ create test repo
   $ cat <<EOF >> $HGRCPATH
   > [extensions]
   > transplant =
-  > graphlog =
   > EOF
   $ hg init repo
   $ cd repo
@@ -31,6 +30,7 @@ add initial changesets
 commit bug fixes on bug fix branch
   $ hg branch fixes
   marked working directory as branch fixes
+  (branches are permanent and global, did you want a bookmark?)
   $ echo fix1 > bugfix
   $ echo fix1 >> file1
   $ hg ci -Am"fix 1"
@@ -38,7 +38,7 @@ commit bug fixes on bug fix branch
   $ echo fix2 > bugfix
   $ echo fix2 >> file1
   $ hg ci -Am"fix 2"
-  $ hg glog --template="$template"
+  $ hg log -G --template="$template"
   @  3  fix 2  [fixes]
   |
   o  2  fix 1  [fixes]
@@ -52,12 +52,13 @@ transplant bug fixes onto release branch
   1 files updated, 0 files merged, 2 files removed, 0 files unresolved
   $ hg branch release
   marked working directory as branch release
+  (branches are permanent and global, did you want a bookmark?)
   $ hg transplant 2 3
   applying [0-9a-f]{12} (re)
   [0-9a-f]{12} transplanted to [0-9a-f]{12} (re)
   applying [0-9a-f]{12} (re)
   [0-9a-f]{12} transplanted to [0-9a-f]{12} (re)
-  $ hg glog --template="$template"
+  $ hg log -G --template="$template"
   @  5  fix 2  [release]
   |
   o  4  fix 1  [release]
@@ -127,3 +128,5 @@ Do a size-preserving modification outside of that process
   5  fix 2  bugfix file1
   6  x  bugfix file1
   7  y  file1
+
+  $ cd ..

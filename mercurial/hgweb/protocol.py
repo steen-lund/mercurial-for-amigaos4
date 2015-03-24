@@ -10,8 +10,9 @@ from mercurial import util, wireproto
 from common import HTTP_OK
 
 HGTYPE = 'application/mercurial-0.1'
+HGERRTYPE = 'application/hg-error'
 
-class webproto(object):
+class webproto(wireproto.abstractserverproto):
     def __init__(self, req, ui):
         self.req = req
         self.response = ''
@@ -74,19 +75,24 @@ def call(repo, req, cmd):
     p = webproto(req, repo.ui)
     rsp = wireproto.dispatch(repo, p, cmd)
     if isinstance(rsp, str):
-        req.respond(HTTP_OK, HGTYPE, length=len(rsp))
-        return [rsp]
+        req.respond(HTTP_OK, HGTYPE, body=rsp)
+        return []
     elif isinstance(rsp, wireproto.streamres):
         req.respond(HTTP_OK, HGTYPE)
         return rsp.gen
     elif isinstance(rsp, wireproto.pushres):
         val = p.restore()
-        req.respond(HTTP_OK, HGTYPE)
-        return ['%d\n%s' % (rsp.res, val)]
+        rsp = '%d\n%s' % (rsp.res, val)
+        req.respond(HTTP_OK, HGTYPE, body=rsp)
+        return []
     elif isinstance(rsp, wireproto.pusherr):
         # drain the incoming bundle
         req.drain()
         p.restore()
         rsp = '0\n%s\n' % rsp.res
-        req.respond(HTTP_OK, HGTYPE, length=len(rsp))
-        return [rsp]
+        req.respond(HTTP_OK, HGTYPE, body=rsp)
+        return []
+    elif isinstance(rsp, wireproto.ooberror):
+        rsp = rsp.message
+        req.respond(HTTP_OK, HGERRTYPE, body=rsp)
+        return []

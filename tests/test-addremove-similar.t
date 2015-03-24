@@ -1,7 +1,7 @@
   $ hg init rep; cd rep
 
   $ touch empty-file
-  $ python -c 'for x in range(10000): print x' > large-file
+  $ $PYTHON -c 'for x in range(10000): print x' > large-file
 
   $ hg addremove
   adding empty-file
@@ -10,7 +10,7 @@
   $ hg commit -m A
 
   $ rm large-file empty-file
-  $ python -c 'for x in range(10,10000): print x' > another-file
+  $ $PYTHON -c 'for x in range(10,10000): print x' > another-file
 
   $ hg addremove -s50
   adding another-file
@@ -34,8 +34,8 @@ comparing two empty files caused ZeroDivisionError in the past
 
   $ hg init rep2; cd rep2
 
-  $ python -c 'for x in range(10000): print x' > large-file
-  $ python -c 'for x in range(50): print x' > tiny-file
+  $ $PYTHON -c 'for x in range(10000): print x' > large-file
+  $ $PYTHON -c 'for x in range(50): print x' > tiny-file
 
   $ hg addremove
   adding large-file
@@ -43,7 +43,7 @@ comparing two empty files caused ZeroDivisionError in the past
 
   $ hg commit -m A
 
-  $ python -c 'for x in range(70): print x' > small-file
+  $ $PYTHON -c 'for x in range(70): print x' > small-file
   $ rm tiny-file
   $ rm large-file
 
@@ -81,7 +81,7 @@ Issue1527: repeated addremove causes util.Abort
   $ hg addremove -s80
   removing d/a
   adding d/b
-  recording removal of d/a as rename to d/b (100% similar)
+  recording removal of d/a as rename to d/b (100% similar) (glob)
   $ hg debugstate
   r   0          0 1970-01-01 00:00:00 d/a
   a   0         -1 unset               d/b
@@ -91,10 +91,12 @@ Issue1527: repeated addremove causes util.Abort
 no copies found here (since the target isn't in d
 
   $ hg addremove -s80 d
-  removing d/b
+  removing d/b (glob)
 
 copies here
 
   $ hg addremove -s80
   adding c
-  recording removal of d/a as rename to c (100% similar)
+  recording removal of d/a as rename to c (100% similar) (glob)
+
+  $ cd ..

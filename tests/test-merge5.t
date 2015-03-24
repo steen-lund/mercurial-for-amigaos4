@@ -14,24 +14,27 @@
   $ hg update 1
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg update
-  abort: crosses branches (merge branches or update --check to force update)
+  abort: not a linear update
+  (merge or update --check to force update)
   [255]
+  $ rm b
+  $ hg update -c
+  abort: uncommitted changes
+  [255]
+  $ hg revert b
   $ hg update -c
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ mv a c
 
-In theory, we shouldn't need the "-y" below, but it prevents this test
-from hanging when "hg update" erroneously prompts the user for "keep
-or delete".
-
 Should abort:
 
-  $ hg update -y 1
-  abort: crosses branches (merge branches or use --clean to discard changes)
+  $ hg update 1
+  abort: uncommitted changes
+  (commit or update --clean to discard changes)
   [255]
   $ mv c a
 
 Should succeed:
 
-  $ hg update -y 1
+  $ hg update 1
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved

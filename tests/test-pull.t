@@ -1,3 +1,5 @@
+#require serve
+
   $ hg init test
   $ cd test
 
@@ -43,7 +45,7 @@
   2ed2a3912a0b24502043eae84ee4b279c18b90dd 644   foo
 
   $ hg pull
-  pulling from http://foo:***@localhost:$HGPORT/
+  pulling from http://foo@localhost:$HGPORT/
   searching for changes
   no changes found
 
@@ -66,7 +68,7 @@ Issue622: hg init && hg pull -u URL doesn't checkout default branch
 
 Test 'file:' uri handling:
 
-  $ hg pull -q file://../test-doesnt-exist
+  $ hg pull -q file://../test-does-not-exist
   abort: file:// URLs can only refer to localhost
   [255]
 
@@ -79,10 +81,12 @@ Test 'file:' uri handling:
 It's tricky to make file:// URLs working on every platform with
 regular shell commands.
 
-  $ URL=`python -c "import os; print 'file://foobar' + ('/' + os.getcwd().replace(os.sep, '/')).replace('//', '/') + '/../test'"`
+  $ URL=`$PYTHON -c "import os; print 'file://foobar' + ('/' + os.getcwd().replace(os.sep, '/')).replace('//', '/') + '/../test'"`
   $ hg pull -q "$URL"
   abort: file:// URLs can only refer to localhost
   [255]
 
-  $ URL=`python -c "import os; print 'file://localhost' + ('/' + os.getcwd().replace(os.sep, '/')).replace('//', '/') + '/../test'"`
+  $ URL=`$PYTHON -c "import os; print 'file://localhost' + ('/' + os.getcwd().replace(os.sep, '/')).replace('//', '/') + '/../test'"`
   $ hg pull -q "$URL"
+
+  $ cd ..

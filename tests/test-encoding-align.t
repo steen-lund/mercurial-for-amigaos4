@@ -16,20 +16,19 @@ Test alignment of multibyte characters
   > f = file('l', 'w'); f.write(l); f.close()
   > # instant extension to show list of options
   > f = file('showoptlist.py', 'w'); f.write("""# encoding: utf-8
+  > from mercurial import cmdutil
+  > cmdtable = {}
+  > command = cmdutil.command(cmdtable)
+  > 
+  > @command('showoptlist',
+  >     [('s', 'opt1', '', 'short width'  + ' %(s)s' * 8, '%(s)s'),
+  >     ('m', 'opt2', '', 'middle width' + ' %(m)s' * 8, '%(m)s'),
+  >     ('l', 'opt3', '', 'long width'   + ' %(l)s' * 8, '%(l)s')],
+  >     '')
   > def showoptlist(ui, repo, *pats, **opts):
   >     '''dummy command to show option descriptions'''
   >     return 0
-  > cmdtable = {
-  >     'showoptlist':
-  >         (showoptlist,
-  >          [('s', 'opt1', '', 'short width',  '""" + s + """'),
-  >           ('m', 'opt2', '', 'middle width', '""" + m + """'),
-  >           ('l', 'opt3', '', 'long width',   '""" + l + """')
-  >          ],
-  >          ""
-  >         )
-  > }
-  > """)
+  > """ % globals())
   > f.close()
   > EOF
   $ S=`cat s`
@@ -46,17 +45,20 @@ alignment of option descriptions in help
 check alignment of option descriptions in help
 
   $ hg help showoptlist
-  hg showoptlist 
+  hg showoptlist
   
   dummy command to show option descriptions
   
   options:
   
-   -s --opt1 \xe7\x9f\xad\xe5\x90\x8d          short width (esc)
-   -m --opt2 MIDDLE_       middle width
-   -l --opt3 \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d  long width (esc)
+   -s --opt1 \xe7\x9f\xad\xe5\x90\x8d         short width \xe7\x9f\xad\xe5\x90\x8d \xe7\x9f\xad\xe5\x90\x8d \xe7\x9f\xad\xe5\x90\x8d \xe7\x9f\xad\xe5\x90\x8d \xe7\x9f\xad\xe5\x90\x8d \xe7\x9f\xad\xe5\x90\x8d \xe7\x9f\xad\xe5\x90\x8d \xe7\x9f\xad\xe5\x90\x8d (esc)
+   -m --opt2 MIDDLE_      middle width MIDDLE_ MIDDLE_ MIDDLE_ MIDDLE_ MIDDLE_
+                          MIDDLE_ MIDDLE_ MIDDLE_
+   -l --opt3 \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d long width \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d (esc)
+                          \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d (esc)
+                          \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d (esc)
   
-  use "hg -v help showoptlist" to show global options
+  (some details hidden, use --verbose to show complete help)
 
 
   $ rm -f s; touch s
@@ -112,21 +114,27 @@ add branches/tags
 
   $ hg branch $S
   marked working directory as branch \xe7\x9f\xad\xe5\x90\x8d (esc)
+  (branches are permanent and global, did you want a bookmark?)
   $ hg tag $S
+  $ hg book -f $S
   $ hg branch $M
   marked working directory as branch MIDDLE_
+  (branches are permanent and global, did you want a bookmark?)
   $ hg tag $M
+  $ hg book -f $M
   $ hg branch $L
   marked working directory as branch \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d (esc)
+  (branches are permanent and global, did you want a bookmark?)
   $ hg tag $L
+  $ hg book -f $L
 
 check alignment of branches
 
-  $ hg tags
-  tip                                5:d745ff46155b
-  \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d                       4:9259be597f19 (esc)
-  MIDDLE_                            3:b06c5b6def9e
-  \xe7\x9f\xad\xe5\x90\x8d                               2:64a70663cee8 (esc)
+  $ hg branches
+  \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d                   5:d745ff46155b (esc)
+  MIDDLE_                        4:9259be597f19 (inactive)
+  \xe7\x9f\xad\xe5\x90\x8d                           3:b06c5b6def9e (inactive) (esc)
+  default                        2:64a70663cee8 (inactive)
 
 check alignment of tags
 
@@ -135,3 +143,10 @@ check alignment of tags
   \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d                       4:9259be597f19 (esc)
   MIDDLE_                            3:b06c5b6def9e
   \xe7\x9f\xad\xe5\x90\x8d                               2:64a70663cee8 (esc)
+
+check alignment of bookmarks
+
+  $ hg book
+     MIDDLE_                   5:d745ff46155b
+     \xe7\x9f\xad\xe5\x90\x8d                      4:9259be597f19 (esc)
+   * \xe9\x95\xb7\xe3\x81\x84\xe9\x95\xb7\xe3\x81\x84\xe5\x90\x8d\xe5\x89\x8d              5:d745ff46155b (esc)

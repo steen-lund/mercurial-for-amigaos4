@@ -14,13 +14,13 @@ a { text-decoration:none; }
   background-color: #666;
   padding: 2pt;
   color: white;
-  font-family: sans;
+  font-family: sans-serif;
   font-weight: bold;
 }
 .navigate a {
   background-color: #ccc;
   padding: 2pt;
-  font-family: sans;
+  font-family: sans-serif;
   color: black;
 }
 
@@ -41,6 +41,7 @@ pre { margin: 0; }
 /* Changelog/Filelog entries */
 .logEntry { width: 100%; }
 .logEntry .age { width: 15%; }
+.logEntry th.label { width: 16em; }
 .logEntry th { font-weight: normal; text-align: right; vertical-align: top; }
 .logEntry th.age, .logEntry th.firstline { font-weight: bold; }
 .logEntry th.firstline { text-align: left; width: inherit; }

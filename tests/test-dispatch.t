@@ -1,9 +1,5 @@
 test command parsing and dispatch
 
-  $ "$TESTDIR/hghave" no-outer-repo || exit 80
-
-  $ dir=`pwd`
-
   $ hg init a
   $ cd a
 
@@ -23,17 +19,15 @@ Missing arg:
   
   output the current or given revision of files
   
-  options:
+  options ([+] can be repeated):
   
-   -o --output FORMAT        print output to file with formatted name
-   -r --rev REV              print the given revision
-      --decode               apply any matching decode filter
-   -I --include PATTERN [+]  include names matching the given patterns
-   -X --exclude PATTERN [+]  exclude names matching the given patterns
+   -o --output FORMAT       print output to file with formatted name
+   -r --rev REV             print the given revision
+      --decode              apply any matching decode filter
+   -I --include PATTERN [+] include names matching the given patterns
+   -X --exclude PATTERN [+] exclude names matching the given patterns
   
-  [+] marked option can be specified multiple times
-  
-  use "hg help cat" to show the full help text
+  (use "hg cat -h" to show more help)
   [255]
 
 [defaults]
@@ -48,10 +42,21 @@ Missing arg:
   a: no such file in rev 000000000000
   [1]
 
+  $ cd "$TESTTMP"
+
+OSError "No such file or directory" / "The system cannot find the path
+specified" should include filename even when it is empty
+
+  $ hg -R a archive ''
+  abort: *: '' (glob)
+  [255]
+
+#if no-outer-repo
+
 No repo:
 
-  $ cd $dir
   $ hg cat
   abort: no repository found in '$TESTTMP' (.hg not found)!
   [255]
 
+#endif

@@ -10,7 +10,7 @@
 "                Bob Hiestand <bob.hiestand@gmail.com> for the fabulous
 "                cvscommand.vim from which this script was directly created by
 "                means of sed commands and minor tweaks.
-" Note:          
+" Note:
 "                For Vim7 the use of Bob Hiestand's vcscommand.vim
 "                <http://www.vim.org/scripts/script.php?script_id=90>
 "                in conjunction with Vladmir Marek's Hg backend
@@ -27,7 +27,7 @@
 "
 " You still can read the documentation at the end of this file. Locate it by
 " searching the "hgcommand-contents" string (and set ft=help to have
-" appropriate syntaxic coloration).
+" appropriate syntactic coloration).
 
 " Section: Plugin header {{{1
 
@@ -105,7 +105,7 @@ function! s:HGChangeToCurrentFileDir(fileName)
   let fileName=<SID>HGResolveLink(a:fileName)
   let newCwd=fnamemodify(fileName, ':h')
   if strlen(newCwd) > 0
-    execute 'cd' escape(newCwd, ' ')
+    try | execute 'cd' escape(newCwd, ' ') | catch | | endtry
   endif
   return oldCwd
 endfunction
@@ -396,7 +396,7 @@ function! s:HGGetStatusVars(revisionVar, branchVar, repositoryVar)
 
     return returnExpression
   finally
-    execute 'cd' escape(oldCwd, ' ')
+    try | execute 'cd' escape(oldCwd, ' ') | catch | | endtry
   endtry
 endfunction
 
@@ -752,7 +752,7 @@ function! s:HGCommit(...)
     " Protect against case and backslash issues in Windows.
     let autoPattern = '\c' . messageFileName
 
-    " Ensure existance of group
+    " Ensure existence of group
     augroup HGCommit
     augroup END
 
@@ -1442,7 +1442,7 @@ Mercurial: http://mercurial.selenic.com/
 
                                                  *hgcommand-mappings-override*
 
-   The default mappings can be overriden by user-provided instead by mapping
+   The default mappings can be overridden by user-provided instead by mapping
    to <Plug>CommandName.  This is especially useful when these mappings
    collide with other existing mappings (vim will warn of this during plugin
    initialization, but will not clobber the existing mappings).

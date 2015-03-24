@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -275,9 +276,19 @@ int entkind(struct dirent *ent)
 	return -1;
 }
 
+static PyObject *makestat(const struct stat *st)
+{
+	PyObject *stat;
+
+	stat = PyObject_CallObject((PyObject *)&listdir_stat_type, NULL);
+	if (stat)
+		memcpy(&((struct listdir_stat *)stat)->st, st, sizeof(*st));
+	return stat;
+}
+
 static PyObject *_listdir(char *path, int pathlen, int keepstat, char *skip)
 {
-	PyObject *list, *elem, *stat, *ret = NULL;
+	PyObject *list, *elem, *stat = NULL, *ret = NULL;
 	char fullpath[PATH_MAX + 10];
 	int kind, err;
 	struct stat st;
@@ -288,7 +299,8 @@ static PyObject *_listdir(char *path, int pathlen, int keepstat, char *skip)
 #endif
 
 	if (pathlen >= PATH_MAX) {
-		PyErr_SetString(PyExc_ValueError, "path too long");
+		errno = ENAMETOOLONG;
+		PyErr_SetFromErrnoWithFilename(PyExc_OSError, path);
 		goto error_value;
 	}
 	strncpy(fullpath, path, PATH_MAX);
@@ -309,7 +321,7 @@ static PyObject *_listdir(char *path, int pathlen, int keepstat, char *skip)
 	if (!dir) {
 		PyErr_SetFromErrnoWithFilename(PyExc_OSError, path);
 		goto error_dir;
- 	}
+	}
 
 	list = PyList_New(0);
 	if (!list)
@@ -331,6 +343,9 @@ static PyObject *_listdir(char *path, int pathlen, int keepstat, char *skip)
 			err = lstat(fullpath, &st);
 #endif
 			if (err == -1) {
+				/* race with file deletion? */
+				if (errno == ENOENT)
+					continue;
 				strncpy(fullpath + pathlen + 1, ent->d_name,
 					PATH_MAX - pathlen);
 				fullpath[PATH_MAX] = 0;
@@ -348,15 +363,15 @@ static PyObject *_listdir(char *path, int pathlen, int keepstat, char *skip)
 		}
 
 		if (keepstat) {
-			stat = PyObject_CallObject((PyObject *)&listdir_stat_type, NULL);
+			stat = makestat(&st);
 			if (!stat)
 				goto error;
-			memcpy(&((struct listdir_stat *)stat)->st, &st, sizeof(st));
 			elem = Py_BuildValue("siN", ent->d_name, kind, stat);
 		} else
 			elem = Py_BuildValue("si", ent->d_name, kind);
 		if (!elem)
 			goto error;
+		stat = NULL;
 
 		PyList_Append(list, elem);
 		Py_DECREF(elem);
@@ -367,6 +382,7 @@ static PyObject *_listdir(char *path, int pathlen, int keepstat, char *skip)
 
 error:
 	Py_DECREF(list);
+	Py_XDECREF(stat);
 error_list:
 	closedir(dir);
 error_dir:
@@ -375,6 +391,60 @@ error_dir:
 #endif
 error_value:
 	return ret;
+}
+
+static PyObject *statfiles(PyObject *self, PyObject *args)
+{
+	PyObject *names, *stats;
+	Py_ssize_t i, count;
+
+	if (!PyArg_ParseTuple(args, "O:statfiles", &names))
+		return NULL;
+
+	count = PySequence_Length(names);
+	if (count == -1) {
+		PyErr_SetString(PyExc_TypeError, "not a sequence");
+		return NULL;
+	}
+
+	stats = PyList_New(count);
+	if (stats == NULL)
+		return NULL;
+
+	for (i = 0; i < count; i++) {
+		PyObject *stat, *pypath;
+		struct stat st;
+		int ret, kind;
+		char *path;
+
+		pypath = PySequence_GetItem(names, i);
+		if (!pypath)
+			return NULL;
+		path = PyString_AsString(pypath);
+		if (path == NULL) {
+			Py_DECREF(pypath);
+			PyErr_SetString(PyExc_TypeError, "not a string");
+			goto bail;
+		}
+		ret = lstat(path, &st);
+		Py_DECREF(pypath);
+		kind = st.st_mode & S_IFMT;
+		if (ret != -1 && (kind == S_IFREG || kind == S_IFLNK)) {
+			stat = makestat(&st);
+			if (stat == NULL)
+				goto bail;
+			PyList_SET_ITEM(stats, i, stat);
+		} else {
+			Py_INCREF(Py_None);
+			PyList_SET_ITEM(stats, i, Py_None);
+		}
+	}
+
+	return stats;
+
+bail:
+	Py_DECREF(stats);
+	return NULL;
 }
 
 #endif /* ndef _WIN32 */
@@ -525,9 +595,9 @@ static PyObject *isgui(PyObject *self)
 
 	if (dict != NULL) {
 		CFRelease(dict);
-		return Py_True;
+		Py_RETURN_TRUE;
 	} else {
-		return Py_False;
+		Py_RETURN_FALSE;
 	}
 }
 #endif
@@ -541,6 +611,10 @@ static PyMethodDef methods[] = {
 	{"posixfile", (PyCFunction)posixfile, METH_VARARGS | METH_KEYWORDS,
 	 "Open a file with POSIX-like semantics.\n"
 "On error, this function may raise either a WindowsError or an IOError."},
+#else
+	{"statfiles", (PyCFunction)statfiles, METH_VARARGS | METH_KEYWORDS,
+	 "stat a series of files or symlinks\n"
+"Returns None for non-existent entries and entries of other types.\n"},
 #endif
 #ifdef __APPLE__
 	{

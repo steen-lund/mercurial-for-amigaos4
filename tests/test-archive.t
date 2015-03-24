@@ -1,3 +1,5 @@
+#require serve
+
   $ hg init test
   $ cd test
   $ echo foo>foo
@@ -10,19 +12,26 @@
   $ echo bletch>baz/bletch
   $ hg commit -Am 3 -d '1000000000 0'
   adding baz/bletch
+  $ hg init subrepo
+  $ touch subrepo/sub
+  $ hg -q -R subrepo ci -Am "init subrepo"
+  $ echo "subrepo = subrepo" > .hgsub
+  $ hg add .hgsub
+  $ hg ci -m "add subrepo"
   $ echo "[web]" >> .hg/hgrc
   $ echo "name = test-archive" >> .hg/hgrc
+  $ echo "archivesubrepos = True" >> .hg/hgrc
   $ cp .hg/hgrc .hg/hgrc-base
   > test_archtype() {
   >     echo "allow_archive = $1" >> .hg/hgrc
   >     hg serve -p $HGPORT -d --pid-file=hg.pid -E errors.log
   >     cat hg.pid >> $DAEMON_PIDS
   >     echo % $1 allowed should give 200
-  >     "$TESTDIR/get-with-headers.py" localhost:$HGPORT "/archive/tip.$2" | head -n 1
+  >     "$TESTDIR/get-with-headers.py" localhost:$HGPORT "archive/tip.$2" | head -n 1
   >     echo % $3 and $4 disallowed should both give 403
-  >     "$TESTDIR/get-with-headers.py" localhost:$HGPORT "/archive/tip.$3" | head -n 1
-  >     "$TESTDIR/get-with-headers.py" localhost:$HGPORT "/archive/tip.$4" | head -n 1
-  >     "$TESTDIR/killdaemons.py"
+  >     "$TESTDIR/get-with-headers.py" localhost:$HGPORT "archive/tip.$3" | head -n 1
+  >     "$TESTDIR/get-with-headers.py" localhost:$HGPORT "archive/tip.$4" | head -n 1
+  >     "$TESTDIR/killdaemons.py" $DAEMON_PIDS
   >     cat errors.log
   >     cp .hg/hgrc-base .hg/hgrc
   > }
@@ -54,7 +63,7 @@ check http return codes
 
 invalid arch type should give 404
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT "/archive/tip.invalid" | head -n 1
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT "archive/tip.invalid" | head -n 1
   404 Unsupported archive type: None
 
   $ TIP=`hg id -v | cut -f1 -d' '`
@@ -67,55 +76,102 @@ invalid arch type should give 404
   >     msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
   > except ImportError:
   >     pass
-  > node, archive = sys.argv[1:]
-  > f = urllib2.urlopen('http://127.0.0.1:%s/?cmd=archive;node=%s;type=%s'
-  >                     % (os.environ['HGPORT'], node, archive))
-  > sys.stdout.write(f.read())
+  > if len(sys.argv) <= 3:
+  >     node, archive = sys.argv[1:]
+  >     requeststr = 'cmd=archive;node=%s;type=%s' % (node, archive)
+  > else:
+  >     node, archive, file = sys.argv[1:]
+  >     requeststr = 'cmd=archive;node=%s;type=%s;file=%s' % (node, archive, file)
+  > try:
+  >     f = urllib2.urlopen('http://127.0.0.1:%s/?%s'
+  >                     % (os.environ['HGPORT'], requeststr))
+  >     sys.stdout.write(f.read())
+  > except urllib2.HTTPError, e:
+  >     sys.stderr.write(str(e) + '\n')
   > EOF
   $ python getarchive.py "$TIP" gz | gunzip | tar tf - 2>/dev/null
-  test-archive-2c0277f05ed4/.hg_archival.txt
-  test-archive-2c0277f05ed4/bar
-  test-archive-2c0277f05ed4/baz/bletch
-  test-archive-2c0277f05ed4/foo
+  test-archive-1701ef1f1510/.hg_archival.txt
+  test-archive-1701ef1f1510/.hgsub
+  test-archive-1701ef1f1510/.hgsubstate
+  test-archive-1701ef1f1510/bar
+  test-archive-1701ef1f1510/baz/bletch
+  test-archive-1701ef1f1510/foo
+  test-archive-1701ef1f1510/subrepo/sub
   $ python getarchive.py "$TIP" bz2 | bunzip2 | tar tf - 2>/dev/null
-  test-archive-2c0277f05ed4/.hg_archival.txt
-  test-archive-2c0277f05ed4/bar
-  test-archive-2c0277f05ed4/baz/bletch
-  test-archive-2c0277f05ed4/foo
+  test-archive-1701ef1f1510/.hg_archival.txt
+  test-archive-1701ef1f1510/.hgsub
+  test-archive-1701ef1f1510/.hgsubstate
+  test-archive-1701ef1f1510/bar
+  test-archive-1701ef1f1510/baz/bletch
+  test-archive-1701ef1f1510/foo
+  test-archive-1701ef1f1510/subrepo/sub
   $ python getarchive.py "$TIP" zip > archive.zip
   $ unzip -t archive.zip
   Archive:  archive.zip
-      testing: test-archive-2c0277f05ed4/.hg_archival.txt   OK
-      testing: test-archive-2c0277f05ed4/bar   OK
-      testing: test-archive-2c0277f05ed4/baz/bletch   OK
-      testing: test-archive-2c0277f05ed4/foo   OK
+      testing: test-archive-1701ef1f1510/.hg_archival.txt   OK
+      testing: test-archive-1701ef1f1510/.hgsub   OK
+      testing: test-archive-1701ef1f1510/.hgsubstate   OK
+      testing: test-archive-1701ef1f1510/bar   OK
+      testing: test-archive-1701ef1f1510/baz/bletch   OK
+      testing: test-archive-1701ef1f1510/foo   OK
+      testing: test-archive-1701ef1f1510/subrepo/sub   OK
   No errors detected in compressed data of archive.zip.
 
-  $ "$TESTDIR/killdaemons.py"
+test that we can download single directories and files
+
+  $ python getarchive.py "$TIP" gz baz | gunzip | tar tf - 2>/dev/null
+  test-archive-1701ef1f1510/baz/bletch
+  $ python getarchive.py "$TIP" gz foo | gunzip | tar tf - 2>/dev/null
+  test-archive-1701ef1f1510/foo
+
+test that we detect file patterns that match no files
+
+  $ python getarchive.py "$TIP" gz foobar
+  HTTP Error 404: file(s) not found: foobar
+
+test that we reject unsafe patterns
+
+  $ python getarchive.py "$TIP" gz relre:baz
+  HTTP Error 404: file(s) not found: relre:baz
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
 
   $ hg archive -t tar test.tar
   $ tar tf test.tar
   test/.hg_archival.txt
+  test/.hgsub
+  test/.hgsubstate
   test/bar
   test/baz/bletch
   test/foo
 
-  $ hg archive -t tbz2 -X baz test.tar.bz2
+  $ hg archive --debug -t tbz2 -X baz test.tar.bz2
+  archiving: 0/4 files (0.00%)
+  archiving: .hgsub 1/4 files (25.00%)
+  archiving: .hgsubstate 2/4 files (50.00%)
+  archiving: bar 3/4 files (75.00%)
+  archiving: foo 4/4 files (100.00%)
   $ bunzip2 -dc test.tar.bz2 | tar tf - 2>/dev/null
   test/.hg_archival.txt
+  test/.hgsub
+  test/.hgsubstate
   test/bar
   test/foo
 
   $ hg archive -t tgz -p %b-%h test-%h.tar.gz
   $ gzip -dc test-$QTIP.tar.gz | tar tf - 2>/dev/null
-  test-2c0277f05ed4/.hg_archival.txt
-  test-2c0277f05ed4/bar
-  test-2c0277f05ed4/baz/bletch
-  test-2c0277f05ed4/foo
+  test-1701ef1f1510/.hg_archival.txt
+  test-1701ef1f1510/.hgsub
+  test-1701ef1f1510/.hgsubstate
+  test-1701ef1f1510/bar
+  test-1701ef1f1510/baz/bletch
+  test-1701ef1f1510/foo
 
   $ hg archive autodetected_test.tar
   $ tar tf autodetected_test.tar
   autodetected_test/.hg_archival.txt
+  autodetected_test/.hgsub
+  autodetected_test/.hgsubstate
   autodetected_test/bar
   autodetected_test/baz/bletch
   autodetected_test/foo
@@ -125,6 +181,8 @@ The '-t' should override autodetection
   $ hg archive -t tar autodetect_override_test.zip
   $ tar tf autodetect_override_test.zip
   autodetect_override_test.zip/.hg_archival.txt
+  autodetect_override_test.zip/.hgsub
+  autodetect_override_test.zip/.hgsubstate
   autodetect_override_test.zip/bar
   autodetect_override_test.zip/baz/bletch
   autodetect_override_test.zip/foo
@@ -173,24 +231,26 @@ rename them afterwards.
   No errors detected in compressed data of test.zip.
 
   $ hg archive -t tar - | tar tf - 2>/dev/null
-  test-2c0277f05ed4/.hg_archival.txt
-  test-2c0277f05ed4/bar
-  test-2c0277f05ed4/baz/bletch
-  test-2c0277f05ed4/foo
+  test-1701ef1f1510/.hg_archival.txt
+  test-1701ef1f1510/.hgsub
+  test-1701ef1f1510/.hgsubstate
+  test-1701ef1f1510/bar
+  test-1701ef1f1510/baz/bletch
+  test-1701ef1f1510/foo
 
   $ hg archive -r 0 -t tar rev-%r.tar
-  $ if [ -f rev-0.tar ]; then
-  $ fi
+  $ [ -f rev-0.tar ]
 
 test .hg_archival.txt
 
   $ hg archive ../test-tags
   $ cat ../test-tags/.hg_archival.txt
   repo: daa7f7c60e0a224faa4ff77ca41b2760562af264
-  node: 2c0277f05ed49d1c8328fb9ba92fba7a5ebcb33e
+  node: 1701ef1f151069b8747038e93b5186bb43a47504
   branch: default
   latesttag: null
-  latesttagdistance: 3
+  latesttagdistance: 4
+  changessincelatesttag: 4
   $ hg tag -r 2 mytag
   $ hg tag -r 2 anothertag
   $ hg archive -r 2 ../test-lasttag
@@ -219,19 +279,23 @@ enable progress extension:
   > width = 60
   > EOF
 
-  $ hg archive ../with-progress 2>&1 | $TESTDIR/filtercr.py
-  
-  archiving [                                           ] 0/4
-  archiving [                                           ] 0/4
-  archiving [=========>                                 ] 1/4
-  archiving [=========>                                 ] 1/4
-  archiving [====================>                      ] 2/4
-  archiving [====================>                      ] 2/4
-  archiving [===============================>           ] 3/4
-  archiving [===============================>           ] 3/4
-  archiving [==========================================>] 4/4
-  archiving [==========================================>] 4/4
-                                                              \r (esc)
+  $ hg archive ../with-progress
+  \r (no-eol) (esc)
+  archiving [                                           ] 0/6\r (no-eol) (esc)
+  archiving [                                           ] 0/6\r (no-eol) (esc)
+  archiving [======>                                    ] 1/6\r (no-eol) (esc)
+  archiving [======>                                    ] 1/6\r (no-eol) (esc)
+  archiving [=============>                             ] 2/6\r (no-eol) (esc)
+  archiving [=============>                             ] 2/6\r (no-eol) (esc)
+  archiving [====================>                      ] 3/6\r (no-eol) (esc)
+  archiving [====================>                      ] 3/6\r (no-eol) (esc)
+  archiving [===========================>               ] 4/6\r (no-eol) (esc)
+  archiving [===========================>               ] 4/6\r (no-eol) (esc)
+  archiving [==================================>        ] 5/6\r (no-eol) (esc)
+  archiving [==================================>        ] 5/6\r (no-eol) (esc)
+  archiving [==========================================>] 6/6\r (no-eol) (esc)
+  archiving [==========================================>] 6/6\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
 
 cleanup after progress extension test:
 
@@ -259,7 +323,47 @@ old file -- date clamped to 1980
   Archive:  ../old.zip
   \s*Length.* (re)
   *-----* (glob)
-  *147*80*00:00*old/.hg_archival.txt (glob)
+  *172*80*00:00*old/.hg_archival.txt (glob)
   *0*80*00:00*old/old (glob)
   *-----* (glob)
-  \s*147\s+2 files (re)
+  \s*172\s+2 files (re)
+
+show an error when a provided pattern matches no files
+
+  $ hg archive -I file_that_does_not_exist.foo ../empty.zip
+  abort: no files match the archive pattern
+  [255]
+
+  $ hg archive -X * ../empty.zip
+  abort: no files match the archive pattern
+  [255]
+
+  $ cd ..
+
+issue3600: check whether "hg archive" can create archive files which
+are extracted with expected timestamp, even though TZ is not
+configured as GMT.
+
+  $ mkdir issue3600
+  $ cd issue3600
+
+  $ hg init repo
+  $ echo a > repo/a
+  $ hg -R repo add repo/a
+  $ hg -R repo commit -m '#0' -d '456789012 21600'
+  $ cat > show_mtime.py <<EOF
+  > import sys, os
+  > print int(os.stat(sys.argv[1]).st_mtime)
+  > EOF
+
+  $ hg -R repo archive --prefix tar-extracted archive.tar
+  $ (TZ=UTC-3; export TZ; tar xf archive.tar)
+  $ python show_mtime.py tar-extracted/a
+  456789012
+
+  $ hg -R repo archive --prefix zip-extracted archive.zip
+  $ (TZ=UTC-3; export TZ; unzip -q archive.zip)
+  $ python show_mtime.py zip-extracted/a
+  456789012
+
+  $ cd ..

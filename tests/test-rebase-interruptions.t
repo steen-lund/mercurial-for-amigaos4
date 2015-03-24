@@ -1,10 +1,13 @@
   $ cat >> $HGRCPATH <<EOF
   > [extensions]
-  > graphlog=
   > rebase=
+  > 
+  > [phases]
+  > publish=False
   > 
   > [alias]
   > tglog = log -G --template "{rev}: '{desc}' {branches}\n"
+  > tglogp = log -G --template "{rev}:{phase} '{desc}' {branches}\n"
   > EOF
 
 
@@ -54,69 +57,80 @@ Changes during an interruption - continue:
 Rebasing B onto E:
 
   $ hg rebase -s 1 -d 4
+  rebasing 1:27547f69f254 "B"
+  rebasing 2:965c486023db "C"
   merging A
   warning: conflicts during merge.
-  merging A failed!
-  abort: unresolved conflicts (see hg resolve, then hg rebase --continue)
-  [255]
+  merging A incomplete! (edit conflicts, then use 'hg resolve --mark')
+  unresolved conflicts (see hg resolve, then hg rebase --continue)
+  [1]
 
 Force a commit on C during the interruption:
 
-  $ hg up -q -C 2
+  $ hg up -q -C 2 --config 'extensions.rebase=!'
 
   $ echo 'Extra' > Extra
   $ hg add Extra
-  $ hg ci -m 'Extra'
+  $ hg ci -m 'Extra' --config 'extensions.rebase=!'
 
-  $ hg tglog
-  @  6: 'Extra'
+Force this commit onto secret phase
+
+  $ hg phase --force --secret 6
+
+  $ hg tglogp
+  @  6:secret 'Extra'
   |
-  | o  5: 'B'
+  | o  5:draft 'B'
   | |
-  | o  4: 'E'
+  | o  4:draft 'E'
   | |
-  | o  3: 'D'
+  | o  3:draft 'D'
   | |
-  o |  2: 'C'
+  o |  2:draft 'C'
   | |
-  o |  1: 'B'
+  o |  1:draft 'B'
   |/
-  o  0: 'A'
+  o  0:draft 'A'
   
 Resume the rebasing:
 
   $ hg rebase --continue
+  already rebased 1:27547f69f254 "B" as 45396c49d53b
+  rebasing 2:965c486023db "C"
   merging A
   warning: conflicts during merge.
-  merging A failed!
-  abort: unresolved conflicts (see hg resolve, then hg rebase --continue)
-  [255]
+  merging A incomplete! (edit conflicts, then use 'hg resolve --mark')
+  unresolved conflicts (see hg resolve, then hg rebase --continue)
+  [1]
 
 Solve the conflict and go on:
 
   $ echo 'conflict solved' > A
   $ rm A.orig
   $ hg resolve -m A
+  (no more unresolved files)
 
   $ hg rebase --continue
+  already rebased 1:27547f69f254 "B" as 45396c49d53b
+  rebasing 2:965c486023db "C"
   warning: new changesets detected on source branch, not stripping
 
-  $ hg tglog
-  @  7: 'C'
+  $ hg tglogp
+  o  7:draft 'C'
   |
-  | o  6: 'Extra'
+  | o  6:secret 'Extra'
   | |
-  o |  5: 'B'
+  o |  5:draft 'B'
   | |
-  o |  4: 'E'
+  @ |  4:draft 'E'
   | |
-  o |  3: 'D'
+  o |  3:draft 'D'
   | |
-  | o  2: 'C'
+  | o  2:draft 'C'
   | |
-  | o  1: 'B'
+  | o  1:draft 'B'
   |/
-  o  0: 'A'
+  o  0:draft 'A'
   
   $ cd ..
 
@@ -140,19 +154,21 @@ Changes during an interruption - abort:
 Rebasing B onto E:
 
   $ hg rebase -s 1 -d 4
+  rebasing 1:27547f69f254 "B"
+  rebasing 2:965c486023db "C"
   merging A
   warning: conflicts during merge.
-  merging A failed!
-  abort: unresolved conflicts (see hg resolve, then hg rebase --continue)
-  [255]
+  merging A incomplete! (edit conflicts, then use 'hg resolve --mark')
+  unresolved conflicts (see hg resolve, then hg rebase --continue)
+  [1]
 
 Force a commit on B' during the interruption:
 
-  $ hg up -q -C 5
+  $ hg up -q -C 5 --config 'extensions.rebase=!'
 
   $ echo 'Extra' > Extra
   $ hg add Extra
-  $ hg ci -m 'Extra'
+  $ hg ci -m 'Extra' --config 'extensions.rebase=!'
 
   $ hg tglog
   @  6: 'Extra'
@@ -172,8 +188,8 @@ Force a commit on B' during the interruption:
 Abort the rebasing:
 
   $ hg rebase --abort
-  warning: new changesets detected on target branch, can't abort
-  [255]
+  warning: new changesets detected on target branch, can't strip
+  rebase aborted
 
   $ hg tglog
   @  6: 'Extra'
@@ -192,3 +208,70 @@ Abort the rebasing:
   
   $ cd ..
 
+Changes during an interruption - abort (again):
+
+  $ hg clone -q -u . a a3
+  $ cd a3
+
+  $ hg tglogp
+  @  4:draft 'E'
+  |
+  o  3:draft 'D'
+  |
+  | o  2:draft 'C'
+  | |
+  | o  1:draft 'B'
+  |/
+  o  0:draft 'A'
+  
+Rebasing B onto E:
+
+  $ hg rebase -s 1 -d 4
+  rebasing 1:27547f69f254 "B"
+  rebasing 2:965c486023db "C"
+  merging A
+  warning: conflicts during merge.
+  merging A incomplete! (edit conflicts, then use 'hg resolve --mark')
+  unresolved conflicts (see hg resolve, then hg rebase --continue)
+  [1]
+
+Change phase on B and B'
+
+  $ hg up -q -C 5 --config 'extensions.rebase=!'
+  $ hg phase --public 1
+  $ hg phase --public 5
+  $ hg phase --secret -f 2
+
+  $ hg tglogp
+  @  5:public 'B'
+  |
+  o  4:public 'E'
+  |
+  o  3:public 'D'
+  |
+  | o  2:secret 'C'
+  | |
+  | o  1:public 'B'
+  |/
+  o  0:public 'A'
+  
+Abort the rebasing:
+
+  $ hg rebase --abort
+  warning: can't clean up immutable changesets 45396c49d53b
+  rebase aborted
+
+  $ hg tglogp
+  @  5:public 'B'
+  |
+  o  4:public 'E'
+  |
+  o  3:public 'D'
+  |
+  | o  2:secret 'C'
+  | |
+  | o  1:public 'B'
+  |/
+  o  0:public 'A'
+  
+  $ cd ..

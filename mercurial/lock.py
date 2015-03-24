@@ -29,13 +29,16 @@ class lock(object):
 
     _host = None
 
-    def __init__(self, file, timeout=-1, releasefn=None, desc=None):
+    def __init__(self, vfs, file, timeout=-1, releasefn=None, desc=None):
+        self.vfs = vfs
         self.f = file
         self.held = 0
         self.timeout = timeout
         self.releasefn = releasefn
         self.desc = desc
-        self.lock()
+        self.postrelease  = []
+        self.pid = os.getpid()
+        self.delay = self.lock()
 
     def __del__(self):
         if self.held:
@@ -54,7 +57,7 @@ class lock(object):
         while True:
             try:
                 self.trylock()
-                return 1
+                return self.timeout - timeout
             except error.LockHeld, inst:
                 if timeout != 0:
                     time.sleep(1)
@@ -70,16 +73,17 @@ class lock(object):
             return
         if lock._host is None:
             lock._host = socket.gethostname()
-        lockname = '%s:%s' % (lock._host, os.getpid())
+        lockname = '%s:%s' % (lock._host, self.pid)
         while not self.held:
             try:
-                util.makelock(lockname, self.f)
+                self.vfs.makelock(lockname, self.f)
                 self.held = 1
             except (OSError, IOError), why:
                 if why.errno == errno.EEXIST:
                     locker = self.testlock()
                     if locker is not None:
-                        raise error.LockHeld(errno.EAGAIN, self.f, self.desc,
+                        raise error.LockHeld(errno.EAGAIN,
+                                             self.vfs.join(self.f), self.desc,
                                              locker)
                 else:
                     raise error.LockUnavailable(why.errno, why.strerror,
@@ -96,7 +100,12 @@ class lock(object):
         The lock file is only deleted when None is returned.
 
         """
-        locker = util.readlock(self.f)
+        try:
+            locker = self.vfs.readlock(self.f)
+        except (OSError, IOError), why:
+            if why.errno == errno.ENOENT:
+                return None
+            raise
         try:
             host, pid = locker.split(":", 1)
         except ValueError:
@@ -112,26 +121,36 @@ class lock(object):
         # if locker dead, break lock.  must do this with another lock
         # held, or can race and break valid lock.
         try:
-            l = lock(self.f + '.break', timeout=0)
-            util.unlink(self.f)
+            l = lock(self.vfs, self.f + '.break', timeout=0)
+            self.vfs.unlink(self.f)
             l.release()
         except error.LockError:
             return locker
 
     def release(self):
+        """release the lock and execute callback function if any
+
+        If the lock has been acquired multiple times, the actual release is
+        delayed to the last release call."""
         if self.held > 1:
             self.held -= 1
         elif self.held == 1:
             self.held = 0
-            if self.releasefn:
-                self.releasefn()
+            if os.getpid() != self.pid:
+                # we forked, and are not the parent
+                return
             try:
-                util.unlink(self.f)
-            except OSError:
-                pass
+                if self.releasefn:
+                    self.releasefn()
+            finally:
+                try:
+                    self.vfs.unlink(self.f)
+                except OSError:
+                    pass
+            for callback in self.postrelease:
+                callback()
 
 def release(*locks):
     for lock in locks:
         if lock is not None:
             lock.release()
-

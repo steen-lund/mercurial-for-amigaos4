@@ -1,6 +1,3 @@
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "graphlog=" >> $HGRCPATH
-
   $ addcommit () {
   >     echo $1 > $1
   >     hg add $1
@@ -29,7 +26,7 @@ Merging a conflict araises
   $ hg merge
   merging A
   warning: conflicts during merge.
-  merging A failed!
+  merging A incomplete! (edit conflicts, then use 'hg resolve --mark')
   1 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges or 'hg update -C .' to abandon
   [1]
@@ -38,10 +35,13 @@ Correct the conflict without marking the file as resolved
 
   $ echo "ABCD" > A
   $ hg commit -m "Merged"
-  abort: unresolved merge conflicts (see hg help resolve)
+  abort: unresolved merge conflicts (see "hg help resolve")
   [255]
 
 Mark the conflict as resolved and commit
 
   $ hg resolve -m A
+  (no more unresolved files)
   $ hg commit -m "Merged"
+
+  $ cd ..

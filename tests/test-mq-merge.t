@@ -1,9 +1,11 @@
 Setup extension:
 
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "mq =" >> $HGRCPATH
-  $ echo "[mq]" >> $HGRCPATH
-  $ echo "git = keep" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > mq =
+  > [mq]
+  > git = keep
+  > EOF
 
 Test merge with mq changeset as the second parent:
 
@@ -56,7 +58,7 @@ Create a patch removing a:
 Save the patch queue so we can merge it later:
 
   $ hg qsave -c -e
-  copy $TESTTMP/t/.hg/patches to $TESTTMP/t/.hg/patches.1
+  copy $TESTTMP/t/.hg/patches to $TESTTMP/t/.hg/patches.1 (glob)
   $ checkundo
 
 Update b and commit in an "update" changeset:
@@ -76,7 +78,7 @@ Update b and commit in an "update" changeset:
   b
 
   $ hg qpush -a -m
-  merging with queue at: $TESTTMP/t/.hg/patches.1
+  merging with queue at: $TESTTMP/t/.hg/patches.1 (glob)
   applying rm_a
   now at: rm_a
 
@@ -115,22 +117,20 @@ Classic MQ merge sequence *with an explicit named queue*:
 Create the reference queue:
 
   $ hg qsave -c -e -n refqueue
-  copy $TESTTMP/t2/.hg/patches to $TESTTMP/t2/.hg/refqueue
+  copy $TESTTMP/t2/.hg/patches to $TESTTMP/t2/.hg/refqueue (glob)
   $ hg up -C 1
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
 
 Merge:
 
   $ HGMERGE=internal:other hg qpush -a -m -n refqueue
-  merging with queue at: $TESTTMP/t2/.hg/refqueue
+  merging with queue at: $TESTTMP/t2/.hg/refqueue (glob)
   applying patcha
   patching file a
-  Hunk #1 FAILED at 0
-  1 out of 1 hunks FAILED -- saving rejects to file a.rej
-  patch failed, unable to continue (try -v)
-  patch failed, rejects left in working dir
+  Hunk #1 succeeded at 2 with fuzz 1 (offset 0 lines).
+  fuzz found when applying patch, stopping
   patch didn't work out, merging patcha
-  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
   0 files updated, 2 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
   applying patcha2
@@ -140,7 +140,7 @@ Check patcha is still a git patch:
 
   $ cat .hg/patches/patcha
   # HG changeset patch
-  # Parent d3873e73d99ef67873dac33fbcc66268d5d2b6f4
+  # Parent  d3873e73d99ef67873dac33fbcc66268d5d2b6f4
   
   diff --git a/a b/a
   --- a/a
@@ -162,8 +162,8 @@ Check patcha2 is still a regular patch:
 
   $ cat .hg/patches/patcha2
   # HG changeset patch
-  # Parent ???????????????????????????????????????? (glob)
   # Date 0 0
+  # Parent  ???????????????????????????????????????? (glob)
   
   diff -r ???????????? -r ???????????? a (glob)
   --- a/a

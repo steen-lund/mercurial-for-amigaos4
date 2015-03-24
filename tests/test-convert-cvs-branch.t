@@ -1,16 +1,18 @@
+#require cvs
+
 This is http://mercurial.selenic.com/bts/issue1148
 and http://mercurial.selenic.com/bts/issue1447
 
-  $ "$TESTDIR/hghave" cvs || exit 80
   $ cvscall()
   > {
   >     cvs -f "$@" > /dev/null
   > }
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "convert = " >> $HGRCPATH
-  $ echo "graphlog = " >> $HGRCPATH
-  $ echo "[convert]" >> $HGRCPATH
-  $ echo "cvsps.cache=0" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > convert =
+  > [convert]
+  > cvsps.cache = 0
+  > EOF
 
 create cvs repository
 
@@ -21,6 +23,7 @@ create cvs repository
   $ CVS_OPTIONS=-f
   $ export CVS_OPTIONS
   $ cd ..
+  $ rmdir cvsrepo
   $ cvscall -q -d "$CVSROOT" init
 
 Create a new project
@@ -79,7 +82,7 @@ Convert
 
 Check the result
 
-  $ hg -R src-hg glog --template '{rev} ({branches}) {desc} files: {files}\n'
+  $ hg -R src-hg log -G --template '{rev} ({branches}) {desc} files: {files}\n'
   o  5 () update tags files: .hgtags
   |
   | o  4 (BRANCH) mod a again files: a
@@ -190,3 +193,4 @@ issue 1447
   	b.txt:1.2->1.2.2.1 
   
 
+  $ cd ..

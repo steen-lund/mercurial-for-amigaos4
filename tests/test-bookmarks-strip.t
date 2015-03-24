@@ -34,10 +34,11 @@ set bookmark
 
   $ hg book test2
 
-update to -2
+update to -2 (deactivates the active bookmark)
 
   $ hg update -r -2
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  (leaving bookmark test2)
 
   $ echo eee>>qqq.txt
 
@@ -60,8 +61,8 @@ strip to revision 1
 list bookmarks
 
   $ hg book
-     test                      1:8cf31af87a2b
-   * test2                     1:8cf31af87a2b
+     test                      0:5c9ad3787638
+     test2                     0:5c9ad3787638
 
 immediate rollback and reentrancy issue
 

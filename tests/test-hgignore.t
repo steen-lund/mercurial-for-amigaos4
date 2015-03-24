@@ -44,11 +44,11 @@ Should display baz only:
 
   $ echo "*.o" > .hgignore
   $ hg status
-  abort: $TESTTMP/.hgignore: invalid pattern (relre): *.o
+  abort: $TESTTMP/.hgignore: invalid pattern (relre): *.o (glob)
   [255]
 
   $ echo ".*\.o" > .hgignore
-  $  hg status
+  $ hg status
   A dir/b.o
   ? .hgignore
   ? a.c
@@ -64,20 +64,39 @@ Check it does not ignore the current directory '.':
   ? dir/c.o
   ? syntax
 
-  $ echo "glob:**.o" > .hgignore
+Test that patterns from ui.ignore options are read:
+
+  $ echo > .hgignore
+  $ cat >> $HGRCPATH << EOF
+  > [ui]
+  > ignore.other = $TESTTMP/.hg/testhgignore
+  > EOF
+  $ echo "glob:**.o" > .hg/testhgignore
   $ hg status
   A dir/b.o
   ? .hgignore
   ? a.c
   ? syntax
 
-  $ echo "glob:*.o" > .hgignore
+empty out testhgignore
+  $ echo > .hg/testhgignore
+
+Test relative ignore path (issue4473):
+
+  $ cat >> $HGRCPATH << EOF
+  > [ui]
+  > ignore.relative = .hg/testhgignorerel
+  > EOF
+  $ echo "glob:*.o" > .hg/testhgignorerel
+  $ cd dir
   $ hg status
   A dir/b.o
   ? .hgignore
   ? a.c
   ? syntax
 
+  $ cd ..
+  $ echo > .hg/testhgignorerel
   $ echo "syntax: glob" > .hgignore
   $ echo "re:.*\.o" >> .hgignore
   $ hg status
@@ -88,7 +107,7 @@ Check it does not ignore the current directory '.':
 
   $ echo "syntax: invalid" > .hgignore
   $ hg status
-  $TESTTMP/.hgignore: ignoring invalid syntax 'invalid'
+  $TESTTMP/.hgignore: ignoring invalid syntax 'invalid' (glob)
   A dir/b.o
   ? .hgignore
   ? a.c
@@ -122,3 +141,29 @@ Check it does not ignore the current directory '.':
 
   $ hg debugignore
   (?:(?:|.*/)[^/]*(?:/|$))
+
+  $ cd ..
+
+Check patterns that match only the directory
+
+  $ echo "^dir\$" > .hgignore
+  $ hg status
+  A dir/b.o
+  ? .hgignore
+  ? a.c
+  ? a.o
+  ? syntax
+
+Check recursive glob pattern matches no directories (dir/**/c.o matches dir/c.o)
+
+  $ echo "syntax: glob" > .hgignore
+  $ echo "dir/**/c.o" >> .hgignore
+  $ touch dir/c.o
+  $ mkdir dir/subdir
+  $ touch dir/subdir/c.o
+  $ hg status
+  A dir/b.o
+  ? .hgignore
+  ? a.c
+  ? a.o
+  ? syntax

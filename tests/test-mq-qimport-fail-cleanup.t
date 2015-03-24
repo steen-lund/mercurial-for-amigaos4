@@ -16,14 +16,10 @@ imported patches in series file.
   >  a
   > +b
   > EOF
-  $ echo
-  
 
 empty series
 
   $ hg qseries
-  $ echo
-  
 
 qimport valid patch followed by invalid patch
 
@@ -31,10 +27,16 @@ qimport valid patch followed by invalid patch
   adding b.patch to series file
   abort: unable to read file fakepatch
   [255]
-  $ echo
-  
 
 valid patches before fail added to series
 
   $ hg qseries
   b.patch
+
+  $ hg pull -q -r 0 . # update phase
+  $ hg qimport -r 0
+  abort: revision 0 is not mutable
+  (see "hg help phases" for details)
+  [255]
+
+  $ cd ..

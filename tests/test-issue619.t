@@ -8,6 +8,7 @@ http://mercurial.selenic.com/bts/issue619
   $ echo b > b
   $ hg branch b
   marked working directory as branch b
+  (branches are permanent and global, did you want a bookmark?)
   $ hg ci -Amb
   adding b
 
@@ -24,6 +25,12 @@ Fast-forward:
 Bogus fast-forward should fail:
 
   $ hg merge b
+  abort: merging with a working directory ancestor has no effect
+  [255]
+
+Even with strange revset (issue4465)
+
+  $ hg merge ::.
   abort: merging with a working directory ancestor has no effect
   [255]
 

@@ -1,10 +1,13 @@
+"""This unit test primarily tests parsers.parse_index2().
+
+It also checks certain aspects of the parsers module as a whole.
+"""
+
 from mercurial import parsers
 from mercurial.node import nullid, nullrev
 import struct
-
-# This unit test compares the return value of the original Python
-# implementation of parseindex and the new C implementation for
-# an index file with and without inlined data
+import subprocess
+import sys
 
 # original python implementation
 def gettype(q):
@@ -52,7 +55,6 @@ def py_parseindex(data, inline) :
 
     return index, cache
 
-
 data_inlined = '\x00\x01\x00\x01\x00\x00\x00\x00\x00\x00\x01\x8c' \
     '\x00\x00\x04\x07\x00\x00\x00\x00\x00\x00\x15\x15\xff\xff\xff' \
     '\xff\xff\xff\xff\xff\xebG\x97\xb7\x1fB\x04\xcf\x13V\x81\tw\x1b' \
@@ -94,19 +96,107 @@ data_non_inlined = '\x00\x00\x00\x01\x00\x00\x00\x00\x00\x01D\x19' \
     '\xb6\r\x98B\xcb\x07\xbd`\x8f\x92\xd9\xc4\x84\xbdK\x00\x00\x00' \
     '\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 
+def parse_index2(data, inline):
+    index, chunkcache = parsers.parse_index2(data, inline)
+    return list(index), chunkcache
+
+def importparsers(hexversion):
+    """Import mercurial.parsers with the given sys.hexversion."""
+    # The file parsers.c inspects sys.hexversion to determine the version
+    # of the currently-running Python interpreter, so we monkey-patch
+    # sys.hexversion to simulate using different versions.
+    code = ("import sys; sys.hexversion=%s; "
+            "import mercurial.parsers" % hexversion)
+    cmd = "python -c \"%s\"" % code
+    # We need to do these tests inside a subprocess because parser.c's
+    # version-checking code happens inside the module init function, and
+    # when using reload() to reimport an extension module, "The init function
+    # of extension modules is not called a second time"
+    # (from http://docs.python.org/2/library/functions.html?#reload).
+    p = subprocess.Popen(cmd, shell=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return p.communicate()  # returns stdout, stderr
+
+def printhexfail(testnumber, hexversion, stdout, expected):
+    try:
+        hexstring = hex(hexversion)
+    except TypeError:
+        hexstring = None
+    print ("FAILED: version test #%s with Python %s and patched "
+           "sys.hexversion %r (%r):\n Expected %s but got:\n-->'%s'\n" %
+           (testnumber, sys.version_info, hexversion, hexstring, expected,
+            stdout))
+
+def testversionokay(testnumber, hexversion):
+    stdout, stderr = importparsers(hexversion)
+    if stdout:
+        printhexfail(testnumber, hexversion, stdout, expected="no stdout")
+
+def testversionfail(testnumber, hexversion):
+    stdout, stderr = importparsers(hexversion)
+    # We include versionerrortext to distinguish from other ImportErrors.
+    errtext = "ImportError: %s" % parsers.versionerrortext
+    if errtext not in stdout:
+        printhexfail(testnumber, hexversion, stdout,
+                     expected="stdout to contain %r" % errtext)
+
+def makehex(major, minor, micro):
+    return int("%x%02x%02x00" % (major, minor, micro), 16)
+
+def runversiontests():
+    """Check the version-detection logic when importing parsers."""
+    info = sys.version_info
+    major, minor, micro = info[0], info[1], info[2]
+    # Test same major-minor versions.
+    testversionokay(1, makehex(major, minor, micro))
+    testversionokay(2, makehex(major, minor, micro + 1))
+    # Test different major-minor versions.
+    testversionfail(3, makehex(major + 1, minor, micro))
+    testversionfail(4, makehex(major, minor + 1, micro))
+    testversionfail(5, "'foo'")
+
 def runtest() :
+    # Only test the version-detection logic if it is present.
+    try:
+        parsers.versionerrortext
+    except AttributeError:
+        pass
+    else:
+        runversiontests()
+
+    # Check that parse_index2() raises TypeError on bad arguments.
+    try:
+        parse_index2(0, True)
+    except TypeError:
+        pass
+    else:
+        print "Expected to get TypeError."
+
+   # Check parsers.parse_index2() on an index file against the original
+   # Python implementation of parseindex, both with and without inlined data.
 
     py_res_1 = py_parseindex(data_inlined, True)
-    c_res_1 = parsers.parse_index2(data_inlined, True)
+    c_res_1 = parse_index2(data_inlined, True)
 
     py_res_2 = py_parseindex(data_non_inlined, False)
-    c_res_2 = parsers.parse_index2(data_non_inlined, False)
+    c_res_2 = parse_index2(data_non_inlined, False)
 
     if py_res_1 != c_res_1:
         print "Parse index result (with inlined data) differs!"
 
     if py_res_2 != c_res_2:
         print "Parse index result (no inlined data) differs!"
+
+    ix = parsers.parse_index2(data_inlined, True)[0]
+    for i, r in enumerate(ix):
+        if r[7] == nullid:
+            i = -1
+        try:
+            if ix[r[7]] != i:
+                print 'Reverse lookup inconsistent for %r' % r[7].encode('hex')
+        except TypeError:
+            # pure version doesn't support this
+            break
 
     print "done"
 

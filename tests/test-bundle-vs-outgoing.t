@@ -75,12 +75,9 @@ back to "second branch" to make another head
   $ mkrev 8
   rev 8
 
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "graphlog=" >> $HGRCPATH
-
 the story so far
 
-  $ hg glog --template "{rev}\n"
+  $ hg log -G --template "{rev}\n"
   @  8
   |
   | o  7
@@ -142,3 +139,4 @@ with a destination repo... i.e. it's wrong too
   $ hg bundle --base 3 foo.bundle
   5 changesets found
 
+  $ cd ..

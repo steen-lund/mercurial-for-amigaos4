@@ -1,8 +1,10 @@
 
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "convert = " >> $HGRCPATH
-  $ echo "[convert]" >> $HGRCPATH
-  $ echo "hg.tagsbranch=0" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > convert =
+  > [convert]
+  > hg.tagsbranch = 0
+  > EOF
   $ hg init source
   $ cd source
   $ echo a > a
@@ -15,6 +17,7 @@ Add a merge with one parent in the same branch
   $ hg up -qC 0
   $ hg branch branch0
   marked working directory as branch branch0
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b > b
   $ hg ci -qAm addb
   $ hg up -qC
@@ -52,11 +55,13 @@ Add a merge with both parents and child in different branches
   $ cd source
   $ hg branch branch1
   marked working directory as branch branch1
+  (branches are permanent and global, did you want a bookmark?)
   $ echo a > file1
   $ hg ci -qAm c1
   $ hg up -qC mergeab
   $ hg branch branch2
   marked working directory as branch branch2
+  (branches are permanent and global, did you want a bookmark?)
   $ echo a > file2
   $ hg ci -qAm c2
   $ hg merge branch1
@@ -64,6 +69,7 @@ Add a merge with both parents and child in different branches
   (branch merge, don't forget to commit)
   $ hg branch branch3
   marked working directory as branch branch3
+  (branches are permanent and global, did you want a bookmark?)
   $ hg ci -qAm c3
   $ cd ..
 
@@ -78,7 +84,7 @@ incremental conversion
   pulling from branch0 into branch2
   4 changesets found
   0 c3
-  pulling from branch2 into branch3
-  5 changesets found
   pulling from branch1 into branch3
+  5 changesets found
+  pulling from branch2 into branch3
   1 changesets found

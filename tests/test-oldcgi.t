@@ -1,3 +1,5 @@
+#require no-msys # MSYS will translate web paths as if they were file paths
+
 This tests if CGI files from before d0db3462d568 still work.
 
   $ hg init test

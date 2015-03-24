@@ -384,10 +384,13 @@ Mixed tests
   % hg status
   $ rm -r mixed
 
-Test issue2569 -- eol extension takes write lock on reading:
-
   $ echo '[extensions]' >> $HGRCPATH
   $ echo 'eol =' >> $HGRCPATH
+
+#if unix-permissions
+
+Test issue2569 -- eol extension takes write lock on reading:
+
   $ hg init repo
   $ cd repo
   $ touch .hgeol
@@ -401,12 +404,16 @@ Test issue2569 -- eol extension takes write lock on reading:
   $ chmod -R u+w .hg
   $ cd ..
 
+#endif
+
 Test cleverencode: and cleverdecode: aliases for win32text extension
 
-  $ echo '[encode]' >> $HGRCPATH
-  $ echo '**.txt = cleverencode:' >> $HGRCPATH
-  $ echo '[decode]' >> $HGRCPATH
-  $ echo '**.txt = cleverdecode:' >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [encode]
+  > **.txt = cleverencode:
+  > [decode]
+  > **.txt = cleverdecode:
+  > EOF
 
   $ hg init win32compat
   $ cd win32compat
@@ -441,3 +448,98 @@ Test handling of a broken .hgeol file:
   warning: ignoring .hgeol file due to parse error at .hgeol:1: bad
   $ hg status
   ? .hgeol.orig
+
+Test eol.only-consistent can be specified in .hgeol
+
+  $ cd $TESTTMP
+  $ hg init only-consistent
+  $ cd only-consistent
+  $ printf "first\nsecond\r\n" > a.txt
+  $ hg add a.txt
+  $ cat > .hgeol << EOF
+  > [eol]
+  > only-consistent = True
+  > EOF
+  $ hg commit -m 'inconsistent'
+  abort: inconsistent newline style in a.txt
+  
+  [255]
+  $ cat > .hgeol << EOF
+  > [eol]
+  > only-consistent = False
+  > EOF
+  $ hg commit -m 'consistent'
+
+
+Test trailing newline
+
+  $ cat >> $HGRCPATH <<EOF
+  > [extensions]
+  > eol=
+  > EOF
+
+setup repository
+
+  $ cd $TESTTMP
+  $ hg init trailing
+  $ cd trailing
+  $ cat > .hgeol <<EOF
+  > [patterns]
+  > **.txt = native
+  > [eol]
+  > fix-trailing-newline = False
+  > EOF
+
+add text without trailing newline
+
+  $ printf "first\nsecond" > a.txt
+  $ hg commit --addremove -m 'checking in'
+  adding .hgeol
+  adding a.txt
+  $ rm a.txt
+  $ hg update -C -q
+  $ cat a.txt
+  first
+  second (no-eol)
+
+  $ cat > .hgeol <<EOF
+  > [patterns]
+  > **.txt = native
+  > [eol]
+  > fix-trailing-newline = True
+  > EOF
+  $ printf "third\nfourth" > a.txt
+  $ hg commit -m 'checking in with newline fix'
+  $ rm a.txt
+  $ hg update -C -q
+  $ cat a.txt
+  third
+  fourth
+
+append a line without trailing newline
+
+  $ printf "fifth" >> a.txt
+  $ hg commit -m 'adding another line line'
+  $ rm a.txt
+  $ hg update -C -q
+  $ cat a.txt
+  third
+  fourth
+  fifth
+
+amend of changesets with renamed/deleted files expose new code paths
+
+  $ hg mv a.txt b.txt
+  $ hg ci --amend -q
+  $ hg diff -c.
+  diff --git a/a.txt b/b.txt
+  rename from a.txt
+  rename to b.txt
+  --- a/a.txt
+  +++ b/b.txt
+  @@ -1,2 +1,3 @@
+   third
+   fourth
+  +fifth
+
+  $ cd ..

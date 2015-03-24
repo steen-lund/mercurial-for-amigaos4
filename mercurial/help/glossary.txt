@@ -135,7 +135,7 @@ Child changeset
     See 'Changeset, child'.
 
 Close changeset
-    See 'Changeset, close'.
+    See 'Head, closed branch'
 
 Closed branch
     See 'Branch, closed'.
@@ -173,9 +173,12 @@ DAG
     system (DVCS) can be described as a directed acyclic graph (DAG),
     consisting of nodes and edges, where nodes correspond to
     changesets and edges imply a parent -> child relation. This graph
-    can be visualized by graphical tools such as :hg:`glog`
-    (graphlog). In Mercurial, the DAG is limited by the requirement
-    for children to have at most two parents.
+    can be visualized by graphical tools such as :hg:`log --graph`. In
+    Mercurial, the DAG is limited by the requirement for children to
+    have at most two parents.
+
+Deprecated
+    Feature removed from documentation, but not scheduled for removal.
 
 Default branch
     See 'Branch, default'.
@@ -212,8 +215,16 @@ Directory, working
     to the files introduced manually or by a merge. The repository
     metadata exists in the .hg directory inside the working directory.
 
+Draft
+    Changesets in the draft phase have not been shared with publishing
+    repositories and may thus be safely changed by history-modifying
+    extensions. See :hg:`help phases`.
+
+Experimental
+    Feature that may change or be removed at a later date.
+
 Graph
-    See DAG and :hg:`help graphlog`.
+    See DAG and :hg:`log --graph`.
 
 Head
     The term 'head' may be used to refer to both a branch head or a
@@ -231,6 +242,9 @@ Head, closed branch
     head is no longer listed by :hg:`heads`. A branch is considered
     closed when all its heads are closed and consequently is not
     listed by :hg:`branches`.
+
+    Closed heads can be re-opened by committing new changeset as the
+    child of the changeset that marks a head as closed.
 
 Head, repository
     A topological head which has not been closed.
@@ -300,6 +314,15 @@ Patch
 
     Example: "You will need to patch that revision."
 
+Phase
+    A per-changeset state tracking how the changeset has been or
+    should be shared. See :hg:`help phases`.
+
+Public
+    Changesets in the public phase have been shared with publishing
+    repositories and are therefore considered immutable. See :hg:`help
+    phases`.
+
 Pull
     An operation in which changesets in a remote repository which are
     not in the local repository are brought into the local
@@ -350,6 +373,10 @@ Rewriting history
 Root
     A changeset that has only the null changeset as its parent. Most
     repositories have only a single root changeset.
+
+Secret
+    Changesets in the secret phase may not be shared via push, pull,
+    or clone. See :hg:`help phases`.
 
 Tag
     An alternative name given to a changeset. Tags can be used in all

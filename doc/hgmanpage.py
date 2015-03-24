@@ -47,7 +47,10 @@ __docformat__ = 'reStructuredText'
 import re
 
 from docutils import nodes, writers, languages
-import roman
+try:
+    import roman
+except ImportError:
+    from docutils.utils import roman
 import inspect
 
 FIELD_LIST_INDENT = 7
@@ -143,7 +146,7 @@ class Table(object):
                 text.extend(cell)
                 if not text[-1].endswith('\n'):
                     text[-1] += '\n'
-                if i < len(row)-1:
+                if i < len(row) - 1:
                     text.append('T}'+self._tab_char+'T{\n')
                 else:
                     text.append('T}\n')
@@ -155,7 +158,7 @@ class Translator(nodes.NodeVisitor):
     """"""
 
     words_and_spaces = re.compile(r'\S+| +|\n')
-    document_start = """Man page generated from reStructeredText."""
+    document_start = """Man page generated from reStructuredText."""
 
     def __init__(self, document):
         nodes.NodeVisitor.__init__(self, document)
@@ -255,7 +258,7 @@ class Translator(nodes.NodeVisitor):
             # ensure we get a ".TH" as viewers require it.
             self.head.append(self.header())
         # filter body
-        for i in xrange(len(self.body)-1, 0, -1):
+        for i in xrange(len(self.body) - 1, 0, -1):
             # remove superfluous vertical gaps.
             if self.body[i] == '.sp\n':
                 if self.body[i - 1][:4] in ('.BI ','.IP '):
@@ -579,7 +582,7 @@ class Translator(nodes.NodeVisitor):
                                     self._docinfo[name],
                                     self.defs['indent'][1],
                                     self.defs['indent'][1]))
-            elif not name in skip:
+            elif name not in skip:
                 if name in self._docinfo_names:
                     label = self._docinfo_names[name]
                 else:
@@ -877,7 +880,7 @@ class Translator(nodes.NodeVisitor):
         self.context[-3] = '.BI' # bold/italic alternate
         if node['delimiter'] != ' ':
             self.body.append('\\fB%s ' % node['delimiter'])
-        elif self.body[len(self.body)-1].endswith('='):
+        elif self.body[len(self.body) - 1].endswith('='):
             # a blank only means no blank in output, just changing font
             self.body.append(' ')
         else:
@@ -897,7 +900,7 @@ class Translator(nodes.NodeVisitor):
         # ``.PP`` : Start standard indented paragraph.
         # ``.LP`` : Start block paragraph, all except the first.
         # ``.P [type]``  : Start paragraph type.
-        # NOTE dont use paragraph starts because they reset indentation.
+        # NOTE don't use paragraph starts because they reset indentation.
         # ``.sp`` is only vertical space
         self.ensure_eol()
         self.body.append('.sp\n')
@@ -978,7 +981,6 @@ class Translator(nodes.NodeVisitor):
         #    Level is too low to display:
         #    raise nodes.SkipNode
         attr = {}
-        backref_text = ''
         if node.hasattr('id'):
             attr['name'] = node['id']
         if node.hasattr('line'):

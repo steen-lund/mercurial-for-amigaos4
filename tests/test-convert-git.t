@@ -1,14 +1,21 @@
+#require git
 
-  $ "$TESTDIR/hghave" git || exit 80
+  $ echo "[core]" >> $HOME/.gitconfig
+  $ echo "autocrlf = false" >> $HOME/.gitconfig
+  $ echo "[core]" >> $HOME/.gitconfig
+  $ echo "autocrlf = false" >> $HOME/.gitconfig
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "convert=" >> $HGRCPATH
-  $ echo 'hgext.graphlog =' >> $HGRCPATH
   $ GIT_AUTHOR_NAME='test'; export GIT_AUTHOR_NAME
   $ GIT_AUTHOR_EMAIL='test@example.org'; export GIT_AUTHOR_EMAIL
   $ GIT_AUTHOR_DATE="2007-01-01 00:00:00 +0000"; export GIT_AUTHOR_DATE
   $ GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"; export GIT_COMMITTER_NAME
   $ GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"; export GIT_COMMITTER_EMAIL
   $ GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"; export GIT_COMMITTER_DATE
+  $ INVALIDID1=afd12345af
+  $ INVALIDID2=28173x36ddd1e67bf7098d541130558ef5534a86
+  $ VALIDID1=39b3d83f9a69a9ba4ebb111461071a0af0027357
+  $ VALIDID2=8dd6476bd09d9c7776355dc454dafe38efaec5da
   $ count=10
   $ commit()
   > {
@@ -26,8 +33,7 @@
   $ git add a d
   $ commit -a -m t1
 
-Remove the directory, then try to replace it with a file
-(issue 754)
+Remove the directory, then try to replace it with a file (issue754)
 
   $ git rm -f d/b
   rm 'd/b'
@@ -45,7 +51,43 @@ Remove the directory, then try to replace it with a file
   $ git pull --no-commit . other > /dev/null 2>/dev/null
   $ commit -m 'Merge branch other'
   $ cd ..
-  $ hg convert --datesort git-repo
+  $ hg convert --config extensions.progress= --config progress.assume-tty=1 \
+  >   --config progress.delay=0 --config progress.changedelay=0 \
+  >   --config progress.refresh=0 --config progress.width=60 \
+  > --datesort git-repo
+  \r (no-eol) (esc)
+  scanning [======>                                     ] 1/6\r (no-eol) (esc)
+  scanning [=============>                              ] 2/6\r (no-eol) (esc)
+  scanning [=====================>                      ] 3/6\r (no-eol) (esc)
+  scanning [============================>               ] 4/6\r (no-eol) (esc)
+  scanning [===================================>        ] 5/6\r (no-eol) (esc)
+  scanning [===========================================>] 6/6\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  converting [                                          ] 0/6\r (no-eol) (esc)
+  getting files [==================>                    ] 1/2\r (no-eol) (esc)
+  getting files [======================================>] 2/2\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  converting [======>                                   ] 1/6\r (no-eol) (esc)
+  getting files [======================================>] 1/1\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  converting [=============>                            ] 2/6\r (no-eol) (esc)
+  getting files [======================================>] 1/1\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  converting [====================>                     ] 3/6\r (no-eol) (esc)
+  getting files [======================================>] 1/1\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  converting [===========================>              ] 4/6\r (no-eol) (esc)
+  getting files [======================================>] 1/1\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  converting [==================================>       ] 5/6\r (no-eol) (esc)
+  getting files [======================================>] 1/1\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
   assuming destination git-repo-hg
   initializing destination git-repo-hg repository
   scanning source...
@@ -106,7 +148,7 @@ Remove the directory, then try to replace it with a file
   $ cd ..
   $ glog()
   > {
-  >     hg glog --template '{rev} "{desc|firstline}" files: {files}\n' "$@"
+  >     hg log -G --template '{rev} "{desc|firstline}" files: {files}\n' "$@"
   > }
   $ splitrepo()
   > {
@@ -198,15 +240,64 @@ full conversion
   354ae8da6e890359ef49ade27b68bbc361f3ca88 644   baz
   9277c9cc8dd4576fc01a17939b4351e5ada93466 644   foo
   88dfeab657e8cf2cef3dec67b914f49791ae76b1 644   quux
-  $ echo
-  
 
-test binary conversion (issue 1359)
+test importing git renames and copies
 
+  $ cd git-repo2
+  $ git mv foo foo-renamed
+since bar is not touched in this commit, this copy will not be detected
+  $ cp bar bar-copied
+  $ cp baz baz-copied
+  $ cp baz baz-copied2
+  $ echo baz2 >> baz
+  $ git add bar-copied baz-copied baz-copied2
+  $ commit -a -m 'rename and copy'
+  $ cd ..
+
+input validation
+  $ hg convert --config convert.git.similarity=foo --datesort git-repo2 fullrepo
+  abort: convert.git.similarity is not an integer ('foo')
+  [255]
+  $ hg convert --config convert.git.similarity=-1 --datesort git-repo2 fullrepo
+  abort: similarity must be between 0 and 100
+  [255]
+  $ hg convert --config convert.git.similarity=101 --datesort git-repo2 fullrepo
+  abort: similarity must be between 0 and 100
+  [255]
+
+  $ hg -q convert --config convert.git.similarity=100 --datesort git-repo2 fullrepo
+  $ hg -R fullrepo status -C --change master
+  M baz
+  A bar-copied
+  A baz-copied
+    baz
+  A baz-copied2
+    baz
+  A foo-renamed
+    foo
+  R foo
+
+  $ cd git-repo2
+  $ echo bar2 >> bar
+  $ commit -a -m 'change bar'
+  $ cp bar bar-copied2
+  $ git add bar-copied2
+  $ commit -a -m 'copy with no changes'
+  $ cd ..
+
+  $ hg -q convert --config convert.git.similarity=100 \
+  > --config convert.git.findcopiesharder=1 --datesort git-repo2 fullrepo
+  $ hg -R fullrepo status -C --change master
+  A bar-copied2
+    bar
+
+test binary conversion (issue1359)
+
+  $ count=19
   $ mkdir git-repo3
   $ cd git-repo3
   $ git init-db >/dev/null 2>/dev/null
-  $ python -c 'file("b", "wb").write("".join([chr(i) for i in range(256)])*16)'
+  $ $PYTHON -c 'file("b", "wb").write("".join([chr(i) for i in range(256)])*16)'
   $ git add b
   $ commit -a -m addbinary
   $ cd ..
@@ -223,11 +314,9 @@ convert binary file
   $ cd git-repo3-hg
   $ hg up -C
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ python -c 'print len(file("b", "rb").read())'
+  $ $PYTHON -c 'print len(file("b", "rb").read())'
   4096
   $ cd ..
-  $ echo
-  
 
 test author vs committer
 
@@ -281,17 +370,148 @@ convert author committer
   abort: --sourcesort is not supported by this data source
   [255]
 
-damage git repository and convert again
+test sub modules
 
-  $ cat > damage.py <<EOF
-  > import os
-  > for root, dirs, files in os.walk('git-repo4/.git/objects'):
-  >     if files:
-  >         path = os.path.join(root, files[0])
-  >         os.remove(path)
-  >         break
+  $ mkdir git-repo5
+  $ cd git-repo5
+  $ git init-db >/dev/null 2>/dev/null
+  $ echo 'sub' >> foo
+  $ git add foo
+  $ commit -a -m 'addfoo'
+  $ BASE=`pwd`
+  $ cd ..
+  $ mkdir git-repo6
+  $ cd git-repo6
+  $ git init-db >/dev/null 2>/dev/null
+  $ git submodule add ${BASE} >/dev/null 2>/dev/null
+  $ commit -a -m 'addsubmodule' >/dev/null 2>/dev/null
+  $ cd ..
+
+test invalid splicemap1
+
+  $ cat > splicemap <<EOF
+  > $VALIDID1
   > EOF
-  $ python damage.py
-  $ hg convert git-repo4 git-repo4-broken-hg 2>&1 | \
-  >     grep 'abort:' | sed 's/abort:.*/abort:/g'
-  abort:
+  $ hg convert --splicemap splicemap git-repo2 git-repo2-splicemap1-hg
+  initializing destination git-repo2-splicemap1-hg repository
+  abort: syntax error in splicemap(1): child parent1[,parent2] expected
+  [255]
+
+test invalid splicemap2
+
+  $ cat > splicemap <<EOF
+  > $VALIDID1 $VALIDID2, $VALIDID2, $VALIDID2
+  > EOF
+  $ hg convert --splicemap splicemap git-repo2 git-repo2-splicemap2-hg
+  initializing destination git-repo2-splicemap2-hg repository
+  abort: syntax error in splicemap(1): child parent1[,parent2] expected
+  [255]
+
+test invalid splicemap3
+
+  $ cat > splicemap <<EOF
+  > $INVALIDID1 $INVALIDID2
+  > EOF
+  $ hg convert --splicemap splicemap git-repo2 git-repo2-splicemap3-hg
+  initializing destination git-repo2-splicemap3-hg repository
+  abort: splicemap entry afd12345af is not a valid revision identifier
+  [255]
+
+convert sub modules
+  $ hg convert git-repo6 git-repo6-hg
+  initializing destination git-repo6-hg repository
+  scanning source...
+  sorting...
+  converting...
+  0 addsubmodule
+  updating bookmarks
+  $ hg -R git-repo6-hg log -v
+  changeset:   0:* (glob)
+  bookmark:    master
+  tag:         tip
+  user:        nottest <test@example.org>
+  date:        Mon Jan 01 00:00:23 2007 +0000
+  files:       .hgsub .hgsubstate
+  description:
+  addsubmodule
+  
+  committer: test <test@example.org>
+  
+  
+
+  $ cd git-repo6-hg
+  $ hg up >/dev/null 2>/dev/null
+  $ cat .hgsubstate
+  * git-repo5 (glob)
+  $ cd git-repo5
+  $ cat foo
+  sub
+
+  $ cd ../..
+
+make sure rename detection doesn't break removing and adding gitmodules
+
+  $ cd git-repo6
+  $ git mv .gitmodules .gitmodules-renamed
+  $ commit -a -m 'rename .gitmodules'
+  $ git mv .gitmodules-renamed .gitmodules
+  $ commit -a -m 'rename .gitmodules back'
+  $ cd ..
+
+  $ hg --config convert.git.similarity=100 convert -q git-repo6 git-repo6-hg
+  $ hg -R git-repo6-hg log -r 'tip^' -T "{desc|firstline}\n"
+  rename .gitmodules
+  $ hg -R git-repo6-hg status -C --change 'tip^'
+  A .gitmodules-renamed
+  R .hgsub
+  R .hgsubstate
+  $ hg -R git-repo6-hg log -r tip -T "{desc|firstline}\n"
+  rename .gitmodules back
+  $ hg -R git-repo6-hg status -C --change tip
+  A .hgsub
+  A .hgsubstate
+  R .gitmodules-renamed
+
+convert the revision removing '.gitmodules' itself (and related
+submodules)
+
+  $ cd git-repo6
+  $ git rm .gitmodules
+  rm '.gitmodules'
+  $ git rm --cached git-repo5
+  rm 'git-repo5'
+  $ commit -a -m 'remove .gitmodules and submodule git-repo5'
+  $ cd ..
+
+  $ hg convert -q git-repo6 git-repo6-hg
+  $ hg -R git-repo6-hg tip -T "{desc|firstline}\n"
+  remove .gitmodules and submodule git-repo5
+  $ hg -R git-repo6-hg tip -T "{file_dels}\n"
+  .hgsub .hgsubstate
+
+damaged git repository tests:
+In case the hard-coded hashes change, the following commands can be used to
+list the hashes and their corresponding types in the repository:
+cd git-repo4/.git/objects
+find . -type f | cut -c 3- | sed 's_/__' | xargs -n 1 -t git cat-file -t
+cd ../../..
+
+damage git repository by renaming a commit object
+  $ COMMIT_OBJ=1c/0ce3c5886f83a1d78a7b517cdff5cf9ca17bdd
+  $ mv git-repo4/.git/objects/$COMMIT_OBJ git-repo4/.git/objects/$COMMIT_OBJ.tmp
+  $ hg convert git-repo4 git-repo4-broken-hg 2>&1 | grep 'abort:'
+  abort: cannot read tags from git-repo4/.git
+  $ mv git-repo4/.git/objects/$COMMIT_OBJ.tmp git-repo4/.git/objects/$COMMIT_OBJ
+damage git repository by renaming a blob object
+
+  $ BLOB_OBJ=8b/137891791fe96927ad78e64b0aad7bded08bdc
+  $ mv git-repo4/.git/objects/$BLOB_OBJ git-repo4/.git/objects/$BLOB_OBJ.tmp
+  $ hg convert git-repo4 git-repo4-broken-hg 2>&1 | grep 'abort:'
+  abort: cannot read 'blob' object at 8b137891791fe96927ad78e64b0aad7bded08bdc
+  $ mv git-repo4/.git/objects/$BLOB_OBJ.tmp git-repo4/.git/objects/$BLOB_OBJ
+damage git repository by renaming a tree object
+
+  $ TREE_OBJ=72/49f083d2a63a41cc737764a86981eb5f3e4635
+  $ mv git-repo4/.git/objects/$TREE_OBJ git-repo4/.git/objects/$TREE_OBJ.tmp
+  $ hg convert git-repo4 git-repo4-broken-hg 2>&1 | grep 'abort:'
+  abort: cannot read changes in 1c0ce3c5886f83a1d78a7b517cdff5cf9ca17bdd

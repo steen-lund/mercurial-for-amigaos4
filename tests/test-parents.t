@@ -71,7 +71,7 @@ hg parents c, single revision
   
 
   $ hg parents -r 2 ../a
-  abort: ../a not under root
+  abort: ../a not under root '$TESTTMP/repo' (glob)
   [255]
 
 
@@ -150,3 +150,5 @@ merge working dir with 1 parent, hg parents c
   date:        Thu Jan 01 00:00:04 1970 +0000
   summary:     c2
   
+
+  $ cd ..

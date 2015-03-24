@@ -7,10 +7,17 @@
 
 from i18n import _
 from node import hex
+import match as matchmod
 import cmdutil
 import scmutil, util, encoding
 import cStringIO, os, tarfile, time, zipfile
 import zlib, gzip
+import struct
+import error
+
+# from unzip source code:
+_UNX_IFREG = 0x8000
+_UNX_IFLNK = 0xa000
 
 def tidyprefix(dest, kind, prefix):
     '''choose prefix to use for names in archive.  make sure prefix is
@@ -68,8 +75,11 @@ class tarit(object):
         def _write_gzip_header(self):
             self.fileobj.write('\037\213')             # magic header
             self.fileobj.write('\010')                 # compression method
-            # Python 2.6 deprecates self.filename
-            fname = getattr(self, 'name', None) or self.filename
+            # Python 2.6 introduced self.name and deprecated self.filename
+            try:
+                fname = self.name
+            except AttributeError:
+                fname = self.filename
             if fname and fname.endswith('.gz'):
                 fname = fname[:-3]
             flags = 0
@@ -97,7 +107,6 @@ class tarit(object):
                 self.fileobj = gzfileobj
                 return tarfile.TarFile.taropen(name, mode, gzfileobj)
             else:
-                self.fileobj = fileobj
                 return tarfile.open(name, mode + kind, fileobj)
 
         if isinstance(dest, str):
@@ -164,6 +173,7 @@ class zipit(object):
         if mtime < epoch:
             mtime = epoch
 
+        self.mtime = mtime
         self.date_time = time.gmtime(mtime)[:6]
 
     def addfile(self, name, mode, islink, data):
@@ -172,11 +182,19 @@ class zipit(object):
         # unzip will not honor unix file modes unless file creator is
         # set to unix (id 3).
         i.create_system = 3
-        ftype = 0x8000 # UNX_IFREG in unzip source code
+        ftype = _UNX_IFREG
         if islink:
             mode = 0777
-            ftype = 0xa000 # UNX_IFLNK in unzip source code
+            ftype = _UNX_IFLNK
         i.external_attr = (mode | ftype) << 16L
+        # add "extended-timestamp" extra block, because zip archives
+        # without this will be extracted with unexpected timestamp,
+        # if TZ is not configured as GMT
+        i.extra += struct.pack('<hhBl',
+                               0x5455,     # block type: "extended-timestamp"
+                               1 + 4,      # size of this block
+                               1,          # "modification time is present"
+                               int(self.mtime)) # last modification (UTC)
         self.z.writestr(i, data)
 
     def done(self):
@@ -195,7 +213,7 @@ class fileit(object):
             return
         f = self.opener(name, "w", atomictemp=True)
         f.write(data)
-        f.rename()
+        f.close()
         destfile = os.path.join(self.basedir, name)
         os.chmod(destfile, mode)
 
@@ -234,8 +252,6 @@ def archive(repo, dest, node, kind, decode=True, matchfn=None,
         prefix = tidyprefix(dest, kind, prefix)
 
     def write(name, mode, islink, getdata):
-        if matchfn and not matchfn(name):
-            return
         data = getdata()
         if decode:
             data = repo.wwritedata(name, data)
@@ -260,25 +276,41 @@ def archive(repo, dest, node, kind, decode=True, matchfn=None,
                         'style': '', 'patch': None, 'git': None}
                 cmdutil.show_changeset(repo.ui, repo, opts).show(ctx)
                 ltags, dist = repo.ui.popbuffer().split('\n')
-                tags = ''.join('latesttag: %s\n' % t for t in ltags.split(':'))
+                ltags = ltags.split(':')
+                changessince = len(repo.revs('only(.,%s)', ltags[0]))
+                tags = ''.join('latesttag: %s\n' % t for t in ltags)
                 tags += 'latesttagdistance: %s\n' % dist
+                tags += 'changessincelatesttag: %s\n' % changessince
 
             return base + tags
 
-        write('.hg_archival.txt', 0644, False, metadata)
+        name = '.hg_archival.txt'
+        if not matchfn or matchfn(name):
+            write(name, 0644, False, metadata)
 
-    total = len(ctx.manifest())
-    repo.ui.progress(_('archiving'), 0, unit=_('files'), total=total)
-    for i, f in enumerate(ctx):
-        ff = ctx.flags(f)
-        write(f, 'x' in ff and 0755 or 0644, 'l' in ff, ctx[f].data)
-        repo.ui.progress(_('archiving'), i + 1, item=f,
-                         unit=_('files'), total=total)
-    repo.ui.progress(_('archiving'), None)
+    if matchfn:
+        files = [f for f in ctx.manifest().keys() if matchfn(f)]
+    else:
+        files = ctx.manifest().keys()
+    total = len(files)
+    if total:
+        files.sort()
+        repo.ui.progress(_('archiving'), 0, unit=_('files'), total=total)
+        for i, f in enumerate(files):
+            ff = ctx.flags(f)
+            write(f, 'x' in ff and 0755 or 0644, 'l' in ff, ctx[f].data)
+            repo.ui.progress(_('archiving'), i + 1, item=f,
+                             unit=_('files'), total=total)
+        repo.ui.progress(_('archiving'), None)
 
     if subrepos:
-        for subpath in ctx.substate:
+        for subpath in sorted(ctx.substate):
             sub = ctx.sub(subpath)
-            sub.archive(repo.ui, archiver, prefix)
+            submatch = matchmod.narrowmatcher(subpath, matchfn)
+            total += sub.archive(archiver, prefix, submatch)
+
+    if total == 0:
+        raise error.Abort(_('no files match the archive pattern'))
 
     archiver.done()
+    return total

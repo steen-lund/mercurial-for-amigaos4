@@ -1,8 +1,9 @@
+#require cvs
+
 Test config convert.cvsps.mergefrom config setting.
 (Should test similar mergeto feature, but I don't understand it yet.)
 Requires builtin cvsps.
 
-  $ "$TESTDIR/hghave" cvs || exit 80
   $ CVSROOT=`pwd`/cvsrepo
   $ export CVSROOT
 
@@ -22,16 +23,16 @@ XXX copied from test-convert-cvs-synthetic
 
 XXX copied from test-convert-cvs-synthetic
 
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "convert = " >> $HGRCPATH
-  $ echo "graphlog = " >> $HGRCPATH
-  $ echo "[convert]" >> $HGRCPATH
-  $ echo "cvsps.cache=0" >> $HGRCPATH
-  $ echo "cvsps.mergefrom=\[MERGE from (\S+)\]" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > convert =
+  > [convert]
+  > cvsps.cache = 0
+  > cvsps.mergefrom = \[MERGE from (\S+)\]
+  > EOF
 
 create cvs repository with one project
 
-  $ mkdir cvsrepo
   $ cvscall -q -d "$CVSROOT" init
   $ mkdir cvsrepo/proj
 
@@ -183,8 +184,8 @@ convert to hg
   sorting...
   converting...
   9 add file1 on trunk
-  8 add text
-  7 unrelated change
+  8 unrelated change
+  7 add text
   6 add text [MERGE from v1_0]
   5 add text [MERGE from v1_1]
   4 add file2 on trunk
@@ -204,13 +205,13 @@ complete log
   5: '' add file2 on trunk
   4: '' add text [MERGE from v1_1]
   3: 'v1_1' add text [MERGE from v1_0]
-  2: 'v1_1' unrelated change
-  1: 'v1_0' add text
+  2: 'v1_0' add text
+  1: 'v1_1' unrelated change
   0: '' add file1 on trunk
 
 graphical log
 
-  $ hg -R proj.hg glog --template="$template"
+  $ hg -R proj.hg log -G --template="$template"
   o  9: '' fix file1 [MERGE from v1-1]
   |
   | o  8: 'v1_1' fix file1
@@ -225,9 +226,9 @@ graphical log
   |\|
   | o    3: 'v1_1' add text [MERGE from v1_0]
   | |\
-  +---o  2: 'v1_1' unrelated change
+  +---o  2: 'v1_0' add text
   | |
-  | o  1: 'v1_0' add text
+  | o  1: 'v1_1' unrelated change
   |/
   o  0: '' add file1 on trunk
   

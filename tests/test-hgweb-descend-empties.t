@@ -1,3 +1,5 @@
+#require serve
+
 Test chains of near empty directories, terminating 3 different ways:
 - a1: file at level 4 (deepest)
 - b1: two dirs at level 3
@@ -27,7 +29,7 @@ Set up the repo
 
 manifest with descending
 
-  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT '/file'
+  $ "$TESTDIR/get-with-headers.py" 127.0.0.1:$HGPORT 'file'
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -68,14 +70,14 @@ manifest with descending
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>directory / @ 0:9087c84a0f5d <span class="tag">tip</span> </h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <table class="bigtable">
@@ -84,13 +86,14 @@ manifest with descending
     <th class="size">size</th>
     <th class="permissions">permissions</th>
   </tr>
-  <tr class="fileline parity0">
+  <tbody class="stripes2">
+  <tr class="fileline">
     <td class="name"><a href="/file/9087c84a0f5d/">[up]</a></td>
     <td class="size"></td>
     <td class="permissions">drwxr-xr-x</td>
   </tr>
   
-  <tr class="fileline parity1">
+  <tr class="fileline">
   <td class="name">
   <a href="/file/9087c84a0f5d/a1">
   <img src="/static/coal-folder.png" alt="dir."/> a1/
@@ -102,7 +105,7 @@ manifest with descending
   <td class="size"></td>
   <td class="permissions">drwxr-xr-x</td>
   </tr>
-  <tr class="fileline parity0">
+  <tr class="fileline">
   <td class="name">
   <a href="/file/9087c84a0f5d/b1">
   <img src="/static/coal-folder.png" alt="dir."/> b1/
@@ -114,7 +117,7 @@ manifest with descending
   <td class="size"></td>
   <td class="permissions">drwxr-xr-x</td>
   </tr>
-  <tr class="fileline parity1">
+  <tr class="fileline">
   <td class="name">
   <a href="/file/9087c84a0f5d/d1">
   <img src="/static/coal-folder.png" alt="dir."/> d1/
@@ -127,6 +130,7 @@ manifest with descending
   <td class="permissions">drwxr-xr-x</td>
   </tr>
   
+  </tbody>
   </table>
   </div>
   </div>
@@ -138,3 +142,5 @@ manifest with descending
   
 
   $ cat errors.log
+
+  $ cd ..

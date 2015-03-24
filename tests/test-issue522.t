@@ -29,16 +29,16 @@ revision.
     unmatched files in local:
      bar
   resolving manifests
-   overwrite None partial False
-   ancestor bbd179dfa0a7 local 71766447bdbb+ remote 4d9e78aaceee
+   branchmerge: True, force: False, partial: False
+   ancestor: bbd179dfa0a7, local: 71766447bdbb+, remote: 4d9e78aaceee
    foo: remote is newer -> g
-  updating: foo 1/1 files (100.00%)
   getting foo
+  updating: foo 1/1 files (100.00%)
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
 
   $ hg debugstate | grep foo
-  n   0         -2 unset               foo
+  m   0         -2 unset               foo
 
   $ hg st -A foo
   M foo
@@ -49,8 +49,8 @@ revision.
   c6fc755d7e68f49f880599da29f15add41f42f5a 644   foo
 
   $ hg debugindex foo
-     rev    offset  length   base linkrev nodeid       p1           p2
-       0         0       5      0       0 2ed2a3912a0b 000000000000 000000000000
-       1         5       9      1       1 6f4310b00b9a 2ed2a3912a0b 000000000000
-       2        14       5      2       2 c6fc755d7e68 6f4310b00b9a 000000000000
+     rev    offset  length  ..... linkrev nodeid       p1           p2 (re)
+       0         0       5  .....       0 2ed2a3912a0b 000000000000 000000000000 (re)
+       1         5       9  .....       1 6f4310b00b9a 2ed2a3912a0b 000000000000 (re)
+       2        14       5  .....       2 c6fc755d7e68 6f4310b00b9a 000000000000 (re)
 

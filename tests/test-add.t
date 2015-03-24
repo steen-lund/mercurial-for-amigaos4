@@ -33,6 +33,7 @@ should fail
   A a
   A b
 
+#if no-windows
   $ echo foo > con.xml
   $ hg --config ui.portablefilenames=jump add con.xml
   abort: ui.portablefilenames value is invalid ('jump')
@@ -50,6 +51,11 @@ should fail
   A a
   A b
   A con.xml
+  $ hg forget con.xml
+  $ rm con.xml
+#endif
+
+#if eol-in-paths
   $ echo bla > 'hello:world'
   $ hg --config ui.portablefilenames=abort add
   adding hello:world
@@ -58,15 +64,14 @@ should fail
   $ hg st
   A a
   A b
-  A con.xml
   ? hello:world
   $ hg --config ui.portablefilenames=ignore add
   adding hello:world
   $ hg st
   A a
   A b
-  A con.xml
   A hello:world
+#endif
 
   $ hg ci -m 0 --traceback
 
@@ -86,7 +91,7 @@ should fail
   $ hg merge
   merging a
   warning: conflicts during merge.
-  merging a failed!
+  merging a incomplete! (edit conflicts, then use 'hg resolve --mark')
   0 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges or 'hg update -C .' to abandon
   [1]
@@ -102,6 +107,7 @@ should fail
   M a
   ? a.orig
   $ hg resolve -m a
+  (no more unresolved files)
   $ hg ci -m merge
 
 Issue683: peculiarity with hg revert of an removed then added file
@@ -120,15 +126,47 @@ Issue683: peculiarity with hg revert of an removed then added file
   M a
   ? a.orig
 
+Forgotten file can be added back (as either clean or modified)
+
+  $ hg forget b
+  $ hg add b
+  $ hg st -A b
+  C b
+  $ hg forget b
+  $ echo modified > b
+  $ hg add b
+  $ hg st -A b
+  M b
+  $ hg revert -qC b
+
   $ hg add c && echo "unexpected addition of missing file"
-  c: No such file or directory
+  c: * (glob)
   [1]
   $ echo c > c
   $ hg add d c && echo "unexpected addition of missing file"
-  d: No such file or directory
+  d: * (glob)
   [1]
   $ hg st
   M a
   A c
   ? a.orig
+  $ hg up -C
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
 
+forget and get should have the right order: added but missing dir should be
+forgotten before file with same name is added
+
+  $ echo file d > d
+  $ hg add d
+  $ hg ci -md
+  $ hg rm d
+  $ mkdir d
+  $ echo a > d/a
+  $ hg add d/a
+  $ rm -r d
+  $ hg up -C
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ cat d
+  file d
+
+  $ cd ..

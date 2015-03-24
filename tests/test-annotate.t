@@ -2,7 +2,8 @@
 
 init
 
-  $ hg init
+  $ hg init repo
+  $ cd repo
 
 commit
 
@@ -49,6 +50,29 @@ annotate -cdnul
 
   $ hg annotate -cdnul a
   nobody 0 8435f90966e4 Thu Jan 01 00:00:01 1970 +0000:1: a
+
+annotate (JSON)
+
+  $ hg annotate -Tjson a
+  [
+   {
+    "line": "a\n",
+    "rev": 0
+   }
+  ]
+
+  $ hg annotate -Tjson -cdfnul a
+  [
+   {
+    "date": [1.0, 0],
+    "file": "a",
+    "line": "a\n",
+    "line_number": 1,
+    "node": "8435f90966e442695d2ded29fdade2bac5ad8065",
+    "rev": 0,
+    "user": "nobody"
+   }
+  ]
 
   $ cat <<EOF >>a
   > a
@@ -253,3 +277,243 @@ missing file
   $ hg ann nosuchfile
   abort: nosuchfile: no such file in rev e9e6b4fa872f
   [255]
+
+annotate file without '\n' on last line
+
+  $ printf "" > c
+  $ hg ci -A -m test -u nobody -d '1 0'
+  adding c
+  $ hg annotate c
+  $ printf "a\nb" > c
+  $ hg ci -m test
+  $ hg annotate c
+  [0-9]+: a (re)
+  [0-9]+: b (re)
+
+Issue3841: check annotation of the file of which filelog includes
+merging between the revision and its ancestor
+
+to reproduce the situation with recent Mercurial, this script uses (1)
+"hg debugsetparents" to merge without ancestor check by "hg merge",
+and (2) the extension to allow filelog merging between the revision
+and its ancestor by overriding "repo._filecommit".
+
+  $ cat > ../legacyrepo.py <<EOF
+  > from mercurial import node, util
+  > def reposetup(ui, repo):
+  >     class legacyrepo(repo.__class__):
+  >         def _filecommit(self, fctx, manifest1, manifest2,
+  >                         linkrev, tr, changelist):
+  >             fname = fctx.path()
+  >             text = fctx.data()
+  >             flog = self.file(fname)
+  >             fparent1 = manifest1.get(fname, node.nullid)
+  >             fparent2 = manifest2.get(fname, node.nullid)
+  >             meta = {}
+  >             copy = fctx.renamed()
+  >             if copy and copy[0] != fname:
+  >                 raise util.Abort('copying is not supported')
+  >             if fparent2 != node.nullid:
+  >                 changelist.append(fname)
+  >                 return flog.add(text, meta, tr, linkrev,
+  >                                 fparent1, fparent2)
+  >             raise util.Abort('only merging is supported')
+  >     repo.__class__ = legacyrepo
+  > EOF
+
+  $ cat > baz <<EOF
+  > 1
+  > 2
+  > 3
+  > 4
+  > 5
+  > EOF
+  $ hg add baz
+  $ hg commit -m "baz:0"
+
+  $ cat > baz <<EOF
+  > 1 baz:1
+  > 2
+  > 3
+  > 4
+  > 5
+  > EOF
+  $ hg commit -m "baz:1"
+
+  $ cat > baz <<EOF
+  > 1 baz:1
+  > 2 baz:2
+  > 3
+  > 4
+  > 5
+  > EOF
+  $ hg debugsetparents 17 17
+  $ hg --config extensions.legacyrepo=../legacyrepo.py  commit -m "baz:2"
+  $ hg debugindexdot .hg/store/data/baz.i
+  digraph G {
+  	-1 -> 0
+  	0 -> 1
+  	1 -> 2
+  	1 -> 2
+  }
+  $ hg annotate baz
+  17: 1 baz:1
+  18: 2 baz:2
+  16: 3
+  16: 4
+  16: 5
+
+  $ cat > baz <<EOF
+  > 1 baz:1
+  > 2 baz:2
+  > 3 baz:3
+  > 4
+  > 5
+  > EOF
+  $ hg commit -m "baz:3"
+
+  $ cat > baz <<EOF
+  > 1 baz:1
+  > 2 baz:2
+  > 3 baz:3
+  > 4 baz:4
+  > 5
+  > EOF
+  $ hg debugsetparents 19 18
+  $ hg --config extensions.legacyrepo=../legacyrepo.py  commit -m "baz:4"
+  $ hg debugindexdot .hg/store/data/baz.i
+  digraph G {
+  	-1 -> 0
+  	0 -> 1
+  	1 -> 2
+  	1 -> 2
+  	2 -> 3
+  	3 -> 4
+  	2 -> 4
+  }
+  $ hg annotate baz
+  17: 1 baz:1
+  18: 2 baz:2
+  19: 3 baz:3
+  20: 4 baz:4
+  16: 5
+
+Test annotate with whitespace options
+
+  $ cd ..
+  $ hg init repo-ws
+  $ cd repo-ws
+  $ cat > a <<EOF
+  > aa
+  > 
+  > b b
+  > EOF
+  $ hg ci -Am "adda"
+  adding a
+  $ sed 's/EOL$//g' > a <<EOF
+  > a  a
+  > 
+  >  EOL
+  > b  b
+  > EOF
+  $ hg ci -m "changea"
+
+Annotate with no option
+
+  $ hg annotate a
+  1: a  a
+  0: 
+  1:  
+  1: b  b
+
+Annotate with --ignore-space-change
+
+  $ hg annotate --ignore-space-change a
+  1: a  a
+  1: 
+  0:  
+  0: b  b
+
+Annotate with --ignore-all-space
+
+  $ hg annotate --ignore-all-space a
+  0: a  a
+  0: 
+  1:  
+  0: b  b
+
+Annotate with --ignore-blank-lines (similar to no options case)
+
+  $ hg annotate --ignore-blank-lines a
+  1: a  a
+  0: 
+  1:  
+  1: b  b
+
+  $ cd ..
+
+Annotate with linkrev pointing to another branch
+------------------------------------------------
+
+create history with a filerev whose linkrev points to another branch
+
+  $ hg init branchedlinkrev
+  $ cd branchedlinkrev
+  $ echo A > a
+  $ hg commit -Am 'contentA'
+  adding a
+  $ echo B >> a
+  $ hg commit -m 'contentB'
+  $ hg up --rev 'desc(contentA)'
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ echo unrelated > unrelated
+  $ hg commit -Am 'unrelated'
+  adding unrelated
+  created new head
+  $ hg graft -r 'desc(contentB)'
+  grafting 1:fd27c222e3e6 "contentB"
+  $ echo C >> a
+  $ hg commit -m 'contentC'
+  $ hg log -G
+  @  changeset:   4:072f1e8df249
+  |  tag:         tip
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     contentC
+  |
+  o  changeset:   3:ff38df03cc4b
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     contentB
+  |
+  o  changeset:   2:62aaf3f6fc06
+  |  parent:      0:f0932f74827e
+  |  user:        test
+  |  date:        Thu Jan 01 00:00:00 1970 +0000
+  |  summary:     unrelated
+  |
+  | o  changeset:   1:fd27c222e3e6
+  |/   user:        test
+  |    date:        Thu Jan 01 00:00:00 1970 +0000
+  |    summary:     contentB
+  |
+  o  changeset:   0:f0932f74827e
+     user:        test
+     date:        Thu Jan 01 00:00:00 1970 +0000
+     summary:     contentA
+  
+
+Annotate should list ancestor of starting revision only
+
+  $ hg annotate a
+  0: A
+  3: B
+  4: C
+
+Even when the starting revision is the linkrev-shadowed one:
+
+  $ hg annotate a -r 3
+  0: A
+  3: B
+
+  $ cd ..

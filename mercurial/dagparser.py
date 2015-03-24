@@ -56,13 +56,13 @@ def parsedag(desc):
         ... :forkhere  # a label for the last of the 3 nodes from above
         ... +5         # 5 more nodes on one branch
         ... :mergethis # label again
-        ... <forkhere  # set default parent to labelled fork node
+        ... <forkhere  # set default parent to labeled fork node
         ... +10        # 10 more nodes on a parallel branch
         ... @stable    # following nodes will be annotated as "stable"
         ... +5         # 5 nodes in stable
         ... !addfile   # custom command; could trigger new file in next node
         ... +2         # two more nodes
-        ... /mergethis # merge last node with labelled node
+        ... /mergethis # merge last node with labeled node
         ... +4         # 4 more nodes descending from merge node
         ...
         ... """)))
@@ -268,7 +268,8 @@ def parsedag(desc):
                 s += c
                 i += 1
                 c = nextch()
-            raise util.Abort(_("invalid character in dag description: %s...") % s)
+            raise util.Abort(_('invalid character in dag description: '
+                               '%s...') % s)
 
 def dagtextlines(events,
                  addspaces=True,
@@ -436,7 +437,9 @@ def dagtext(dag,
         >>> dagtext([('n', (0, [-1])), ('a', 'ann'), ('n', (1, [0]))])
         '+1 @ann +1'
 
-        >>> dagtext([('n', (0, [-1])), ('a', 'my annotation'), ('n', (1, [0]))])
+        >>> dagtext([('n', (0, [-1])),
+        ...          ('a', 'my annotation'),
+        ...          ('n', (1, [0]))])
         '+1 @"my annotation" +1'
 
     Commands:
@@ -447,7 +450,9 @@ def dagtext(dag,
         >>> dagtext([('n', (0, [-1])), ('c', 'my command'), ('n', (1, [0]))])
         '+1 !"my command" +1'
 
-        >>> dagtext([('n', (0, [-1])), ('C', 'my command line'), ('n', (1, [0]))])
+        >>> dagtext([('n', (0, [-1])),
+        ...          ('C', 'my command line'),
+        ...          ('n', (1, [0]))])
         '+1 !!my command line\\n+1'
 
     Comments:

@@ -7,10 +7,15 @@
 
 """recreates hardlinks between repository clones"""
 
-from mercurial import hg, util
+from mercurial import cmdutil, hg, util
 from mercurial.i18n import _
 import os, stat
 
+cmdtable = {}
+command = cmdutil.command(cmdtable)
+testedwith = 'internal'
+
+@command('relink', [], _('[ORIGIN]'))
 def relink(ui, repo, origin=None, **opts):
     """recreate hardlinks between two repositories
 
@@ -36,16 +41,19 @@ def relink(ui, repo, origin=None, **opts):
     command is running. (Both repositories will be locked against
     writes.)
     """
-    if not hasattr(util, 'samefile') or not hasattr(util, 'samedevice'):
+    if (not util.safehasattr(util, 'samefile') or
+        not util.safehasattr(util, 'samedevice')):
         raise util.Abort(_('hardlinks are not supported on this system'))
-    src = hg.repository(ui, ui.expandpath(origin or 'default-relink',
+    src = hg.repository(repo.baseui, ui.expandpath(origin or 'default-relink',
                                           origin or 'default'))
-    if not src.local():
-        raise util.Abort(_('must specify local origin repository'))
     ui.status(_('relinking %s to %s\n') % (src.store.path, repo.store.path))
     if repo.root == src.root:
         ui.status(_('there is nothing to relink\n'))
         return
+
+    if not util.samedevice(src.store.path, repo.store.path):
+        # No point in continuing
+        raise util.Abort(_('source and destination are on different devices'))
 
     locallock = repo.lock()
     try:
@@ -78,7 +86,7 @@ def collect(src, ui):
         dirnames.sort()
         relpath = dirpath[len(src) + seplen:]
         for filename in sorted(filenames):
-            if not filename[-2:] in ('.d', '.i'):
+            if filename[-2:] not in ('.d', '.i'):
                 continue
             st = os.stat(os.path.join(dirpath, filename))
             if not stat.S_ISREG(st.st_mode):
@@ -173,11 +181,3 @@ def do_relink(src, dst, files, ui):
 
     ui.status(_('relinked %d files (%s reclaimed)\n') %
               (relinked, util.bytecount(savedbytes)))
-
-cmdtable = {
-    'relink': (
-        relink,
-        [],
-        _('[ORIGIN]')
-    )
-}

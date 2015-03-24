@@ -1,6 +1,16 @@
 from mercurial import demandimport
 demandimport.enable()
 
+import os
+if os.name != 'nt':
+    try:
+        import distutils.msvc9compiler
+        print ('distutils.msvc9compiler needs to be an immediate '
+               'importerror on non-windows platforms')
+        distutils.msvc9compiler
+    except ImportError:
+        pass
+
 import re
 
 rsub = re.sub
@@ -37,3 +47,9 @@ print "fred =", f(fred)
 print "re =", f(re)
 print "re.stderr =", f(re.stderr)
 print "re =", f(re)
+
+demandimport.disable()
+os.environ['HGDEMANDIMPORT'] = 'disable'
+demandimport.enable()
+from mercurial import node
+print "node =", f(node)

@@ -1,6 +1,6 @@
   $ hg init
 
-  $ python -c 'print "confuse str.splitlines\nembedded\rnewline"' > a
+  $ $PYTHON -c 'file("a", "wb").write("confuse str.splitlines\nembedded\rnewline\n")'
   $ hg ci -Ama -d '1 0'
   adding a
 
@@ -13,6 +13,7 @@
   +++ b/a	Thu Jan 01 00:00:02 1970 +0000
   @@ -1,2 +1,3 @@
    confuse str.splitlines
-   embedded\rnewline (esc)
+   embedded\r (no-eol) (esc)
+  newline
   +clean diff
 

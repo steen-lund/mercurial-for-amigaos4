@@ -1,3 +1,5 @@
+#require no-msys # MSYS will translate web paths as if they were file paths
+
 This is a test of the push wire protocol over CGI-based hgweb.
 
 initialize repository
@@ -33,17 +35,17 @@ test preparation
   1 changesets found
   $ CONTENT_LENGTH=279; export CONTENT_LENGTH;
 
-expect unsynced changes
+expect failure because heads doesn't match (formerly known as 'unsynced changes')
 
   $ QUERY_STRING="cmd=unbundle&heads=0000000000000000000000000000000000000000"; export QUERY_STRING
   $ python hgweb.cgi <bundle.hg >page1 2>&1
   $ cat page1
   Status: 200 Script output follows\r (esc)
   Content-Type: application/mercurial-0.1\r (esc)
-  Content-Length: 19\r (esc)
+  Content-Length: 64\r (esc)
   \r (esc)
   0
-  unsynced changes
+  repository changed while preparing changes - please try again
 
 successful force push
 
@@ -52,6 +54,7 @@ successful force push
   $ cat page2
   Status: 200 Script output follows\r (esc)
   Content-Type: application/mercurial-0.1\r (esc)
+  Content-Length: 102\r (esc)
   \r (esc)
   1
   adding changesets
@@ -66,6 +69,7 @@ successful push, list of heads
   $ cat page3
   Status: 200 Script output follows\r (esc)
   Content-Type: application/mercurial-0.1\r (esc)
+  Content-Length: 102\r (esc)
   \r (esc)
   1
   adding changesets
@@ -80,9 +84,12 @@ successful push, SHA1 hash of heads (unbundlehash capability)
   $ cat page4
   Status: 200 Script output follows\r (esc)
   Content-Type: application/mercurial-0.1\r (esc)
+  Content-Length: 102\r (esc)
   \r (esc)
   1
   adding changesets
   adding manifests
   adding file changes
   added 0 changesets with 0 changes to 1 files
+
+  $ cd ..

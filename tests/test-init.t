@@ -18,13 +18,38 @@ creating 'local'
   $ checknewrepo local
   store created
   00changelog.i created
+  dotencode
+  fncache
   revlogv1
   store
-  fncache
-  dotencode
   $ echo this > local/foo
   $ hg ci --cwd local -A -m "init"
   adding foo
+
+test custom revlog chunk cache sizes
+
+  $ hg --config format.chunkcachesize=0 log -R local -pv
+  abort: revlog chunk cache size 0 is not greater than 0!
+  [255]
+  $ hg --config format.chunkcachesize=1023 log -R local -pv
+  abort: revlog chunk cache size 1023 is not a power of 2!
+  [255]
+  $ hg --config format.chunkcachesize=1024 log -R local -pv
+  changeset:   0:08b9e9f63b32
+  tag:         tip
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  files:       foo
+  description:
+  init
+  
+  
+  diff -r 000000000000 -r 08b9e9f63b32 foo
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/foo	Thu Jan 01 00:00:00 1970 +0000
+  @@ -0,0 +1,1 @@
+  +this
+  
 
 creating repo with format.usestore=false
 
@@ -47,9 +72,9 @@ creating repo with format.dotencode=false
   $ checknewrepo old3
   store created
   00changelog.i created
+  fncache
   revlogv1
   store
-  fncache
 
 test failure
 
@@ -59,7 +84,7 @@ test failure
 
 init+push to remote2
 
-  $ hg init -e "python $TESTDIR/dummyssh" ssh://user@dummy/remote2
+  $ hg init -e "python \"$TESTDIR/dummyssh\"" ssh://user@dummy/remote2
   $ hg incoming -R remote2 local
   comparing with local
   changeset:   0:08b9e9f63b32
@@ -69,7 +94,7 @@ init+push to remote2
   summary:     init
   
 
-  $ hg push -R local -e "python $TESTDIR/dummyssh" ssh://user@dummy/remote2
+  $ hg push -R local -e "python \"$TESTDIR/dummyssh\"" ssh://user@dummy/remote2
   pushing to ssh://user@dummy/remote2
   searching for changes
   remote: adding changesets
@@ -79,7 +104,7 @@ init+push to remote2
 
 clone to remote1
 
-  $ hg clone -e "python $TESTDIR/dummyssh" local ssh://user@dummy/remote1
+  $ hg clone -e "python \"$TESTDIR/dummyssh\"" local ssh://user@dummy/remote1
   searching for changes
   remote: adding changesets
   remote: adding manifests
@@ -88,14 +113,14 @@ clone to remote1
 
 init to existing repo
 
-  $ hg init -e "python $TESTDIR/dummyssh" ssh://user@dummy/remote1
+  $ hg init -e "python \"$TESTDIR/dummyssh\"" ssh://user@dummy/remote1
   abort: repository remote1 already exists!
   abort: could not create remote repo!
   [255]
 
 clone to existing repo
 
-  $ hg clone -e "python $TESTDIR/dummyssh" local ssh://user@dummy/remote1
+  $ hg clone -e "python \"$TESTDIR/dummyssh\"" local ssh://user@dummy/remote1
   abort: repository remote1 already exists!
   abort: could not create remote repo!
   [255]
@@ -122,7 +147,7 @@ comparing repositories
 
 check names for repositories (clashes with URL schemes, special chars)
 
-  $ for i in bundle file hg http https old-http ssh static-http " " "with space"; do
+  $ for i in bundle file hg http https old-http ssh static-http "with space"; do
   >   printf "hg init \"$i\"... "
   >   hg init "$i"
   >   test -d "$i" -a -d "$i/.hg" && echo "ok" || echo "failed"
@@ -135,8 +160,13 @@ check names for repositories (clashes with URL schemes, special chars)
   hg init "old-http"... ok
   hg init "ssh"... ok
   hg init "static-http"... ok
-  hg init " "... ok
   hg init "with space"... ok
+#if eol-in-paths
+/* " " is not a valid name for a directory on Windows */
+  $ hg init " "
+  $ test -d " "
+  $ test -d " /.hg"
+#endif
 
 creating 'local/sub/repo'
 
@@ -144,10 +174,10 @@ creating 'local/sub/repo'
   $ checknewrepo local/sub/repo
   store created
   00changelog.i created
+  dotencode
+  fncache
   revlogv1
   store
-  fncache
-  dotencode
 
 prepare test of init of url configured from paths
 
@@ -161,10 +191,10 @@ init should (for consistency with clone) expand the url
   $ checknewrepo "url from paths"
   store created
   00changelog.i created
+  dotencode
+  fncache
   revlogv1
   store
-  fncache
-  dotencode
 
 verify that clone also expand urls
 
@@ -174,21 +204,22 @@ verify that clone also expand urls
   $ checknewrepo "another paths url"
   store created
   00changelog.i created
+  dotencode
+  fncache
   revlogv1
   store
-  fncache
-  dotencode
 
 clone bookmarks
 
   $ hg -R local bookmark test
   $ hg -R local bookmarks
    * test                      0:08b9e9f63b32
-  $ hg clone -e "python $TESTDIR/dummyssh" local ssh://user@dummy/remote-bookmarks
+  $ hg clone -e "python \"$TESTDIR/dummyssh\"" local ssh://user@dummy/remote-bookmarks
   searching for changes
   remote: adding changesets
   remote: adding manifests
   remote: adding file changes
   remote: added 1 changesets with 1 changes to 1 files
+  exporting bookmark test
   $ hg -R remote-bookmarks bookmarks
      test                      0:08b9e9f63b32

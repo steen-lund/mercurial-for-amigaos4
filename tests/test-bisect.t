@@ -184,6 +184,12 @@ bisect test
 
   $ hg bisect -r
   $ hg bisect -b
+  $ hg summary
+  parent: 31:58c80a7c8a40 tip
+   msg 31
+  branch: default
+  commit: (clean)
+  update: (current)
   $ hg bisect -g 1
   Testing changeset 16:a2e6ea4973e9 (30 changesets remaining, ~4 tests)
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -222,20 +228,21 @@ mark revsets instead of single revs
   Testing changeset 12:1941b52820a5 (23 changesets remaining, ~4 tests)
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ cat .hg/bisect.state
-  skip 9d7d07bc967ca98ad0600c24953fd289ad5fa991
-  skip ce8f0998e922c179e80819d5066fbe46e2998784
-  skip e7fa0811edb063f6319531f0d0a865882138e180
-  skip a2e6ea4973e9196ddd3386493b0c214b41fd97d3
   bad b99c7b9c8e11558adef3fad9af211c58d46f325b
   bad 5cd978ea51499179507ee7b6f340d2dbaa401185
   bad db07c04beaca44cf24832541e7f4a2346a95275b
   bad b53bea5e2fcb30d3e00bd3409507a5659ce0fd8b
+  current 1941b52820a544549596820a8ae006842b0e2c64
   good 3efc6fd51aeb8594398044c6c846ca59ae021203
   good 288867a866e9adb7a29880b66936c874b80f4651
   good 8e0c2264c8af790daf3585ada0669d93dee09c83
   good b5bd63375ab9a290419f2024b7f4ee9ea7ce90a8
   good ed2d2f24b11c368fa8aa0da9f4e1db580abade59
   good 58c80a7c8a4025a94cedaf7b4a4e3124e8909a96
+  skip 9d7d07bc967ca98ad0600c24953fd289ad5fa991
+  skip ce8f0998e922c179e80819d5066fbe46e2998784
+  skip e7fa0811edb063f6319531f0d0a865882138e180
+  skip a2e6ea4973e9196ddd3386493b0c214b41fd97d3
 
 bisect reverse test
 
@@ -273,7 +280,7 @@ skip
   $ hg bisect -r
   $ hg bisect -g tip
   $ hg bisect -b tip
-  abort: starting revisions are not directly related
+  abort: inconsistent state, 31:58c80a7c8a40 is good and bad
   [255]
 
   $ hg bisect -r
@@ -377,7 +384,7 @@ reproduce AssertionError, issue1445
   date:        Thu Jan 01 00:00:06 1970 +0000
   summary:     msg 6
   
-  $ hg log -r "bisected(good)"
+  $ hg log -r "bisect(good)"
   changeset:   0:b99c7b9c8e11
   user:        test
   date:        Thu Jan 01 00:00:00 1970 +0000
@@ -388,13 +395,19 @@ reproduce AssertionError, issue1445
   date:        Thu Jan 01 00:00:05 1970 +0000
   summary:     msg 5
   
-  $ hg log -r "bisected(bad)"
+  $ hg log -r "bisect(bad)"
   changeset:   6:a3d5c6fdf0d3
   user:        test
   date:        Thu Jan 01 00:00:06 1970 +0000
   summary:     msg 6
   
-  $ hg log -r "bisected(skip)"
+  $ hg log -r "bisect(current)"
+  changeset:   5:7874a09ea728
+  user:        test
+  date:        Thu Jan 01 00:00:05 1970 +0000
+  summary:     msg 5
+  
+  $ hg log -r "bisect(skip)"
   changeset:   1:5cd978ea5149
   user:        test
   date:        Thu Jan 01 00:00:01 1970 +0000
@@ -414,6 +427,15 @@ reproduce AssertionError, issue1445
   user:        test
   date:        Thu Jan 01 00:00:04 1970 +0000
   summary:     msg 4
+  
+
+test legacy bisected() keyword
+
+  $ hg log -r "bisected(bad)"
+  changeset:   6:a3d5c6fdf0d3
+  user:        test
+  date:        Thu Jan 01 00:00:06 1970 +0000
+  summary:     msg 6
   
 
   $ set +e
@@ -439,19 +461,145 @@ test bisecting command
   > EOF
   $ chmod +x script.py
   $ hg bisect -r
-  $ hg bisect --good tip
-  $ hg bisect --bad 0
-  Testing changeset 15:e7fa0811edb0 (31 changesets remaining, ~4 tests)
-  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ hg bisect --command "'`pwd`/script.py' and some parameters"
-  Changeset 15:e7fa0811edb0: good
-  Changeset 7:03750880c6b5: good
-  Changeset 3:b53bea5e2fcb: bad
-  Changeset 5:7874a09ea728: bad
-  Changeset 6:a3d5c6fdf0d3: good
+  $ hg up -qr tip
+  $ hg bisect --command "python \"$TESTTMP/script.py\" and some parameters"
+  changeset 31:58c80a7c8a40: good
+  abort: cannot bisect (no known bad revisions)
+  [255]
+  $ hg up -qr 0
+  $ hg bisect --command "python \"$TESTTMP/script.py\" and some parameters"
+  changeset 0:b99c7b9c8e11: bad
+  changeset 15:e7fa0811edb0: good
+  changeset 7:03750880c6b5: good
+  changeset 3:b53bea5e2fcb: bad
+  changeset 5:7874a09ea728: bad
+  changeset 6:a3d5c6fdf0d3: good
   The first good revision is:
   changeset:   6:a3d5c6fdf0d3
   user:        test
   date:        Thu Jan 01 00:00:06 1970 +0000
   summary:     msg 6
+  
+
+
+test bisecting via a command without updating the working dir, and
+ensure that the bisect state file is updated before running a test
+command
+
+  $ hg update null
+  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ cat > script.sh <<'EOF'
+  > #!/bin/sh
+  > test -n "$HG_NODE" || (echo HG_NODE missing; exit 127)
+  > current="`hg log -r \"bisect(current)\" --template {node}`"
+  > test "$current" = "$HG_NODE" || (echo current is bad: $current; exit 127)
+  > rev="`hg log -r $HG_NODE --template {rev}`"
+  > test "$rev" -ge 6
+  > EOF
+  $ chmod +x script.sh
+  $ hg bisect -r
+  $ hg bisect --good tip --noupdate
+  $ hg bisect --bad 0 --noupdate
+  Testing changeset 15:e7fa0811edb0 (31 changesets remaining, ~4 tests)
+  $ hg bisect --command "sh \"$TESTTMP/script.sh\" and some params" --noupdate
+  changeset 15:e7fa0811edb0: good
+  changeset 7:03750880c6b5: good
+  changeset 3:b53bea5e2fcb: bad
+  changeset 5:7874a09ea728: bad
+  changeset 6:a3d5c6fdf0d3: good
+  The first good revision is:
+  changeset:   6:a3d5c6fdf0d3
+  user:        test
+  date:        Thu Jan 01 00:00:06 1970 +0000
+  summary:     msg 6
+  
+
+ensure that we still don't have a working dir
+
+  $ hg parents
+
+
+test the same case, this time with updating
+
+  $ cat > script.sh <<'EOF'
+  > #!/bin/sh
+  > test -n "$HG_NODE" || (echo HG_NODE missing; exit 127)
+  > current="`hg log -r \"bisect(current)\" --template {node}`"
+  > test "$current" = "$HG_NODE" || (echo current is bad: $current; exit 127)
+  > rev="`hg log -r . --template {rev}`"
+  > test "$rev" -ge 6
+  > EOF
+  $ chmod +x script.sh
+  $ hg bisect -r
+  $ hg up -qr tip
+  $ hg bisect --command "sh \"$TESTTMP/script.sh\" and some params"
+  changeset 31:58c80a7c8a40: good
+  abort: cannot bisect (no known bad revisions)
+  [255]
+  $ hg up -qr 0
+  $ hg bisect --command "sh \"$TESTTMP/script.sh\" and some params"
+  changeset 0:b99c7b9c8e11: bad
+  changeset 15:e7fa0811edb0: good
+  changeset 7:03750880c6b5: good
+  changeset 3:b53bea5e2fcb: bad
+  changeset 5:7874a09ea728: bad
+  changeset 6:a3d5c6fdf0d3: good
+  The first good revision is:
+  changeset:   6:a3d5c6fdf0d3
+  user:        test
+  date:        Thu Jan 01 00:00:06 1970 +0000
+  summary:     msg 6
+  
+
+
+Check that bisect does not break on obsolete changesets
+=========================================================
+
+  $ cat >> $HGRCPATH << EOF
+  > [experimental]
+  > evolution=createmarkers
+  > EOF
+
+tip is obsolete
+---------------------
+
+  $ hg debugobsolete `hg id --debug -i -r tip`
+  $ hg bisect --reset
+  $ hg bisect --good 15
+  $ hg bisect --bad 30
+  Testing changeset 22:06c7993750ce (15 changesets remaining, ~3 tests)
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg bisect --command true
+  changeset 22:06c7993750ce: good
+  changeset 26:3efc6fd51aeb: good
+  changeset 28:8e0c2264c8af: good
+  changeset 29:b5bd63375ab9: good
+  The first bad revision is:
+  changeset:   30:ed2d2f24b11c
+  tag:         tip
+  user:        test
+  date:        Thu Jan 01 00:00:30 1970 +0000
+  summary:     msg 30
+  
+
+Changeset in the bad:good range is obsolete
+---------------------------------------------
+
+  $ hg up 30
+  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ echo 'a' >> a
+  $ hg ci -m "msg 32" -d "32 0"
+  $ hg bisect --reset
+  $ hg bisect --good .
+  $ hg bisect --bad 25
+  Testing changeset 28:8e0c2264c8af (6 changesets remaining, ~2 tests)
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg bisect --command true
+  changeset 28:8e0c2264c8af: good
+  changeset 26:3efc6fd51aeb: good
+  The first good revision is:
+  changeset:   26:3efc6fd51aeb
+  user:        test
+  date:        Thu Jan 01 00:00:26 1970 +0000
+  summary:     msg 26
   

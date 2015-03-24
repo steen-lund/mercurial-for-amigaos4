@@ -1,7 +1,4 @@
   $ cat >> $HGRCPATH <<EOF
-  > [extensions]
-  > graphlog=
-  > 
   > [alias]
   > tlog = log --template "{rev}:{node|short}: '{desc}' {branches}\n"
   > tglog = tlog -G
@@ -21,6 +18,7 @@
 
   $ hg branch stable
   marked working directory as branch stable
+  (branches are permanent and global, did you want a bookmark?)
   $ echo bar >> a
   $ hg ci -qm2
 
@@ -38,8 +36,20 @@
 
   $ cd b
   $ cat .hg/hgrc
+  # example repository config (see "hg help config" for more info)
   [paths]
-  default = $TESTTMP/a#stable
+  default = $TESTTMP/a#stable (glob)
+  
+  # path aliases to other clones of this repo in URLs or filesystem paths
+  # (see "hg help config.paths" for more info)
+  #
+  # default-push = ssh://jdoe@example.net/hg/jdoes-fork
+  # my-fork      = ssh://jdoe@example.net/hg/jdoes-fork
+  # my-clone     = /home/jdoe/jdoes-clone
+  
+  [ui]
+  # name and email (local to this repository, optional), e.g.
+  # username = Jane Doe <jdoe@example.com>
 
   $ echo red >> a
   $ hg ci -qm3
@@ -60,7 +70,7 @@
   
 
   $ hg tout
-  comparing with $TESTTMP/a
+  comparing with $TESTTMP/a (glob)
   searching for changes
   2:1d4099801a4e: '3' stable
 
@@ -78,15 +88,29 @@
   $ echo "green = ../a#default" >> .hg/hgrc
 
   $ cat .hg/hgrc
+  # example repository config (see "hg help config" for more info)
   [paths]
-  default = $TESTTMP/a#stable
+  default = $TESTTMP/a#stable (glob)
+  
+  # path aliases to other clones of this repo in URLs or filesystem paths
+  # (see "hg help config.paths" for more info)
+  #
+  # default-push = ssh://jdoe@example.net/hg/jdoes-fork
+  # my-fork      = ssh://jdoe@example.net/hg/jdoes-fork
+  # my-clone     = /home/jdoe/jdoes-clone
+  
+  [ui]
+  # name and email (local to this repository, optional), e.g.
+  # username = Jane Doe <jdoe@example.com>
   green = ../a#default
 
   $ hg tout green
-  comparing with $TESTTMP/a
-  searching for changes
-  3:f0461977a3db: '4' 
+  comparing with green
+  abort: repository green not found!
+  [255]
 
   $ hg tlog -r 'outgoing("green")'
-  3:f0461977a3db: '4' 
+  abort: repository green not found!
+  [255]
 
+  $ cd ..

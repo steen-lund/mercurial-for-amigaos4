@@ -1,7 +1,9 @@
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "mq=" >> $HGRCPATH
-  $ echo "[mq]" >> $HGRCPATH
-  $ echo "git=keep" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > mq =
+  > [mq]
+  > git = keep
+  > EOF
 
   $ hg init a
   $ cd a
@@ -98,7 +100,7 @@ qdiff filename:
   diff -r b0c220e1cf43 lines
   --- a/lines
   +++ b/lines
-  @@ -4,4 +6,4 @@
+  @@ -4,4 +4,4 @@
    4
   -hello world
   -goodbye world
@@ -173,3 +175,5 @@ qdiff when file deleted (but not removed) in working dir:
   $ hg qrefresh
   $ rm newfile
   $ hg qdiff
+
+  $ cd ..

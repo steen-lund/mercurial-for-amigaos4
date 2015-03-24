@@ -17,8 +17,8 @@ basic test for hg debugrebuildstate
 state dump after
 
   $ hg debugstate --nodates | sort
-  n 666         -1 bar
-  n 666         -1 foo
+  n 644         -1 set                 bar
+  n 644         -1 set                 foo
 
 status
 
@@ -27,3 +27,4 @@ status
   ? baz
   C foo
 
+  $ cd ..
