@@ -43,7 +43,7 @@ don't show "(+1 heads)" message when pulling closed head
   2:effea6de0384
   1:ed1b79f46b9a
   $ hg pull
-  pulling from $TESTTMP/repo2
+  pulling from $TESTTMP/repo2 (glob)
   searching for changes
   adding changesets
   adding manifests
@@ -101,3 +101,4 @@ This used to abort: received changelog group is empty:
 
   $ hg pull -qr 1 ../repo
 
+  $ cd ..

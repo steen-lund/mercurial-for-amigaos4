@@ -3,7 +3,7 @@
 from mercurial import demandimport
 demandimport.enable()
 
-import os, sys
+import sys
 from mercurial.i18n import _
 from mercurial import simplemerge, fancyopts, util, ui
 
@@ -11,8 +11,7 @@ options = [('L', 'label', [], _('labels to use on conflict markers')),
            ('a', 'text', None, _('treat all files as text')),
            ('p', 'print', None,
             _('print results instead of overwriting LOCAL')),
-           ('', 'no-minimal', None,
-            _('do not try to minimize conflict regions')),
+           ('', 'no-minimal', None, _('no effect (DEPRECATED)')),
            ('h', 'help', None, _('display help and exit')),
            ('q', 'quiet', None, _('suppress output'))]
 
@@ -44,7 +43,7 @@ def showhelp():
 try:
     for fp in (sys.stdin, sys.stdout, sys.stderr):
         util.setbinary(fp)
-    
+
     opts = {}
     try:
         args = fancyopts.fancyopts(sys.argv[1:], options, opts)

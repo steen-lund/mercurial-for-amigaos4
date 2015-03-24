@@ -1,6 +1,6 @@
   $ hg init test
   $ cd test
-  $ hg unbundle $TESTDIR/bundles/remote.hg
+  $ hg unbundle "$TESTDIR/bundles/remote.hg"
   adding changesets
   adding manifests
   adding file changes
@@ -146,3 +146,4 @@
   checking files
   4 files, 9 changesets, 7 total revisions
 
+  $ cd ..

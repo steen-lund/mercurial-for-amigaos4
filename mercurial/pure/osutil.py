@@ -58,7 +58,8 @@ def listdir(path, stat=False, skip=None):
 if os.name != 'nt':
     posixfile = open
 else:
-    import ctypes, ctypes.util
+    import ctypes, msvcrt
+    from errno import ESRCH, ENOENT
 
     _kernel32 = ctypes.windll.kernel32
 
@@ -68,16 +69,7 @@ else:
 
     _INVALID_HANDLE_VALUE = _HANDLE(-1).value
 
-    def _crtname():
-        try:
-            # find_msvcrt was introduced in Python 2.6
-            return ctypes.util.find_msvcrt()
-        except AttributeError:
-            return 'msvcr80.dll' # CPython 2.5
-
-    _crt = ctypes.PyDLL(_crtname())
-
-    # CreateFile 
+    # CreateFile
     _FILE_SHARE_READ = 0x00000001
     _FILE_SHARE_WRITE = 0x00000002
     _FILE_SHARE_DELETE = 0x00000004
@@ -91,7 +83,7 @@ else:
 
     _FILE_ATTRIBUTE_NORMAL = 0x80
 
-    # _open_osfhandle
+    # open_osfhandle flags
     _O_RDONLY = 0x0000
     _O_RDWR = 0x0002
     _O_APPEND = 0x0008
@@ -105,12 +97,16 @@ else:
         _DWORD, _DWORD, _HANDLE]
     _kernel32.CreateFileA.restype = _HANDLE
 
-    _crt._open_osfhandle.argtypes = [_HANDLE, ctypes.c_int]
-    _crt._open_osfhandle.restype = ctypes.c_int
-
     def _raiseioerror(name):
         err = ctypes.WinError()
-        raise IOError(err.errno, '%s: %s' % (name, err.strerror))
+        # For python 2.4, treat ESRCH as ENOENT like WindowsError does
+        # in python 2.5 or later.
+        # py24:           WindowsError(3, '').errno => 3
+        # py25 or later:  WindowsError(3, '').errno => 2
+        errno = err.errno
+        if errno == ESRCH:
+            errno = ENOENT
+        raise IOError(errno, '%s: %s' % (name, err.strerror))
 
     class posixfile(object):
         '''a file object aiming for POSIX-like semantics
@@ -131,7 +127,7 @@ else:
                 flags = _O_TEXT
 
             m0 = mode[0]
-            if m0 == 'r' and not '+' in mode:
+            if m0 == 'r' and '+' not in mode:
                 flags |= _O_RDONLY
                 access = _GENERIC_READ
             else:
@@ -156,10 +152,7 @@ else:
             if fh == _INVALID_HANDLE_VALUE:
                 _raiseioerror(name)
 
-            # for CPython we must use the same CRT as Python uses,
-            # or the os.fdopen call below will abort with
-            #   "OSError: [Errno 9] Bad file descriptor"
-            fd = _crt._open_osfhandle(fh, flags)
+            fd = msvcrt.open_osfhandle(fh, flags)
             if fd == -1:
                 _kernel32.CloseHandle(fh)
                 _raiseioerror(name)

@@ -1,7 +1,6 @@
+#require unix-permissions
+
 test that new files created in .hg inherit the permissions from .hg/store
-
-
-  $ "$TESTDIR/hghave" unix-permissions || exit 80
 
   $ mkdir dir
 
@@ -65,6 +64,10 @@ new directories are setgid
   $ python ../printmodes.py .
   00700 ./.hg/
   00600 ./.hg/00changelog.i
+  00770 ./.hg/cache/
+  00660 ./.hg/cache/branch2-served
+  00660 ./.hg/cache/rbc-names-v1
+  00660 ./.hg/cache/rbc-revs-v1
   00660 ./.hg/dirstate
   00660 ./.hg/last-message.txt
   00600 ./.hg/requires
@@ -76,7 +79,10 @@ new directories are setgid
   00660 ./.hg/store/data/dir/bar.i
   00660 ./.hg/store/data/foo.i
   00660 ./.hg/store/fncache
+  00660 ./.hg/store/phaseroots
   00660 ./.hg/store/undo
+  00660 ./.hg/store/undo.backupfiles
+  00660 ./.hg/store/undo.phaseroots
   00660 ./.hg/undo.bookmarks
   00660 ./.hg/undo.branch
   00660 ./.hg/undo.desc
@@ -107,7 +113,9 @@ group can still write everything
   00770 ../push/.hg/
   00660 ../push/.hg/00changelog.i
   00770 ../push/.hg/cache/
-  00660 ../push/.hg/cache/branchheads
+  00660 ../push/.hg/cache/branch2-base
+  00660 ../push/.hg/cache/rbc-names-v1
+  00660 ../push/.hg/cache/rbc-revs-v1
   00660 ../push/.hg/requires
   00770 ../push/.hg/store/
   00660 ../push/.hg/store/00changelog.i
@@ -118,6 +126,8 @@ group can still write everything
   00660 ../push/.hg/store/data/foo.i
   00660 ../push/.hg/store/fncache
   00660 ../push/.hg/store/undo
+  00660 ../push/.hg/store/undo.backupfiles
+  00660 ../push/.hg/store/undo.phaseroots
   00660 ../push/.hg/undo.bookmarks
   00660 ../push/.hg/undo.branch
   00660 ../push/.hg/undo.desc
@@ -132,7 +142,7 @@ just check that directories have the same mode.
   $ hg init setgid
   $ cd setgid
   $ chmod g+rwx .hg/store
-  $ chmod g+s .hg/store 2> /dev/null
+  $ chmod g+s .hg/store 2> /dev/null || true
   $ mkdir dir
   $ touch dir/file
   $ hg ci -qAm 'add dir/file'
@@ -140,4 +150,7 @@ just check that directories have the same mode.
   $ dirmode=`python ../mode.py .hg/store/data/dir`
   $ if [ "$storemode" != "$dirmode" ]; then
   >  echo "$storemode != $dirmode"
-  $ fi
+  > fi
+  $ cd ..
+
+  $ cd .. # g-s dir

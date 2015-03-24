@@ -1,3 +1,4 @@
+#require killdaemons
 
   $ hg init test
   $ cd test
@@ -15,9 +16,11 @@
   >     hg serve -p $HGPORT -d --pid-file=hg.pid -E errors.log
   >     cat hg.pid >> $DAEMON_PIDS
   >     hg --cwd ../test2 push http://localhost:$HGPORT/
-  >     "$TESTDIR/killdaemons.py"
+  >     exitstatus=$?
+  >     "$TESTDIR/killdaemons.py" $DAEMON_PIDS
   >     echo % serve errors
   >     cat errors.log
+  >     return $exitstatus
   > }
   $ cd ../test
 
@@ -26,8 +29,9 @@ expect ssl error
   $ req
   pushing to http://localhost:$HGPORT/
   searching for changes
-  remote: ssl required
+  abort: HTTP Error 403: ssl required
   % serve errors
+  [255]
 
 expect authorization error
 
@@ -38,6 +42,7 @@ expect authorization error
   searching for changes
   abort: authorization failed
   % serve errors
+  [255]
 
 expect authorization error: must have authorized user
 
@@ -47,12 +52,14 @@ expect authorization error: must have authorized user
   searching for changes
   abort: authorization failed
   % serve errors
+  [255]
 
 expect success
 
   $ echo 'allow_push = *' >> .hg/hgrc
   $ echo '[hooks]' >> .hg/hgrc
-  $ echo 'changegroup = python "$TESTDIR"/printenv.py changegroup 0' >> .hg/hgrc
+  $ echo "changegroup = python \"$TESTDIR/printenv.py\" changegroup 0" >> .hg/hgrc
+  $ echo "pushkey = python \"$TESTDIR/printenv.py\" pushkey 0" >> .hg/hgrc
   $ req
   pushing to http://localhost:$HGPORT/
   searching for changes
@@ -60,11 +67,10 @@ expect success
   remote: adding manifests
   remote: adding file changes
   remote: added 1 changesets with 1 changes to 1 files
-  remote: changegroup hook: HG_NODE=ba677d0156c1196c1a699fa53f390dcfc3ce3872 HG_SOURCE=serve HG_URL=remote:http:*:  (glob)
+  remote: changegroup hook: HG_NODE=ba677d0156c1196c1a699fa53f390dcfc3ce3872 HG_SOURCE=serve HG_URL=remote:http:127.0.0.1:
   % serve errors
   $ hg rollback
   repository tip rolled back to revision 0 (undo serve)
-  working directory now based on revision 0
 
 expect success, server lacks the httpheader capability
 
@@ -77,11 +83,10 @@ expect success, server lacks the httpheader capability
   remote: adding manifests
   remote: adding file changes
   remote: added 1 changesets with 1 changes to 1 files
-  remote: changegroup hook: HG_NODE=ba677d0156c1196c1a699fa53f390dcfc3ce3872 HG_SOURCE=serve HG_URL=remote:http:*:  (glob)
+  remote: changegroup hook: HG_NODE=ba677d0156c1196c1a699fa53f390dcfc3ce3872 HG_SOURCE=serve HG_URL=remote:http:127.0.0.1:
   % serve errors
   $ hg rollback
   repository tip rolled back to revision 0 (undo serve)
-  working directory now based on revision 0
 
 expect success, server lacks the unbundlehash capability
 
@@ -94,11 +99,40 @@ expect success, server lacks the unbundlehash capability
   remote: adding manifests
   remote: adding file changes
   remote: added 1 changesets with 1 changes to 1 files
-  remote: changegroup hook: HG_NODE=ba677d0156c1196c1a699fa53f390dcfc3ce3872 HG_SOURCE=serve HG_URL=remote:http:*:  (glob)
+  remote: changegroup hook: HG_NODE=ba677d0156c1196c1a699fa53f390dcfc3ce3872 HG_SOURCE=serve HG_URL=remote:http:127.0.0.1:
   % serve errors
   $ hg rollback
   repository tip rolled back to revision 0 (undo serve)
-  working directory now based on revision 0
+
+expect push success, phase change failure
+
+  $ cat > .hg/hgrc <<EOF
+  > [web]
+  > push_ssl = false
+  > allow_push = *
+  > [hooks]
+  > prepushkey = python "$TESTDIR/printenv.py" prepushkey 1
+  > EOF
+  $ req
+  pushing to http://localhost:$HGPORT/
+  searching for changes
+  remote: adding changesets
+  remote: adding manifests
+  remote: adding file changes
+  remote: added 1 changesets with 1 changes to 1 files
+  % serve errors
+
+expect phase change success
+
+  $ echo "prepushkey = python \"$TESTDIR/printenv.py\" prepushkey 0" >> .hg/hgrc
+  $ req
+  pushing to http://localhost:$HGPORT/
+  searching for changes
+  no changes found
+  % serve errors
+  [1]
+  $ hg rollback
+  repository tip rolled back to revision 0 (undo serve)
 
 expect authorization error: all users denied
 
@@ -110,6 +144,7 @@ expect authorization error: all users denied
   searching for changes
   abort: authorization failed
   % serve errors
+  [255]
 
 expect authorization error: some users denied, users must be authenticated
 
@@ -119,3 +154,6 @@ expect authorization error: some users denied, users must be authenticated
   searching for changes
   abort: authorization failed
   % serve errors
+  [255]
+
+  $ cd ..

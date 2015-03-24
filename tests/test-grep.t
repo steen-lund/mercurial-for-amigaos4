@@ -23,6 +23,10 @@ pattern error
 
 simple
 
+  $ hg grep '.*'
+  port:4:export
+  port:4:vaportight
+  port:4:import/export
   $ hg grep port port
   port:4:export
   port:4:vaportight
@@ -32,9 +36,9 @@ simple with color
 
   $ hg --config extensions.color= grep --config color.mode=ansi \
   >     --color=always port port
-  port:4:ex\x1b[0;31;1mport\x1b[0m (esc)
-  port:4:va\x1b[0;31;1mport\x1b[0might (esc)
-  port:4:im\x1b[0;31;1mport\x1b[0m/export (esc)
+  \x1b[0;35mport\x1b[0m\x1b[0;36m:\x1b[0m\x1b[0;32m4\x1b[0m\x1b[0;36m:\x1b[0mex\x1b[0;31;1mport\x1b[0m (esc)
+  \x1b[0;35mport\x1b[0m\x1b[0;36m:\x1b[0m\x1b[0;32m4\x1b[0m\x1b[0;36m:\x1b[0mva\x1b[0;31;1mport\x1b[0might (esc)
+  \x1b[0;35mport\x1b[0m\x1b[0;36m:\x1b[0m\x1b[0;32m4\x1b[0m\x1b[0;36m:\x1b[0mim\x1b[0;31;1mport\x1b[0m/ex\x1b[0;31;1mport\x1b[0m (esc)
 
 all
 
@@ -51,6 +55,8 @@ all
 
 other
 
+  $ hg grep -l port port
+  port:4
   $ hg grep import port
   port:4:import/export
 
@@ -59,8 +65,9 @@ other
 
 follow
 
-  $ hg grep --traceback -f 'import$' port2
+  $ hg grep --traceback -f 'import\n\Z' port2
   port:0:import
+  
   $ echo deport >> port2
   $ hg commit -m 5 -u eggs -d '6 0'
   $ hg grep -f --all -nu port port2
@@ -103,19 +110,15 @@ follow
 
 match in last "line" without newline
 
-  $ python -c 'fp = open("noeol", "wb"); fp.write("no infinite loop"); fp.close();'
+  $ $PYTHON -c 'fp = open("noeol", "wb"); fp.write("no infinite loop"); fp.close();'
   $ hg ci -Amnoeol
   adding noeol
-
-last character omitted in output to avoid infinite loop
-
   $ hg grep loop
-  noeol:4:no infinite loo
-
+  noeol:4:no infinite loop
 
   $ cd ..
 
-Issue685: trackback in grep -r after rename
+Issue685: traceback in grep -r after rename
 
 Got a traceback when using grep on a single
 revision with renamed files.
@@ -166,10 +169,14 @@ of just using revision numbers.
   color:3:-:red
   color:1:+:red
 
+  $ cd ..
+
   $ hg init a
   $ cd a
-  $ cp $TESTDIR/binfile.bin .
+  $ cp "$TESTDIR/binfile.bin" .
   $ hg add binfile.bin
   $ hg ci -m 'add binfile.bin'
   $ hg grep "MaCam" --all
   binfile.bin:0:+: Binary file matches
+
+  $ cd ..

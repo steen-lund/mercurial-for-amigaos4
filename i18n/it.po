@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: Mercurial\n"
 "Report-Msgid-Bugs-To: <mercurial-devel@selenic.com>\n"
 "POT-Creation-Date: 2011-03-22 22:04+0100\n"
-"PO-Revision-Date: 2011-03-15 17:05+0100\n"
+"PO-Revision-Date: 2013-04-05 14:47+0100\n"
 "Last-Translator: Stefano Tortarolo <stefano.tortarolo@gmail.com>\n"
 "Language-Team: Italian <Italian>\n"
 "Language: it\n"
@@ -14,6 +14,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Poedit 1.5.5\n"
 
 #, python-format
 msgid " (default: %s)"
@@ -933,7 +934,7 @@ msgid "      source author = destination author"
 msgstr "      autore sorgente = autore destinatario"
 
 msgid "    Empty lines and lines starting with a ``#`` are ignored."
-msgstr "     Linee vuote e linee che iniziano con un ``#`` vengono ignorate."
+msgstr "    Linee vuote e linee che iniziano con un ``#`` vengono ignorate."
 
 msgid ""
 "    The filemap is a file that allows filtering and remapping of files\n"
@@ -1862,13 +1863,13 @@ msgid ""
 "used.\n"
 msgstr ""
 
-#, fuzzy, python-format
+#, python-format
 msgid "%s should not have CRLF line endings"
-msgstr "  %s in %s non dovrebbe avere %s fine riga"
+msgstr "%s non dovrebbe avere fine riga CRLF"
 
-#, fuzzy, python-format
+#, python-format
 msgid "%s should not have LF line endings"
-msgstr "  %s in %s non dovrebbe avere %s fine riga"
+msgstr "%s non dovrebbe avere fine riga LF"
 
 #, python-format
 msgid "warning: ignoring .hgeol file due to parse error at %s: %s\n"
@@ -2089,7 +2090,7 @@ msgstr ""
 
 msgid "    See :hg:`help dates` for a list of formats valid for -d/--date."
 msgstr ""
-"   Vedere :hg:`help dates` per l'elenco dei formati validi per -d/--date."
+"    Vedere :hg:`help dates` per l'elenco dei formati validi per -d/--date."
 
 msgid ""
 "    Returns 0 on success.\n"
@@ -3444,7 +3445,7 @@ msgid "    Returns 0 on success."
 msgstr "    Restituisce 0 in caso di successo."
 
 msgid "only one patch applied\n"
-msgstr " stata applicata solo una patch\n"
+msgstr "stata applicata solo una patch\n"
 
 msgid "print the patches not yet applied"
 msgstr "stampa le patch non ancora applicate"
@@ -5291,12 +5292,15 @@ msgstr "&Salta le modifiche rimanenti a questo file"
 msgid "Record remaining changes to this &file"
 msgstr "Registra le modifiche rimanenti a questo &file"
 
+#, fuzzy
 msgid "&Done, skip remaining changes and files"
 msgstr "&Fatto, salta le modifiche e i file rimanenti"
 
+#, fuzzy
 msgid "Record &all changes to all remaining files"
 msgstr "Registra &tutte le modifiche a tutti i file rimanenti"
 
+#, fuzzy
 msgid "&Quit, recording no changes"
 msgstr "&Esce, non registrando alcuna modifica"
 
@@ -5436,17 +5440,15 @@ msgstr ""
 msgid "hardlinks are not supported on this system"
 msgstr "hardlink non supportati su questo sistema"
 
-#, fuzzy
 msgid "must specify local origin repository"
-msgstr "%s non è un repository locale Mercurial"
+msgstr "è necessario specificare il repository di origine locale"
 
 #, python-format
 msgid "relinking %s to %s\n"
 msgstr "sto ricollegando %s a %s\n"
 
-#, fuzzy
 msgid "there is nothing to relink\n"
-msgstr "non c'è nulla di cui fare il merge"
+msgstr "non c'è nulla di cui fare il relink\n"
 
 #, python-format
 msgid "tip has %d files, estimated total number of files: %s\n"
@@ -5646,7 +5648,7 @@ msgid "no such option\n"
 msgstr "nessuna opzione\n"
 
 msgid "transplant changesets from another branch"
-msgstr ""
+msgstr "trapianta changeset da un'altro branch"
 
 msgid ""
 "    Selected changesets will be applied on top of the current working\n"
@@ -6020,11 +6022,11 @@ msgid "the name '%s' is reserved"
 msgstr "il nome '%s' è riservato"
 
 msgid "options --message and --logfile are mutually exclusive"
-msgstr ""
+msgstr "le opzioni --message e --logfile sono mutualmente esclusive"
 
 #, python-format
 msgid "can't read commit message '%s': %s"
-msgstr ""
+msgstr "impossibile leggere il messaggio di commit '%s': %s"
 
 msgid "limit must be a positive integer"
 msgstr "limit dev'essere un intero positivo "
@@ -6113,7 +6115,7 @@ msgid "(consider using --after)\n"
 msgstr "(considera di usare --after)\n"
 
 msgid "child process failed to start"
-msgstr "avvio fallito del processo figlio"
+msgstr "fallito l'avvio del processo figlio"
 
 #, python-format
 msgid "changeset:   %d:%s\n"
@@ -6125,7 +6127,7 @@ msgstr "branch:      %s\n"
 
 #, python-format
 msgid "bookmark:    %s\n"
-msgstr "segnalibro:    %s\n"
+msgstr "segnalibro:  %s\n"
 
 #, python-format
 msgid "tag:         %s\n"
@@ -6158,11 +6160,11 @@ msgstr "file:"
 
 #, python-format
 msgid "files:       %s\n"
-msgstr "file:       %s\n"
+msgstr "file:        %s\n"
 
 #, python-format
 msgid "copies:      %s\n"
-msgstr "copie:      %s\n"
+msgstr "copie:       %s\n"
 
 #, python-format
 msgid "extra:       %s=%s\n"
@@ -6199,7 +6201,7 @@ msgstr "sto saltando il subrepository mancante: %s\n"
 
 msgid "HG: Enter commit message.  Lines beginning with 'HG:' are removed."
 msgstr ""
-"HG: Inserisci il messaggio di commit. Le linee che iniziano HG: con 'HG:' "
+"HG: Inserisci il messaggio di commit. Le linee che iniziano con 'HG:' "
 "vengono rimosse."
 
 msgid "HG: Leave message empty to abort commit."
@@ -6259,7 +6261,7 @@ msgid "    If no names are given, add all files to the repository."
 msgstr "    Se non vengono forniti nomi, aggiunge tutti i file al repository."
 
 msgid "    .. container:: verbose"
-msgstr "    .. contenitore:: verboso"
+msgstr ""
 
 msgid ""
 "       An example showing how new (unknown) files are added\n"
@@ -7155,7 +7157,7 @@ msgid "Checking commit editor...\n"
 msgstr "Sto controllando l'editor per il commit...\n"
 
 msgid " No commit editor set and can't find vi in PATH\n"
-msgstr "Nessun editor per il commit trovato e non trovo vi in PATH\n"
+msgstr " Nessun editor per il commit trovato e non trovo vi in PATH\n"
 
 msgid " (specify a commit editor in your configuration file)\n"
 msgstr ""
@@ -7163,7 +7165,7 @@ msgstr ""
 
 #, python-format
 msgid " Can't find editor '%s' in PATH\n"
-msgstr "Editor '%s' non trovato in PATH\n"
+msgstr " Editor '%s' non trovato in PATH\n"
 
 msgid "Checking username...\n"
 msgstr "Sto controllando lo username...\n"
@@ -7242,7 +7244,7 @@ msgid ""
 "       changesets, as it will compare the merge changeset against its\n"
 "       first parent only."
 msgstr ""
-"    .. nota::\n"
+"    .. note::\n"
 "       l'export potrebbe generare un diff inatteso per changeset di \n"
 "       merge, dal momento che confronterà tali changeset solo con\n"
 "       il loro primo genitore."
@@ -7795,7 +7797,7 @@ msgid ""
 "       its first parent. Also, only files different from BOTH parents\n"
 "       will appear in files:."
 msgstr ""
-"    .. nota::\n"
+"    .. note::\n"
 "       log -p/--patch potrebbe generare un diff inatteso per changeset\n"
 "       di merge, in quanto confronta solo i changeset di merge con il loro\n"
 "       primo genitore. Inoltre, solo i file differente da ENTRAMBI i "
@@ -8472,7 +8474,7 @@ msgid ""
 msgstr ""
 "    Di default i log del server vengono inviati allo stdout e gli\n"
 "    errori allo stderr. Usare le opzion -A/--accesslog e \n"
-"    -E/--errorlog\" per effettuare il log su file."
+"    -E/--errorlog per effettuare il log su file."
 
 msgid ""
 "    To have the server choose a free port number to listen on, specify\n"
@@ -9379,7 +9381,7 @@ msgid ""
 "directory strip option for patch. This has the same meaning as the "
 "corresponding patch option"
 msgstr ""
-"opzione di rimozione della directory per patch. Questa ha lo stesso\n"
+"opzione di rimozione della directory per patch. Questa ha lo stesso "
 "significato dell'opzione corrispondente di patch"
 
 msgid "PATH"
@@ -9924,7 +9926,7 @@ msgid "abort: %s"
 msgstr "abortito: %s"
 
 msgid " empty string\n"
-msgstr "stringa vuota\n"
+msgstr " stringa vuota\n"
 
 msgid "killed!\n"
 msgstr "ucciso!\n"
@@ -12789,7 +12791,7 @@ msgstr "fallita l'applicazione della patch"
 
 #, python-format
 msgid " %d files changed, %d insertions(+), %d deletions(-)\n"
-msgstr "%d file modificati, %d inserimenti(+), %d cancellazioni(-)\n"
+msgstr " %d file modificati, %d inserimenti(+), %d cancellazioni(-)\n"
 
 #, python-format
 msgid "exited with status %d"
@@ -13376,13 +13378,13 @@ msgstr "impossibile fare il commit di external svn"
 msgid "not removing repo %s because it has changes.\n"
 msgstr "non rimuovo il repository %s in quanto contiene modifiche\n"
 
-#, fuzzy, python-format
+#, python-format
 msgid "cloning subrepo %s\n"
-msgstr "clonazione in corso del subrepository %s da %s\n"
+msgstr "clonazione in corso del subrepository %s\n"
 
-#, fuzzy, python-format
+#, python-format
 msgid "pulling subrepo %s\n"
-msgstr "pull in corso del subrepository %s da %s\n"
+msgstr "pull in corso del subrepository %s\n"
 
 #, python-format
 msgid "revision %s does not exist in subrepo %s\n"
@@ -13460,7 +13462,7 @@ msgstr "\"%s\" non è nel map del template"
 
 #, python-format
 msgid "template file %s: %s"
-msgstr ""
+msgstr "file template %s: %s"
 
 msgid "cannot use transaction when it is already committed/aborted"
 msgstr ""
@@ -13727,7 +13729,7 @@ msgstr "rev %d punta al changeset inatteso %d"
 
 #, python-format
 msgid " (expected %s)"
-msgstr "(atteso %s)"
+msgstr " (atteso %s)"
 
 #, python-format
 msgid "unknown parent 1 %s of %s"
@@ -14039,11 +14041,11 @@ msgstr "push fallito:"
 
 #, fuzzy
 #~ msgid "bundling changes"
-#~ msgstr "sto aggiungendo i changeset\n"
+#~ msgstr "sto aggiungendo i changeset"
 
 #, fuzzy
 #~ msgid "bundling manifests"
-#~ msgstr "sto aggiungendo i manifesti\n"
+#~ msgstr "sto aggiungendo i manifesti"
 
 #~ msgid "unsynced changes"
 #~ msgstr "modifiche non sincronizzate"

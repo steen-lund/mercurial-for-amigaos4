@@ -22,7 +22,7 @@ configure it, set the following options in your hgrc::
   # Style to use (optional)
   #style = foo
   # The URL of the CIA notification service (optional)
-  # You can use mailto: URLs to send by email, eg
+  # You can use mailto: URLs to send by email, e.g.
   # mailto:cia@cia.vc
   # Make sure to set email.from if you do this.
   #url = http://cia.vc/
@@ -46,17 +46,15 @@ from mercurial.node import bin, short
 from mercurial import cmdutil, patch, templater, util, mail
 import email.Parser
 
-import xmlrpclib
+import socket, xmlrpclib
 from xml.sax import saxutils
+testedwith = 'internal'
 
 socket_timeout = 30 # seconds
-try:
+if util.safehasattr(socket, 'setdefaulttimeout'):
     # set a timeout for the socket so you don't have to wait so looooong
     # when cia.vc is having problems. requires python >= 2.3:
-    import socket
     socket.setdefaulttimeout(socket_timeout)
-except:
-    pass
 
 HGCIA_VERSION = '0.1'
 HGCIA_URL = 'http://hg.kublai.com/mercurial/hgcia'
@@ -81,15 +79,17 @@ class ciamsg(object):
         n = self.ctx.node()
         f = self.cia.repo.status(self.ctx.p1().node(), n)
         url = self.url or ''
+        if url and url[-1] == '/':
+            url = url[:-1]
         elems = []
-        for path in f[0]:
+        for path in f.modified:
             uri = '%s/diff/%s/%s' % (url, short(n), path)
             elems.append(self.fileelem(path, url and uri, 'modify'))
-        for path in f[1]:
+        for path in f.added:
             # TODO: copy/rename ?
             uri = '%s/file/%s/%s' % (url, short(n), path)
             elems.append(self.fileelem(path, url and uri, 'add'))
-        for path in f[2]:
+        for path in f.removed:
             elems.append(self.fileelem(path, '', 'remove'))
 
         return '\n'.join(elems)
@@ -111,7 +111,7 @@ class ciamsg(object):
                 # diffstat is stupid
                 self.name = 'cia'
             def write(self, data):
-                self.lines.append(data)
+                self.lines += data.splitlines(True)
             def close(self):
                 pass
 
@@ -141,8 +141,10 @@ class ciamsg(object):
         rev = '%d:%s' % (self.ctx.rev(), n)
         log = saxutils.escape(self.logmsg())
 
-        url = self.url and '<url>%s/rev/%s</url>' % (saxutils.escape(self.url),
-                                                     n) or ''
+        url = self.url
+        if url and url[-1] == '/':
+            url = url[:-1]
+        url = url and '<url>%s/rev/%s</url>' % (saxutils.escape(url), n) or ''
 
         msg = """
 <message>
@@ -190,7 +192,8 @@ class hgcia(object):
         self.emailfrom = self.ui.config('email', 'from')
         self.dryrun = self.ui.configbool('cia', 'test')
         self.url = self.ui.config('web', 'baseurl')
-        self.stripcount = int(self.ui.config('cia', 'strip', 0))
+        # Default to -1 for backward compatibility
+        self.stripcount = int(self.ui.config('cia', 'strip', -1))
         self.root = self.strip(self.repo.root)
 
         style = self.ui.config('cia', 'style')
@@ -199,8 +202,7 @@ class hgcia(object):
             template = self.diffstat and self.dstemplate or self.deftemplate
         template = templater.parsestring(template, quoted=False)
         t = cmdutil.changeset_templater(self.ui, self.repo, False, None,
-                                        style, False)
-        t.use_template(template)
+                                        template, style, False)
         self.templater = t
 
     def strip(self, path):
@@ -208,6 +210,8 @@ class hgcia(object):
 
         path = util.pconvert(path)
         count = self.stripcount
+        if count < 0:
+            return ''
         while count > 0:
             c = path.find('/')
             if c == -1:

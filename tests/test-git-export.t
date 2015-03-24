@@ -56,6 +56,8 @@ Delete:
   $ hg ci -Amsrc
   adding src
 
+#if execbit
+
 chmod 644:
 
   $ chmod +x src
@@ -92,15 +94,26 @@ Nonexistent in tip+chmod:
   old mode 100644
   new mode 100755
 
+#else
+
+Dummy changes when no exec bit, mocking the execbit commit structure
+
+  $ echo change >> src
+  $ hg ci -munexec
+  $ hg mv src dst
+  $ hg ci -mrenamemod
+
+#endif
+
 Binary diff:
 
-  $ cp $TESTDIR/binfile.bin .
+  $ cp "$TESTDIR/binfile.bin" .
   $ hg add binfile.bin
   $ hg diff --git > b.diff
   $ cat b.diff
   diff --git a/binfile.bin b/binfile.bin
   new file mode 100644
-  index 0000000000000000000000000000000000000000..37ba3d1c6f17137d9c5f5776fa040caf5fe73ff9
+  index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..37ba3d1c6f17137d9c5f5776fa040caf5fe73ff9
   GIT binary patch
   literal 593
   zc$@)I0<QguP)<h;3K|Lk000e1NJLTq000mG000mO0ssI2kdbIM00009a7bBm000XU
@@ -123,7 +136,7 @@ Import binary diff:
   $ rm binfile.bin
   $ hg import -mfoo b.diff
   applying b.diff
-  $ cmp binfile.bin $TESTDIR/binfile.bin
+  $ cmp binfile.bin "$TESTDIR/binfile.bin"
 
 Rename binary file:
 
@@ -324,12 +337,12 @@ One file is copied to many destinations and removed:
 Reversed:
 
   $ hg diff --git -r -1 -r -2
-  diff --git a/brand-new3 b/brand-new2
-  rename from brand-new3
+  diff --git a/brand-new3-2 b/brand-new2
+  rename from brand-new3-2
   rename to brand-new2
-  diff --git a/brand-new3-2 b/brand-new3-2
+  diff --git a/brand-new3 b/brand-new3
   deleted file mode 100644
-  --- a/brand-new3-2
+  --- a/brand-new3
   +++ /dev/null
   @@ -1,1 +0,0 @@
   -
@@ -347,3 +360,23 @@ There should be a trailing TAB if there are spaces in the file name:
   +foo
   $ hg ci -m 'add filename with spaces'
 
+Additions should be properly marked even in the middle of a merge
+
+  $ hg up -r -2
+  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ echo "New File" >> inmerge
+  $ hg add inmerge
+  $ hg ci -m "file in merge"
+  created new head
+  $ hg up 23
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg merge
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  (branch merge, don't forget to commit)
+  $ hg diff -g
+  diff --git a/inmerge b/inmerge
+  new file mode 100644
+  --- /dev/null
+  +++ b/inmerge
+  @@ -0,0 +1,1 @@
+  +New File

@@ -8,10 +8,12 @@
 
 from i18n import _
 from lock import release
-from node import hex, nullid
-import localrepo, bundlerepo, httprepo, sshrepo, statichttprepo, bookmarks
-import lock, util, extensions, error, node
-import cmdutil, discovery
+from node import nullid
+
+import localrepo, bundlerepo, unionrepo, httppeer, sshpeer, statichttprepo
+import bookmarks, lock, util, extensions, error, node, scmutil, phases, url
+import cmdutil, discovery, repoview, exchange
+import ui as uimod
 import merge as mergemod
 import verify as verifymod
 import errno, os, shutil
@@ -20,21 +22,29 @@ def _local(path):
     path = util.expandpath(util.urllocalpath(path))
     return (os.path.isfile(path) and bundlerepo or localrepo)
 
-def addbranchrevs(lrepo, repo, branches, revs):
+def addbranchrevs(lrepo, other, branches, revs):
+    peer = other.peer() # a courtesy to callers using a localrepo for other
     hashbranch, branches = branches
     if not hashbranch and not branches:
-        return revs or None, revs and revs[0] or None
+        x = revs or None
+        if util.safehasattr(revs, 'first'):
+            y =  revs.first()
+        elif revs:
+            y = revs[0]
+        else:
+            y = None
+        return x, y
     revs = revs and list(revs) or []
-    if not repo.capable('branchmap'):
+    if not peer.capable('branchmap'):
         if branches:
             raise util.Abort(_("remote branch lookup not supported"))
         revs.append(hashbranch)
         return revs, revs[0]
-    branchmap = repo.branchmap()
+    branchmap = peer.branchmap()
 
     def primary(branch):
         if branch == '.':
-            if not lrepo or not lrepo.local():
+            if not lrepo:
                 raise util.Abort(_("dirstate branch not accessible"))
             branch = lrepo.dirstate.branch()
         if branch in branchmap:
@@ -63,10 +73,11 @@ def parseurl(path, branches=None):
 
 schemes = {
     'bundle': bundlerepo,
+    'union': unionrepo,
     'file': _local,
-    'http': httprepo,
-    'https': httprepo,
-    'ssh': sshrepo,
+    'http': httppeer,
+    'https': httppeer,
+    'ssh': sshpeer,
     'static-http': statichttprepo,
 }
 
@@ -80,7 +91,7 @@ def _peerlookup(path):
         return thing
 
 def islocal(repo):
-    '''return true if repo or path is local'''
+    '''return true if repo (or path pointing to repo) is local'''
     if isinstance(repo, str):
         try:
             return _peerlookup(repo).islocal(repo)
@@ -88,26 +99,66 @@ def islocal(repo):
             return False
     return repo.local()
 
-def repository(ui, path='', create=False):
+def openpath(ui, path):
+    '''open path with open if local, url.open if remote'''
+    pathurl = util.url(path, parsequery=False, parsefragment=False)
+    if pathurl.islocal():
+        return util.posixfile(pathurl.localpath(), 'rb')
+    else:
+        return url.open(ui, path)
+
+# a list of (ui, repo) functions called for wire peer initialization
+wirepeersetupfuncs = []
+
+def _peerorrepo(ui, path, create=False):
     """return a repository object for the specified path"""
-    repo = _peerlookup(path).instance(ui, path, create)
-    ui = getattr(repo, "ui", ui)
-    for name, module in extensions.extensions():
+    obj = _peerlookup(path).instance(ui, path, create)
+    ui = getattr(obj, "ui", ui)
+    for name, module in extensions.extensions(ui):
         hook = getattr(module, 'reposetup', None)
         if hook:
-            hook(ui, repo)
-    return repo
+            hook(ui, obj)
+    if not obj.local():
+        for f in wirepeersetupfuncs:
+            f(ui, obj)
+    return obj
 
-def peer(ui, opts, path, create=False):
+def repository(ui, path='', create=False):
+    """return a repository object for the specified path"""
+    peer = _peerorrepo(ui, path, create)
+    repo = peer.local()
+    if not repo:
+        raise util.Abort(_("repository '%s' is not local") %
+                         (path or peer.url()))
+    return repo.filtered('visible')
+
+def peer(uiorrepo, opts, path, create=False):
     '''return a repository peer for the specified path'''
-    rui = remoteui(ui, opts)
-    return repository(rui, path, create)
+    rui = remoteui(uiorrepo, opts)
+    return _peerorrepo(rui, path, create).peer()
 
 def defaultdest(source):
-    '''return default destination of clone if none is given'''
-    return os.path.basename(os.path.normpath(source))
+    '''return default destination of clone if none is given
 
-def share(ui, source, dest=None, update=True):
+    >>> defaultdest('foo')
+    'foo'
+    >>> defaultdest('/foo/bar')
+    'bar'
+    >>> defaultdest('/')
+    ''
+    >>> defaultdest('')
+    ''
+    >>> defaultdest('http://example.org/')
+    ''
+    >>> defaultdest('http://example.org/foo/')
+    'foo'
+    '''
+    path = util.url(source).path
+    if not path:
+        return ''
+    return os.path.basename(os.path.normpath(path))
+
+def share(ui, source, dest=None, update=True, bookmarks=True):
     '''create a shared repository'''
 
     if not islocal(source):
@@ -124,38 +175,38 @@ def share(ui, source, dest=None, update=True):
         srcrepo = repository(ui, source)
         rev, checkout = addbranchrevs(srcrepo, srcrepo, branches, None)
     else:
-        srcrepo = source
+        srcrepo = source.local()
         origsource = source = srcrepo.url()
         checkout = None
 
     sharedpath = srcrepo.sharedpath # if our source is already sharing
 
-    root = os.path.realpath(dest)
-    roothg = os.path.join(root, '.hg')
+    destwvfs = scmutil.vfs(dest, realpath=True)
+    destvfs = scmutil.vfs(os.path.join(destwvfs.base, '.hg'), realpath=True)
 
-    if os.path.exists(roothg):
+    if destvfs.lexists():
         raise util.Abort(_('destination already exists'))
 
-    if not os.path.isdir(root):
-        os.mkdir(root)
-    util.makedir(roothg, notindexed=True)
+    if not destwvfs.isdir():
+        destwvfs.mkdir()
+    destvfs.makedir()
 
     requirements = ''
     try:
-        requirements = srcrepo.opener.read('requires')
+        requirements = srcrepo.vfs.read('requires')
     except IOError, inst:
         if inst.errno != errno.ENOENT:
             raise
 
     requirements += 'shared\n'
-    util.writefile(os.path.join(roothg, 'requires'), requirements)
-    util.writefile(os.path.join(roothg, 'sharedpath'), sharedpath)
+    destvfs.write('requires', requirements)
+    destvfs.write('sharedpath', sharedpath)
 
-    r = repository(ui, root)
+    r = repository(ui, destwvfs.base)
 
     default = srcrepo.ui.config('paths', 'default')
     if default:
-        fp = r.opener("hgrc", "w", text=True)
+        fp = r.vfs("hgrc", "w", text=True)
         fp.write("[paths]\n")
         fp.write("default = %s\n" % default)
         fp.close()
@@ -174,13 +225,54 @@ def share(ui, source, dest=None, update=True):
                 continue
         _update(r, uprev)
 
+    if bookmarks:
+        fp = r.vfs('shared', 'w')
+        fp.write('bookmarks\n')
+        fp.close()
+
+def copystore(ui, srcrepo, destpath):
+    '''copy files from store of srcrepo in destpath
+
+    returns destlock
+    '''
+    destlock = None
+    try:
+        hardlink = None
+        num = 0
+        srcpublishing = srcrepo.ui.configbool('phases', 'publish', True)
+        srcvfs = scmutil.vfs(srcrepo.sharedpath)
+        dstvfs = scmutil.vfs(destpath)
+        for f in srcrepo.store.copylist():
+            if srcpublishing and f.endswith('phaseroots'):
+                continue
+            dstbase = os.path.dirname(f)
+            if dstbase and not dstvfs.exists(dstbase):
+                dstvfs.mkdir(dstbase)
+            if srcvfs.exists(f):
+                if f.endswith('data'):
+                    # 'dstbase' may be empty (e.g. revlog format 0)
+                    lockfile = os.path.join(dstbase, "lock")
+                    # lock to avoid premature writing to the target
+                    destlock = lock.lock(dstvfs, lockfile)
+                hardlink, n = util.copyfiles(srcvfs.join(f), dstvfs.join(f),
+                                             hardlink)
+                num += n
+        if hardlink:
+            ui.debug("linked %d files\n" % num)
+        else:
+            ui.debug("copied %d files\n" % num)
+        return destlock
+    except: # re-raises
+        release(destlock)
+        raise
+
 def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
           update=True, stream=False, branch=None):
     """Make a copy of an existing repository.
 
     Create a copy of an existing repository in a new directory.  The
     source and destination are URLs, as passed to the repository
-    function.  Returns a pair of repository objects, the source and
+    function.  Returns a pair of repository peers, the source and
     newly created destination.
 
     The location of the source is added to the new repository's
@@ -197,7 +289,8 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
     dest: URL of destination repository to create (defaults to base
     name of source repository)
 
-    pull: always pull from source repository, even in local case
+    pull: always pull from source repository, even in local case or if the
+    server prefers streaming
 
     stream: stream raw data uncompressed from repository (fast over
     LAN, slow over WAN)
@@ -214,49 +307,46 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
     if isinstance(source, str):
         origsource = ui.expandpath(source)
         source, branch = parseurl(origsource, branch)
-        srcrepo = repository(remoteui(ui, peeropts), source)
+        srcpeer = peer(ui, peeropts, source)
     else:
-        srcrepo = source
+        srcpeer = source.peer() # in case we were called with a localrepo
         branch = (None, branch or [])
-        origsource = source = srcrepo.url()
-    rev, checkout = addbranchrevs(srcrepo, srcrepo, branch, rev)
+        origsource = source = srcpeer.url()
+    rev, checkout = addbranchrevs(srcpeer, srcpeer, branch, rev)
 
     if dest is None:
         dest = defaultdest(source)
-        ui.status(_("destination directory: %s\n") % dest)
+        if dest:
+            ui.status(_("destination directory: %s\n") % dest)
     else:
         dest = ui.expandpath(dest)
 
     dest = util.urllocalpath(dest)
     source = util.urllocalpath(source)
 
-    if os.path.exists(dest):
-        if not os.path.isdir(dest):
+    if not dest:
+        raise util.Abort(_("empty destination path is not valid"))
+
+    destvfs = scmutil.vfs(dest, expandpath=True)
+    if destvfs.lexists():
+        if not destvfs.isdir():
             raise util.Abort(_("destination '%s' already exists") % dest)
-        elif os.listdir(dest):
+        elif destvfs.listdir():
             raise util.Abort(_("destination '%s' is not empty") % dest)
 
-    class DirCleanup(object):
-        def __init__(self, dir_):
-            self.rmtree = shutil.rmtree
-            self.dir_ = dir_
-        def close(self):
-            self.dir_ = None
-        def cleanup(self):
-            if self.dir_:
-                self.rmtree(self.dir_, True)
-
-    srclock = destlock = dircleanup = None
+    srclock = destlock = cleandir = None
+    srcrepo = srcpeer.local()
     try:
         abspath = origsource
         if islocal(origsource):
             abspath = os.path.abspath(util.urllocalpath(origsource))
 
         if islocal(dest):
-            dircleanup = DirCleanup(dest)
+            cleandir = dest
 
         copy = False
-        if srcrepo.cancopy() and islocal(dest):
+        if (srcrepo and srcrepo.cancopy() and islocal(dest)
+            and not phases.hassecret(srcrepo)):
             copy = not pull and not rev
 
         if copy:
@@ -276,123 +366,148 @@ def clone(ui, peeropts, source, dest=None, pull=False, rev=None,
                 os.mkdir(dest)
             else:
                 # only clean up directories we create ourselves
-                dircleanup.dir_ = hgdir
+                cleandir = hgdir
             try:
                 destpath = hgdir
                 util.makedir(destpath, notindexed=True)
             except OSError, inst:
                 if inst.errno == errno.EEXIST:
-                    dircleanup.close()
+                    cleandir = None
                     raise util.Abort(_("destination '%s' already exists")
                                      % dest)
                 raise
 
-            hardlink = None
-            num = 0
-            for f in srcrepo.store.copylist():
-                src = os.path.join(srcrepo.sharedpath, f)
-                dst = os.path.join(destpath, f)
-                dstbase = os.path.dirname(dst)
-                if dstbase and not os.path.exists(dstbase):
-                    os.mkdir(dstbase)
-                if os.path.exists(src):
-                    if dst.endswith('data'):
-                        # lock to avoid premature writing to the target
-                        destlock = lock.lock(os.path.join(dstbase, "lock"))
-                    hardlink, n = util.copyfiles(src, dst, hardlink)
-                    num += n
-            if hardlink:
-                ui.debug("linked %d files\n" % num)
-            else:
-                ui.debug("copied %d files\n" % num)
+            destlock = copystore(ui, srcrepo, destpath)
+            # copy bookmarks over
+            srcbookmarks = srcrepo.join('bookmarks')
+            dstbookmarks = os.path.join(destpath, 'bookmarks')
+            if os.path.exists(srcbookmarks):
+                util.copyfile(srcbookmarks, dstbookmarks)
+
+            # Recomputing branch cache might be slow on big repos,
+            # so just copy it
+            def copybranchcache(fname):
+                srcbranchcache = srcrepo.join('cache/%s' % fname)
+                dstbranchcache = os.path.join(dstcachedir, fname)
+                if os.path.exists(srcbranchcache):
+                    if not os.path.exists(dstcachedir):
+                        os.mkdir(dstcachedir)
+                    util.copyfile(srcbranchcache, dstbranchcache)
+
+            dstcachedir = os.path.join(destpath, 'cache')
+            # In local clones we're copying all nodes, not just served
+            # ones. Therefore copy all branch caches over.
+            copybranchcache('branch2')
+            for cachename in repoview.filtertable:
+                copybranchcache('branch2-%s' % cachename)
 
             # we need to re-init the repo after manually copying the data
             # into it
-            destrepo = repository(remoteui(ui, peeropts), dest)
+            destpeer = peer(srcrepo, peeropts, dest)
             srcrepo.hook('outgoing', source='clone',
                           node=node.hex(node.nullid))
         else:
             try:
-                destrepo = repository(remoteui(ui, peeropts), dest,
-                                      create=True)
+                destpeer = peer(srcrepo or ui, peeropts, dest, create=True)
+                                # only pass ui when no srcrepo
             except OSError, inst:
                 if inst.errno == errno.EEXIST:
-                    dircleanup.close()
+                    cleandir = None
                     raise util.Abort(_("destination '%s' already exists")
                                      % dest)
                 raise
 
             revs = None
             if rev:
-                if not srcrepo.capable('lookup'):
+                if not srcpeer.capable('lookup'):
                     raise util.Abort(_("src repository does not support "
                                        "revision lookup and so doesn't "
                                        "support clone by revision"))
-                revs = [srcrepo.lookup(r) for r in rev]
+                revs = [srcpeer.lookup(r) for r in rev]
                 checkout = revs[0]
-            if destrepo.local():
-                destrepo.clone(srcrepo, heads=revs, stream=stream)
-            elif srcrepo.local():
-                srcrepo.push(destrepo, revs=revs)
+            if destpeer.local():
+                if not stream:
+                    if pull:
+                        stream = False
+                    else:
+                        stream = None
+                destpeer.local().clone(srcpeer, heads=revs, stream=stream)
+            elif srcrepo:
+                exchange.push(srcrepo, destpeer, revs=revs,
+                              bookmarks=srcrepo._bookmarks.keys())
             else:
                 raise util.Abort(_("clone from remote to remote not supported"))
 
-        if dircleanup:
-            dircleanup.close()
+        cleandir = None
 
-        if destrepo.local():
-            fp = destrepo.opener("hgrc", "w", text=True)
-            fp.write("[paths]\n")
-            fp.write("default = %s\n" % abspath)
+        destrepo = destpeer.local()
+        if destrepo:
+            template = uimod.samplehgrcs['cloned']
+            fp = destrepo.vfs("hgrc", "w", text=True)
+            u = util.url(abspath)
+            u.passwd = None
+            defaulturl = str(u)
+            fp.write(template % defaulturl)
             fp.close()
 
-            destrepo.ui.setconfig('paths', 'default', abspath)
+            destrepo.ui.setconfig('paths', 'default', defaulturl, 'clone')
 
             if update:
                 if update is not True:
-                    checkout = update
-                    if srcrepo.local():
-                        checkout = srcrepo.lookup(update)
-                for test in (checkout, 'default', 'tip'):
-                    if test is None:
-                        continue
+                    checkout = srcpeer.lookup(update)
+                uprev = None
+                status = None
+                if checkout is not None:
                     try:
-                        uprev = destrepo.lookup(test)
-                        break
+                        uprev = destrepo.lookup(checkout)
                     except error.RepoLookupError:
-                        continue
-                bn = destrepo[uprev].branch()
-                destrepo.ui.status(_("updating to branch %s\n") % bn)
+                        pass
+                if uprev is None:
+                    try:
+                        uprev = destrepo._bookmarks['@']
+                        update = '@'
+                        bn = destrepo[uprev].branch()
+                        if bn == 'default':
+                            status = _("updating to bookmark @\n")
+                        else:
+                            status = (_("updating to bookmark @ on branch %s\n")
+                                       % bn)
+                    except KeyError:
+                        try:
+                            uprev = destrepo.branchtip('default')
+                        except error.RepoLookupError:
+                            uprev = destrepo.lookup('tip')
+                if not status:
+                    bn = destrepo[uprev].branch()
+                    status = _("updating to branch %s\n") % bn
+                destrepo.ui.status(status)
                 _update(destrepo, uprev)
-
-        # clone all bookmarks
-        if destrepo.local() and srcrepo.capable("pushkey"):
-            rb = srcrepo.listkeys('bookmarks')
-            for k, n in rb.iteritems():
-                try:
-                    m = destrepo.lookup(n)
-                    destrepo._bookmarks[k] = m
-                except error.RepoLookupError:
-                    pass
-            if rb:
-                bookmarks.write(destrepo)
-        elif srcrepo.local() and destrepo.capable("pushkey"):
-            for k, n in srcrepo._bookmarks.iteritems():
-                destrepo.pushkey('bookmarks', k, '', hex(n))
-
-        return srcrepo, destrepo
+                if update in destrepo._bookmarks:
+                    bookmarks.setcurrent(destrepo, update)
     finally:
         release(srclock, destlock)
-        if dircleanup is not None:
-            dircleanup.cleanup()
+        if cleandir is not None:
+            shutil.rmtree(cleandir, True)
+        if srcpeer is not None:
+            srcpeer.close()
+    return srcpeer, destpeer
 
 def _showstats(repo, stats):
     repo.ui.status(_("%d files updated, %d files merged, "
                      "%d files removed, %d files unresolved\n") % stats)
 
+def updaterepo(repo, node, overwrite):
+    """Update the working directory to node.
+
+    When overwrite is set, changes are clobbered, merged else
+
+    returns stats (see pydoc mercurial.merge.applyupdates)"""
+    return mergemod.update(repo, node, False, overwrite, None,
+                           labels=['working copy', 'destination'])
+
 def update(repo, node):
     """update the working directory to node, merging linear changes"""
-    stats = mergemod.update(repo, node, False, False, None)
+    stats = updaterepo(repo, node, False)
     _showstats(repo, stats)
     if stats[3]:
         repo.ui.status(_("use 'hg resolve' to retry unresolved file merges\n"))
@@ -403,7 +518,8 @@ _update = update
 
 def clean(repo, node, show_stats=True):
     """forcibly switch the working directory to node, clobbering changes"""
-    stats = mergemod.update(repo, node, False, True, None)
+    stats = updaterepo(repo, node, True)
+    util.unlinkpath(repo.join('graftstate'), ignoremissing=True)
     if show_stats:
         _showstats(repo, stats)
     return stats[3] > 0
@@ -443,11 +559,7 @@ def _incoming(displaychlist, subreporecurse, ui, repo, source,
             return subreporecurse()
 
         displayer = cmdutil.show_changeset(ui, other, opts, buffered)
-
-        # XXX once graphlog extension makes it into core,
-        # should be replaced by a if graph/else
         displaychlist(other, chlist, displayer)
-
         displayer.close()
     finally:
         cleanupfn()
@@ -485,16 +597,15 @@ def _outgoing(ui, repo, dest, opts):
     ui.status(_('comparing with %s\n') % util.hidepassword(dest))
     revs, checkout = addbranchrevs(repo, repo, branches, opts.get('rev'))
     if revs:
-        revs = [repo.lookup(rev) for rev in revs]
+        revs = [repo.lookup(rev) for rev in scmutil.revrange(repo, revs)]
 
     other = peer(repo, opts, dest)
-    common, outheads = discovery.findcommonoutgoing(repo, other, revs,
-                                                    force=opts.get('force'))
-    o = repo.changelog.findmissing(common, outheads)
+    outgoing = discovery.findcommonoutgoing(repo.unfiltered(), other, revs,
+                                            force=opts.get('force'))
+    o = outgoing.missing
     if not o:
-        ui.status(_("no changes found\n"))
-        return None
-    return o
+        scmutil.nochangesfound(repo.ui, repo, outgoing.excluded)
+    return o, other
 
 def outgoing(ui, repo, dest, opts):
     def recurse():
@@ -507,8 +618,9 @@ def outgoing(ui, repo, dest, opts):
         return ret
 
     limit = cmdutil.loglimit(opts)
-    o = _outgoing(ui, repo, dest, opts)
-    if o is None:
+    o, other = _outgoing(ui, repo, dest, opts)
+    if not o:
+        cmdutil.outgoinghooks(ui, repo, other, opts, o)
         return recurse()
 
     if opts.get('newest_first'):
@@ -524,6 +636,7 @@ def outgoing(ui, repo, dest, opts):
         count += 1
         displayer.show(repo[n])
     displayer.close()
+    cmdutil.outgoinghooks(ui, repo, other, opts, o)
     recurse()
     return 0 # exit code is zero since we found outgoing changes
 
@@ -537,7 +650,7 @@ def verify(repo):
 
 def remoteui(src, opts):
     'build a remote ui from ui or repo and opts'
-    if hasattr(src, 'baseui'): # looks like a repository
+    if util.safehasattr(src, 'baseui'): # looks like a repository
         dst = src.baseui.copy() # drop repo-specific config
         src = src.ui # copy target options from repo
     else: # assume it's a global ui object
@@ -547,19 +660,19 @@ def remoteui(src, opts):
     for o in 'ssh', 'remotecmd':
         v = opts.get(o) or src.config('ui', o)
         if v:
-            dst.setconfig("ui", o, v)
+            dst.setconfig("ui", o, v, 'copied')
 
     # copy bundle-specific options
     r = src.config('bundle', 'mainreporoot')
     if r:
-        dst.setconfig('bundle', 'mainreporoot', r)
+        dst.setconfig('bundle', 'mainreporoot', r, 'copied')
 
     # copy selected local settings to the remote ui
     for sect in ('auth', 'hostfingerprints', 'http_proxy'):
         for key, val in src.configitems(sect):
-            dst.setconfig(sect, key, val)
+            dst.setconfig(sect, key, val, 'copied')
     v = src.config('web', 'cacerts')
     if v:
-        dst.setconfig('web', 'cacerts', util.expandpath(v))
+        dst.setconfig('web', 'cacerts', util.expandpath(v), 'copied')
 
     return dst

@@ -1,14 +1,20 @@
-  $ "$TESTDIR/hghave" symlink || exit 80
+#require symlink
 
 == tests added in 0.7 ==
 
   $ hg init test-symlinks-0.7; cd test-symlinks-0.7;
-  $ touch foo; ln -s foo bar;
+  $ touch foo; ln -s foo bar; ln -s nonexistent baz
 
-import with addremove -- symlink walking should _not_ screwup.
+import with add and addremove -- symlink walking should _not_ screwup.
 
+  $ hg add
+  adding bar
+  adding baz
+  adding foo
+  $ hg forget bar baz foo
   $ hg addremove
   adding bar
+  adding baz
   adding foo
 
 commit -- the symlink should _not_ appear added to dir state
@@ -46,7 +52,7 @@ test what happens if we want to trick hg
   $ rm dir/a.o
   $ rm dir/b.o
   $ mkdir dir/a.o
-  $ ln -s nonexist dir/b.o
+  $ ln -s nonexistent dir/b.o
   $ mkfifo a.c
 
 it should show a.c, dir/a.o and dir/b.o deleted
@@ -82,7 +88,7 @@ try symlink outside repo to file inside
 this should fail
 
   $ hg status ../z && { echo hg mistakenly exited with status 0; exit 1; } || :
-  abort: ../z not under root
+  abort: ../z not under root '$TESTTMP/x'
   $ cd ..
 
 
@@ -149,6 +155,10 @@ directory moved and symlinked
   adding foo/a
   $ mv foo bar
   $ ln -s bar foo
+  $ hg status
+  ! foo/a
+  ? bar/a
+  ? foo
 
 now addremove should remove old files
 
@@ -156,6 +166,15 @@ now addremove should remove old files
   adding bar/a
   adding foo
   removing foo/a
+
+commit and update back
+
+  $ hg ci -mb
+  $ hg up '.^'
+  1 files updated, 0 files merged, 2 files removed, 0 files unresolved
+  $ hg up tip
+  2 files updated, 0 files merged, 1 files removed, 0 files unresolved
+
   $ cd ..
 
 == root of repository is symlinked ==
@@ -168,9 +187,10 @@ now addremove should remove old files
   ? foo
   $ hg status ../link
   ? foo
+  $ hg add foo
+  $ hg cp foo "$TESTTMP/link/bar"
+  foo has not been committed yet, so no copy data will be stored for bar.
   $ cd ..
-
-
 
 
   $ hg init b
@@ -194,13 +214,13 @@ now addremove should remove old files
   
   $ hg manifest --debug
   2564acbe54bbbedfbf608479340b359f04597f80 644 @ dangling
-  $ $TESTDIR/readlink.py dangling
+  $ "$TESTDIR/readlink.py" dangling
   dangling -> nothing
 
   $ rm dangling
   $ ln -s void dangling
   $ hg commit -m 'change symlink'
-  $ $TESTDIR/readlink.py dangling
+  $ "$TESTDIR/readlink.py" dangling
   dangling -> void
 
 
@@ -208,7 +228,7 @@ modifying link
 
   $ rm dangling
   $ ln -s empty dangling
-  $ $TESTDIR/readlink.py dangling
+  $ "$TESTDIR/readlink.py" dangling
   dangling -> empty
 
 
@@ -216,13 +236,13 @@ reverting to rev 0:
 
   $ hg revert -r 0 -a
   reverting dangling
-  $ $TESTDIR/readlink.py dangling
+  $ "$TESTDIR/readlink.py" dangling
   dangling -> nothing
 
 
 backups:
 
-  $ $TESTDIR/readlink.py *.orig
+  $ "$TESTDIR/readlink.py" *.orig
   dangling.orig -> empty
   $ rm *.orig
   $ hg up -C
@@ -235,7 +255,7 @@ copies
   $ hg st -Cmard
   A dangling2
     dangling
-  $ $TESTDIR/readlink.py dangling dangling2
+  $ "$TESTDIR/readlink.py" dangling dangling2
   dangling -> void
   dangling2 -> void
 
@@ -252,3 +272,4 @@ Issue995: hg copy -A incorrectly handles symbolic links
   $ mv dirlink newdir/dirlink
   $ hg mv -A dirlink newdir/dirlink
 
+  $ cd ..

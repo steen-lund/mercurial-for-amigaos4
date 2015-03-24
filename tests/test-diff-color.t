@@ -1,9 +1,11 @@
 Setup
 
-  $ echo "[color]" >> $HGRCPATH
-  $ echo "mode = ansi" >> $HGRCPATH
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "color=" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [color]
+  > mode = ansi
+  > [extensions]
+  > color =
+  > EOF
   $ hg init repo
   $ cd repo
   $ cat > a <<EOF
@@ -66,15 +68,19 @@ diffstat
   $ hg diff --stat --color=always
    a |  2 \x1b[0;32m+\x1b[0m\x1b[0;31m-\x1b[0m (esc)
    1 files changed, 1 insertions(+), 1 deletions(-)
-  $ echo "record=" >> $HGRCPATH
-  $ echo "[ui]" >> $HGRCPATH
-  $ echo "interactive=true" >> $HGRCPATH
-  $ echo "[diff]" >> $HGRCPATH
-  $ echo "git=True" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > record =
+  > [ui]
+  > interactive = true
+  > [diff]
+  > git = True
+  > EOF
+
+#if execbit
 
 record
 
-  $ chmod 0755 a
+  $ chmod +x a
   $ hg record --color=always -m moda a <<EOF
   > y
   > y
@@ -83,7 +89,8 @@ record
   \x1b[0;36;1mold mode 100644\x1b[0m (esc)
   \x1b[0;36;1mnew mode 100755\x1b[0m (esc)
   1 hunks, 1 lines changed
-  \x1b[0;33mexamine changes to 'a'? [Ynsfdaq?]\x1b[0m  (esc)
+  \x1b[0;33mexamine changes to 'a'? [Ynesfdaq?]\x1b[0m y (esc)
+  
   \x1b[0;35m@@ -2,7 +2,7 @@\x1b[0m (esc)
    c
    a
@@ -93,9 +100,9 @@ record
    a
    a
    c
-  \x1b[0;33mrecord this change to 'a'? [Ynsfdaq?]\x1b[0m  (esc)
-  $ echo
+  \x1b[0;33mrecord this change to 'a'? [Ynesfdaq?]\x1b[0m y (esc)
   
+
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "mq=" >> $HGRCPATH
   $ hg rollback
@@ -112,7 +119,8 @@ qrecord
   \x1b[0;36;1mold mode 100644\x1b[0m (esc)
   \x1b[0;36;1mnew mode 100755\x1b[0m (esc)
   1 hunks, 1 lines changed
-  \x1b[0;33mexamine changes to 'a'? [Ynsfdaq?]\x1b[0m  (esc)
+  \x1b[0;33mexamine changes to 'a'? [Ynesfdaq?]\x1b[0m y (esc)
+  
   \x1b[0;35m@@ -2,7 +2,7 @@\x1b[0m (esc)
    c
    a
@@ -122,6 +130,81 @@ qrecord
    a
    a
    c
-  \x1b[0;33mrecord this change to 'a'? [Ynsfdaq?]\x1b[0m  (esc)
-  $ echo
+  \x1b[0;33mrecord this change to 'a'? [Ynesfdaq?]\x1b[0m y (esc)
   
+
+  $ hg qpop -a
+  popping patch
+  patch queue now empty
+
+#endif
+
+issue3712: test colorization of subrepo diff
+
+  $ hg init sub
+  $ echo b > sub/b
+  $ hg -R sub commit -Am 'create sub'
+  adding b
+  $ echo 'sub = sub' > .hgsub
+  $ hg add .hgsub
+  $ hg commit -m 'add subrepo sub'
+  $ echo aa >> a
+  $ echo bb >> sub/b
+
+  $ hg diff --color=always -S
+  \x1b[0;1mdiff --git a/a b/a\x1b[0m (esc)
+  \x1b[0;31;1m--- a/a\x1b[0m (esc)
+  \x1b[0;32;1m+++ b/a\x1b[0m (esc)
+  \x1b[0;35m@@ -7,3 +7,4 @@\x1b[0m (esc)
+   a
+   c
+   c
+  \x1b[0;32m+aa\x1b[0m (esc)
+  \x1b[0;1mdiff --git a/sub/b b/sub/b\x1b[0m (esc)
+  \x1b[0;31;1m--- a/sub/b\x1b[0m (esc)
+  \x1b[0;32;1m+++ b/sub/b\x1b[0m (esc)
+  \x1b[0;35m@@ -1,1 +1,2 @@\x1b[0m (esc)
+   b
+  \x1b[0;32m+bb\x1b[0m (esc)
+
+test tabs
+
+  $ cat >> a <<EOF
+  > 	one tab
+  > 		two tabs
+  > end tab	
+  > mid	tab
+  > 	all		tabs	
+  > EOF
+  $ hg diff --nodates --color=always
+  \x1b[0;1mdiff --git a/a b/a\x1b[0m (esc)
+  \x1b[0;31;1m--- a/a\x1b[0m (esc)
+  \x1b[0;32;1m+++ b/a\x1b[0m (esc)
+  \x1b[0;35m@@ -7,3 +7,9 @@\x1b[0m (esc)
+   a
+   c
+   c
+  \x1b[0;32m+aa\x1b[0m (esc)
+  \x1b[0;32m+\x1b[0m	\x1b[0;32mone tab\x1b[0m (esc)
+  \x1b[0;32m+\x1b[0m		\x1b[0;32mtwo tabs\x1b[0m (esc)
+  \x1b[0;32m+end tab\x1b[0m\x1b[0;1;41m	\x1b[0m (esc)
+  \x1b[0;32m+mid\x1b[0m	\x1b[0;32mtab\x1b[0m (esc)
+  \x1b[0;32m+\x1b[0m	\x1b[0;32mall\x1b[0m		\x1b[0;32mtabs\x1b[0m\x1b[0;1;41m	\x1b[0m (esc)
+  $ echo "[color]" >> $HGRCPATH
+  $ echo "diff.tab = bold magenta" >> $HGRCPATH
+  $ hg diff --nodates --color=always
+  \x1b[0;1mdiff --git a/a b/a\x1b[0m (esc)
+  \x1b[0;31;1m--- a/a\x1b[0m (esc)
+  \x1b[0;32;1m+++ b/a\x1b[0m (esc)
+  \x1b[0;35m@@ -7,3 +7,9 @@\x1b[0m (esc)
+   a
+   c
+   c
+  \x1b[0;32m+aa\x1b[0m (esc)
+  \x1b[0;32m+\x1b[0m\x1b[0;1;35m	\x1b[0m\x1b[0;32mone tab\x1b[0m (esc)
+  \x1b[0;32m+\x1b[0m\x1b[0;1;35m		\x1b[0m\x1b[0;32mtwo tabs\x1b[0m (esc)
+  \x1b[0;32m+end tab\x1b[0m\x1b[0;1;41m	\x1b[0m (esc)
+  \x1b[0;32m+mid\x1b[0m\x1b[0;1;35m	\x1b[0m\x1b[0;32mtab\x1b[0m (esc)
+  \x1b[0;32m+\x1b[0m\x1b[0;1;35m	\x1b[0m\x1b[0;32mall\x1b[0m\x1b[0;1;35m		\x1b[0m\x1b[0;32mtabs\x1b[0m\x1b[0;1;41m	\x1b[0m (esc)
+
+  $ cd ..

@@ -10,9 +10,9 @@ import os, re, time
 from mercurial.i18n import _
 from mercurial import ui, hg, scmutil, util, templater
 from mercurial import error, encoding
-from common import ErrorResponse, get_mtime, staticfile, paritygen, \
+from common import ErrorResponse, get_mtime, staticfile, paritygen, ismember, \
                    get_contact, HTTP_OK, HTTP_NOT_FOUND, HTTP_SERVER_ERROR
-from hgweb_mod import hgweb
+from hgweb_mod import hgweb, makebreadcrumb
 from request import wsgirequest
 import webutil
 
@@ -23,10 +23,10 @@ def findrepos(paths):
     repos = []
     for prefix, root in cleannames(paths):
         roothead, roottail = os.path.split(root)
-        # "foo = /bar/*" makes every subrepo of /bar/ to be
-        # mounted as foo/subrepo
-        # and "foo = /bar/**" also recurses into the subdirectories,
-        # remember to use it without working dir.
+        # "foo = /bar/*" or "foo = /bar/**" lets every repo /bar/N in or below
+        # /bar/ be served as as foo/N .
+        # '*' will not search inside dirs with .hg (except .hg/patches),
+        # '**' will search inside dirs with .hg (and thus also find subrepos).
         try:
             recurse = {'*': False, '**': True}[roottail]
         except KeyError:
@@ -51,6 +51,33 @@ def urlrepos(prefix, roothead, paths):
         yield (prefix + '/' +
                util.pconvert(path[len(roothead):]).lstrip('/')).strip('/'), path
 
+def geturlcgivars(baseurl, port):
+    """
+    Extract CGI variables from baseurl
+
+    >>> geturlcgivars("http://host.org/base", "80")
+    ('host.org', '80', '/base')
+    >>> geturlcgivars("http://host.org:8000/base", "80")
+    ('host.org', '8000', '/base')
+    >>> geturlcgivars('/base', 8000)
+    ('', '8000', '/base')
+    >>> geturlcgivars("base", '8000')
+    ('', '8000', '/base')
+    >>> geturlcgivars("http://host", '8000')
+    ('host', '8000', '/')
+    >>> geturlcgivars("http://host/", '8000')
+    ('host', '8000', '/')
+    """
+    u = util.url(baseurl)
+    name = u.host or ''
+    if u.port:
+        port = u.port
+    path = u.path or ""
+    if not path.startswith('/'):
+        path = '/' + path
+
+    return name, str(port), path
+
 class hgwebdir(object):
     refreshinterval = 20
 
@@ -69,8 +96,8 @@ class hgwebdir(object):
             u = self.baseui.copy()
         else:
             u = ui.ui()
-            u.setconfig('ui', 'report_untrusted', 'off')
-            u.setconfig('ui', 'interactive', 'off')
+            u.setconfig('ui', 'report_untrusted', 'off', 'hgwebdir')
+            u.setconfig('ui', 'nontty', 'true', 'hgwebdir')
 
         if not isinstance(self.conf, (dict, list, tuple)):
             map = {'paths': 'hgweb-paths'}
@@ -106,6 +133,12 @@ class hgwebdir(object):
         if self.stripecount:
             self.stripecount = int(self.stripecount)
         self._baseurl = self.ui.config('web', 'baseurl')
+        prefix = self.ui.config('web', 'prefix', '')
+        if prefix.startswith('/'):
+            prefix = prefix[1:]
+        if prefix.endswith('/'):
+            prefix = prefix[:-1]
+        self.prefix = prefix
         self.lastrefresh = time.time()
 
     def run(self):
@@ -131,12 +164,12 @@ class hgwebdir(object):
         user = req.env.get('REMOTE_USER')
 
         deny_read = ui.configlist('web', 'deny_read', untrusted=True)
-        if deny_read and (not user or deny_read == ['*'] or user in deny_read):
+        if deny_read and (not user or ismember(ui, user, deny_read)):
             return False
 
         allow_read = ui.configlist('web', 'allow_read', untrusted=True)
         # by default, allow reading if no allow_read option has been set
-        if (not allow_read) or (allow_read == ['*']) or (user in allow_read):
+        if (not allow_read) or ismember(ui, user, allow_read):
             return True
 
         return False
@@ -157,8 +190,15 @@ class hgwebdir(object):
                         fname = virtual[7:]
                     else:
                         fname = req.form['static'][0]
-                    static = templater.templatepath('static')
-                    return (staticfile(static, fname, req),)
+                    static = self.ui.config("web", "static", None,
+                                            untrusted=False)
+                    if not static:
+                        tp = self.templatepath or templater.templatepaths()
+                        if isinstance(tp, str):
+                            tp = [tp]
+                        static = [os.path.join(p, 'static') for p in tp]
+                    staticfile(static, fname, req)
+                    return []
 
                 # top-level index
                 elif not virtual:
@@ -174,7 +214,8 @@ class hgwebdir(object):
                     if real:
                         req.env['REPO_NAME'] = virtualrepo
                         try:
-                            repo = hg.repository(self.ui, real)
+                            # ensure caller gets private copy of ui
+                            repo = hg.repository(self.ui.copy(), real)
                             return hgweb(repo).run_wsgi(req)
                         except IOError, inst:
                             msg = inst.strerror
@@ -218,12 +259,70 @@ class hgwebdir(object):
         def rawentries(subdir="", **map):
 
             descend = self.ui.configbool('web', 'descend', True)
+            collapse = self.ui.configbool('web', 'collapse', False)
+            seenrepos = set()
+            seendirs = set()
             for name, path in self.repos:
 
                 if not name.startswith(subdir):
                     continue
                 name = name[len(subdir):]
-                if not descend and '/' in name:
+                directory = False
+
+                if '/' in name:
+                    if not descend:
+                        continue
+
+                    nameparts = name.split('/')
+                    rootname = nameparts[0]
+
+                    if not collapse:
+                        pass
+                    elif rootname in seendirs:
+                        continue
+                    elif rootname in seenrepos:
+                        pass
+                    else:
+                        directory = True
+                        name = rootname
+
+                        # redefine the path to refer to the directory
+                        discarded = '/'.join(nameparts[1:])
+
+                        # remove name parts plus accompanying slash
+                        path = path[:-len(discarded) - 1]
+
+                parts = [name]
+                if 'PATH_INFO' in req.env:
+                    parts.insert(0, req.env['PATH_INFO'].rstrip('/'))
+                if req.env['SCRIPT_NAME']:
+                    parts.insert(0, req.env['SCRIPT_NAME'])
+                url = re.sub(r'/+', '/', '/'.join(parts) + '/')
+
+                # show either a directory entry or a repository
+                if directory:
+                    # get the directory's time information
+                    try:
+                        d = (get_mtime(path), util.makedate()[1])
+                    except OSError:
+                        continue
+
+                    # add '/' to the name to make it obvious that
+                    # the entry is a directory, not a regular repository
+                    row = {'contact': "",
+                           'contact_sort': "",
+                           'name': name + '/',
+                           'name_sort': name,
+                           'url': url,
+                           'description': "",
+                           'description_sort': "",
+                           'lastchange': d,
+                           'lastchange_sort': d[1]-d[0],
+                           'archives': [],
+                           'isdirectory': True}
+
+                    seendirs.add(name)
+                    yield row
                     continue
 
                 u = self.ui.copy()
@@ -240,13 +339,6 @@ class hgwebdir(object):
 
                 if not self.read_allowed(u, req):
                     continue
-
-                parts = [name]
-                if 'PATH_INFO' in req.env:
-                    parts.insert(0, req.env['PATH_INFO'].rstrip('/'))
-                if req.env['SCRIPT_NAME']:
-                    parts.insert(0, req.env['SCRIPT_NAME'])
-                url = re.sub(r'/+', '/', '/'.join(parts) + '/')
 
                 # update time with local timezone
                 try:
@@ -265,16 +357,20 @@ class hgwebdir(object):
                 contact = get_contact(get)
                 description = get("web", "description", "")
                 name = get("web", "name", name)
-                row = dict(contact=contact or "unknown",
-                           contact_sort=contact.upper() or "unknown",
-                           name=name,
-                           name_sort=name,
-                           url=url,
-                           description=description or "unknown",
-                           description_sort=description.upper() or "unknown",
-                           lastchange=d,
-                           lastchange_sort=d[1]-d[0],
-                           archives=archivelist(u, "tip", url))
+                row = {'contact': contact or "unknown",
+                       'contact_sort': contact.upper() or "unknown",
+                       'name': name,
+                       'name_sort': name,
+                       'url': url,
+                       'description': description or "unknown",
+                       'description_sort': description.upper() or "unknown",
+                       'lastchange': d,
+                       'lastchange_sort': d[1]-d[0],
+                       'archives': archivelist(u, "tip", url),
+                       'isdirectory': None,
+                       }
+
+                seenrepos.add(name)
                 yield row
 
         sortdefault = None, False
@@ -309,16 +405,11 @@ class hgwebdir(object):
         self.updatereqenv(req.env)
 
         return tmpl("index", entries=entries, subdir=subdir,
+                    pathdef=makebreadcrumb('/' + subdir, self.prefix),
                     sortcolumn=sortcolumn, descending=descending,
                     **dict(sort))
 
     def templater(self, req):
-
-        def header(**map):
-            yield tmpl('header', encoding=encoding.encoding, **map)
-
-        def footer(**map):
-            yield tmpl("footer", **map)
 
         def motd(**map):
             if self.motd is not None:
@@ -348,24 +439,26 @@ class hgwebdir(object):
         start = url[-1] == '?' and '&' or '?'
         sessionvars = webutil.sessionvars(vars, start)
         logourl = config('web', 'logourl', 'http://mercurial.selenic.com/')
+        logoimg = config('web', 'logoimg', 'hglogo.png')
         staticurl = config('web', 'staticurl') or url + 'static/'
         if not staticurl.endswith('/'):
             staticurl += '/'
 
         tmpl = templater.templater(mapfile,
-                                   defaults={"header": header,
-                                             "footer": footer,
+                                   defaults={"encoding": encoding.encoding,
                                              "motd": motd,
                                              "url": url,
                                              "logourl": logourl,
+                                             "logoimg": logoimg,
                                              "staticurl": staticurl,
-                                             "sessionvars": sessionvars})
+                                             "sessionvars": sessionvars,
+                                             "style": style,
+                                             })
         return tmpl
 
     def updatereqenv(self, env):
         if self._baseurl is not None:
-            u = util.url(self._baseurl)
-            env['SERVER_NAME'] = u.host
-            if u.port:
-                env['SERVER_PORT'] = u.port
-            env['SCRIPT_NAME'] = '/' + u.path
+            name, port, path = geturlcgivars(self._baseurl, env['SERVER_PORT'])
+            env['SERVER_NAME'] = name
+            env['SERVER_PORT'] = port
+            env['SCRIPT_NAME'] = path

@@ -1,13 +1,20 @@
-
-  $ "$TESTDIR/hghave" mtn || exit 80
+#require mtn
 
 Monotone directory is called .monotone on *nix and monotone
-on Windows. Having a variable here ease test patching.
+on Windows.
+
+#if windows
+
+  $ mtndir=monotone
+
+#else
 
   $ mtndir=.monotone
+
+#endif
+
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "convert=" >> $HGRCPATH
-  $ echo 'graphlog =' >> $HGRCPATH
 
 Windows version of monotone home
 
@@ -36,7 +43,7 @@ create monotone repository
   $ mkdir dir
   $ echo b > dir/b
   $ echo d > dir/d
-  $ python -c 'file("bin", "wb").write("a\\x00b")'
+  $ $PYTHON -c 'file("bin", "wb").write("a\\x00b")'
   $ echo c > c
   $ mtn add a dir/b dir/d c bin
   mtn: adding 'a' to workspace manifest
@@ -58,7 +65,7 @@ update monotone working directory
   $ echo b >> dir/b
   $ mtn drop c
   mtn: dropping 'c' from workspace manifest
-  $ python -c 'file("bin", "wb").write("b\\x00c")'
+  $ $PYTHON -c 'file("bin", "wb").write("b\\x00c")'
   $ mtn ci -m update1
   mtn: beginning commit on branch 'com.selenic.test'
   mtn: committed revision 51d0a982464573a2a2cf5ee2c9219c652aaebeff
@@ -210,7 +217,9 @@ test diverging directory moves
 
 test large file support (> 32kB)
 
-  $ python -c 'for x in range(10000): print x' > large-file
+  >>> fp = file('large-file', 'wb')
+  >>> for x in xrange(10000): fp.write('%d\n' % x)
+  >>> fp.close()
   $ $TESTDIR/md5sum.py large-file
   5d6de8a95c3b6bf9e0ffb808ba5299c1  large-file
   $ mtn add large-file
@@ -246,7 +255,7 @@ convert incrementally
   0 largefile
   $ glog()
   > {
-  >     hg glog --template '{rev} "{desc|firstline}" files: {files}\n' "$@"
+  >     hg log -G --template '{rev} "{desc|firstline}" files: {files}\n' "$@"
   > }
   $ cd repo.mtn-hg
   $ hg up -C

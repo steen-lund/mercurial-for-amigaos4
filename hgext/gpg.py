@@ -12,6 +12,7 @@ from mercurial.i18n import _
 
 cmdtable = {}
 command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 class gpg(object):
     def __init__(self, path, key=None):
@@ -43,23 +44,23 @@ class gpg(object):
                 try:
                     if f:
                         os.unlink(f)
-                except:
+                except OSError:
                     pass
         keys = []
         key, fingerprint = None, None
-        err = ""
         for l in ret.splitlines():
             # see DETAILS in the gnupg documentation
             # filter the logger output
             if not l.startswith("[GNUPG:]"):
                 continue
             l = l[9:]
-            if l.startswith("ERRSIG"):
-                err = _("error while verifying signature")
-                break
-            elif l.startswith("VALIDSIG"):
+            if l.startswith("VALIDSIG"):
                 # fingerprint of the primary key
                 fingerprint = l.split()[10]
+            elif l.startswith("ERRSIG"):
+                key = l.split(" ", 3)[:2]
+                key.append("")
+                fingerprint = None
             elif (l.startswith("GOODSIG") or
                   l.startswith("EXPSIG") or
                   l.startswith("EXPKEYSIG") or
@@ -68,11 +69,9 @@ class gpg(object):
                     keys.append(key + [fingerprint])
                 key = l.split(" ", 2)
                 fingerprint = None
-        if err:
-            return err, []
         if key is not None:
             keys.append(key + [fingerprint])
-        return err, keys
+        return keys
 
 def newgpg(ui, **opts):
     """create a new gpg instance"""
@@ -104,7 +103,7 @@ def sigwalk(repo):
     try:
         # read local signatures
         fn = "localsigs"
-        for item in parsefile(repo.opener(fn), fn):
+        for item in parsefile(repo.vfs(fn), fn):
             yield item
     except IOError:
         pass
@@ -118,14 +117,15 @@ def getkeys(ui, repo, mygpg, sigdata, context):
 
     data = node2txt(repo, node, version)
     sig = binascii.a2b_base64(sig)
-    err, keys = mygpg.verify(data, sig)
-    if err:
-        ui.warn("%s:%d %s\n" % (fn, ln , err))
-        return None
+    keys = mygpg.verify(data, sig)
 
     validkeys = []
     # warn for expired key and/or sigs
     for key in keys:
+        if key[0] == "ERRSIG":
+            ui.write(_("%s Unknown key ID \"%s\"\n")
+                     % (prefix, shortkey(ui, key[1][:15])))
+            continue
         if key[0] == "BADSIG":
             ui.write(_("%s Bad signature from \"%s\"\n") % (prefix, key[2]))
             continue
@@ -163,7 +163,7 @@ def sigs(ui, repo):
             r = "%5d:%s" % (rev, hgnode.hex(repo.changelog.node(rev)))
             ui.write("%-30s %s\n" % (keystr(ui, k), r))
 
-@command("sigcheck", [], _('hg sigcheck REVISION'))
+@command("sigcheck", [], _('hg sigcheck REV'))
 def check(ui, repo, rev):
     """verify all the signatures there may be for a particular revision"""
     mygpg = newgpg(ui)
@@ -179,7 +179,7 @@ def check(ui, repo, rev):
                 keys.extend(k)
 
     if not keys:
-        ui.write(_("No valid signature for %s\n") % hgnode.short(rev))
+        ui.write(_("no valid signature for %s\n") % hgnode.short(rev))
         return
 
     # print summary
@@ -203,9 +203,10 @@ def keystr(ui, key):
           ('k', 'key', '',
            _('the key id to sign with'), _('ID')),
           ('m', 'message', '',
-           _('commit message'), _('TEXT')),
+           _('use text as commit message'), _('TEXT')),
+          ('e', 'edit', False, _('invoke editor on commit messages')),
          ] + commands.commitopts2,
-         _('hg sign [OPTION]... [REVISION]...'))
+         _('hg sign [OPTION]... [REV]...'))
 def sign(ui, repo, *revs, **opts):
     """add a signature for the current or given revision
 
@@ -236,7 +237,7 @@ def sign(ui, repo, *revs, **opts):
 
     for n in nodes:
         hexnode = hgnode.hex(n)
-        ui.write(_("Signing %d:%s\n") % (repo.changelog.rev(n),
+        ui.write(_("signing %d:%s\n") % (repo.changelog.rev(n),
                                          hgnode.short(n)))
         # build data
         data = node2txt(repo, n, sigver)
@@ -249,15 +250,14 @@ def sign(ui, repo, *revs, **opts):
 
     # write it
     if opts['local']:
-        repo.opener.append("localsigs", sigmessage)
+        repo.vfs.append("localsigs", sigmessage)
         return
 
-    msigs = match.exact(repo.root, '', ['.hgsigs'])
-    s = repo.status(match=msigs, unknown=True, ignored=True)[:6]
-    if util.any(s) and not opts["force"]:
-        raise util.Abort(_("working copy of .hgsigs is changed "
-                           "(please commit .hgsigs manually "
-                           "or use --force)"))
+    if not opts["force"]:
+        msigs = match.exact(repo.root, '', ['.hgsigs'])
+        if util.any(repo.status(match=msigs, unknown=True, ignored=True)):
+            raise util.Abort(_("working copy of .hgsigs is changed "),
+                             hint=_("please commit .hgsigs manually"))
 
     sigsfile = repo.wfile(".hgsigs", "ab")
     sigsfile.write(sigmessage)
@@ -276,9 +276,18 @@ def sign(ui, repo, *revs, **opts):
                              % hgnode.short(n)
                              for n in nodes])
     try:
-        repo.commit(message, opts['user'], opts['date'], match=msigs)
+        editor = cmdutil.getcommiteditor(editform='gpg.sign', **opts)
+        repo.commit(message, opts['user'], opts['date'], match=msigs,
+                    editor=editor)
     except ValueError, inst:
         raise util.Abort(str(inst))
+
+def shortkey(ui, key):
+    if len(key) != 16:
+        ui.debug("key ID \"%s\" format error\n" % key)
+        return key
+
+    return key[-8:]
 
 def node2txt(repo, node, ver):
     """map a manifest into some text"""
@@ -286,4 +295,3 @@ def node2txt(repo, node, ver):
         return "%s\n" % hgnode.hex(node)
     else:
         raise util.Abort(_("unknown signature version"))
-

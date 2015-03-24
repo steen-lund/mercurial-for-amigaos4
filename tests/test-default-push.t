@@ -15,10 +15,20 @@
   $ echo b >> b/a
   $ hg --cwd b ci -mb
 
+Push should provide a hint when both 'default' and 'default-push' not set:
+  $ cd c
+  $ hg push --config paths.default=
+  pushing to default-push
+  abort: default repository not configured!
+  (see the "path" section in "hg help config")
+  [255]
+
+  $ cd ..
+
 Push should push to 'default' when 'default-push' not set:
 
   $ hg --cwd b push
-  pushing to $TESTTMP/a
+  pushing to $TESTTMP/a (glob)
   searching for changes
   adding changesets
   adding manifests
@@ -27,12 +37,12 @@ Push should push to 'default' when 'default-push' not set:
 
 Push should push to 'default-push' when set:
 
+  $ echo '[paths]' >> b/.hg/hgrc
   $ echo 'default-push = ../c' >> b/.hg/hgrc
   $ hg --cwd b push
-  pushing to $TESTTMP/c
+  pushing to $TESTTMP/c (glob)
   searching for changes
   adding changesets
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files
-

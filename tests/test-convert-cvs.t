@@ -1,5 +1,5 @@
+#require cvs
 
-  $ "$TESTDIR/hghave" cvs || exit 80
   $ cvscall()
   > {
   >     cvs -f "$@"
@@ -10,7 +10,6 @@
   > }
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "convert = " >> $HGRCPATH
-  $ echo "graphlog = " >> $HGRCPATH
   $ cat > cvshooks.py <<EOF
   > def cvslog(ui,repo,hooktype,log):
   >     print "%s hook: %d entries"%(hooktype,len(log))
@@ -19,9 +18,11 @@
   >     print "%s hook: %d changesets"%(hooktype,len(changesets))
   > EOF
   $ hookpath=`pwd`
-  $ echo "[hooks]" >> $HGRCPATH
-  $ echo "cvslog=python:$hookpath/cvshooks.py:cvslog" >> $HGRCPATH
-  $ echo "cvschangesets=python:$hookpath/cvshooks.py:cvschangesets" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [hooks]
+  > cvslog = python:$hookpath/cvshooks.py:cvslog
+  > cvschangesets = python:$hookpath/cvshooks.py:cvschangesets
+  > EOF
 
 create cvs repository
 
@@ -32,6 +33,7 @@ create cvs repository
   $ CVS_OPTIONS=-f
   $ export CVS_OPTIONS
   $ cd ..
+  $ rmdir cvsrepo
   $ cvscall -q -d "$CVSROOT" init
 
 create source directory
@@ -69,9 +71,16 @@ commit a new revision changing b/c
   $TESTTMP/cvsrepo/src/b/c,v  <--  *c (glob)
   $ cd ..
 
-convert fresh repo
+convert fresh repo and also check localtimezone option
 
-  $ hg convert src src-hg
+NOTE: This doesn't check all time zones -- it merely determines that
+the configuration option is taking effect.
+
+An arbitrary (U.S.) time zone is used here.  TZ=US/Hawaii is selected
+since it does not use DST (unlike other U.S. time zones) and is always
+a fixed difference from UTC.
+
+  $ TZ=US/Hawaii hg convert --config convert.localtimezone=True src src-hg
   initializing destination src-hg repository
   connecting to $TESTTMP/cvsrepo
   scanning source...
@@ -84,8 +93,8 @@ convert fresh repo
   sorting...
   converting...
   2 Initial revision
-  1 import
-  0 ci0
+  1 ci0
+  0 import
   updating tags
   $ hgcat a
   a
@@ -109,11 +118,10 @@ convert fresh repo with --filemap
   sorting...
   converting...
   2 Initial revision
-  1 import
+  1 ci0
+  0 import
   filtering out empty revision
-  repository tip rolled back to revision 0 (undo commit)
-  working directory now based on revision -1
-  0 ci0
+  repository tip rolled back to revision 1 (undo commit)
   updating tags
   $ hgcat b/c
   c
@@ -144,9 +152,9 @@ convert full repository (issue1649)
   sorting...
   converting...
   updating tags
-  $ hg cat -r tip srcfull-hg/src/a
+  $ hg cat -r tip --cwd srcfull-hg src/a
   a
-  $ hg cat -r tip srcfull-hg/src/b/c
+  $ hg cat -r tip --cwd srcfull-hg src/b/c
   c
   c
 
@@ -162,7 +170,7 @@ commit new file revisions
 
 convert again
 
-  $ hg convert src src-hg
+  $ TZ=US/Hawaii hg convert --config convert.localtimezone=True src src-hg
   connecting to $TESTTMP/cvsrepo
   scanning source...
   collecting CVS rlog
@@ -222,7 +230,7 @@ commit branch
 
 convert again
 
-  $ hg convert src src-hg
+  $ TZ=US/Hawaii hg convert --config convert.localtimezone=True src src-hg
   connecting to $TESTTMP/cvsrepo
   scanning source...
   collecting CVS rlog
@@ -240,7 +248,7 @@ convert again
 
 convert again with --filemap
 
-  $ hg convert --filemap filemap src src-filemap
+  $ TZ=US/Hawaii hg convert --config convert.localtimezone=True --filemap filemap src src-filemap
   connecting to $TESTTMP/cvsrepo
   scanning source...
   collecting CVS rlog
@@ -287,7 +295,7 @@ commit new file revisions with some fuzz
 
 convert again
 
-  $ hg convert --config convert.cvsps.fuzz=2 src src-hg
+  $ TZ=US/Hawaii hg convert --config convert.cvsps.fuzz=2 --config convert.localtimezone=True src src-hg
   connecting to $TESTTMP/cvsrepo
   scanning source...
   collecting CVS rlog
@@ -301,25 +309,25 @@ convert again
   2 funny
   1 fuzzy
   0 fuzzy
-  $ hg -R src-hg glog --template '{rev} ({branches}) {desc} files: {files}\n'
-  o  8 (branch) fuzzy files: b/c
+  $ hg -R src-hg log -G --template '{rev} ({branches}) {desc} date: {date|date} files: {files}\n'
+  o  8 (branch) fuzzy date: * -1000 files: b/c (glob)
   |
-  o  7 (branch) fuzzy files: a
+  o  7 (branch) fuzzy date: * -1000 files: a (glob)
   |
   o  6 (branch) funny
   |  ----------------------------
-  |  log message files: a
-  o  5 (branch) ci2 files: b/c
+  |  log message date: * -1000 files: a (glob)
+  o  5 (branch) ci2 date: * -1000 files: b/c (glob)
   
-  o  4 () ci1 files: a b/c
+  o  4 () ci1 date: * -1000 files: a b/c (glob)
   |
-  o  3 () update tags files: .hgtags
+  o  3 () update tags date: * +0000 files: .hgtags (glob)
   |
-  o  2 () ci0 files: b/c
-  |
-  | o  1 (INITIAL) import files:
+  | o  2 (INITIAL) import date: * -1000 files: (glob)
+  | |
+  o |  1 () ci0 date: * -1000 files: b/c (glob)
   |/
-  o  0 () Initial revision files: a b/c
+  o  0 () Initial revision date: * -1000 files: a b/c (glob)
   
 
 testing debugcvsps
@@ -389,12 +397,11 @@ testing debugcvsps
   Author: * (glob)
   Branch: HEAD
   Tag: (none) 
-  Branchpoints: branch 
   Log:
   ci1
   
   Members: 
-  	a:1.1->1.2 
+  	b/c:1.2->1.3 
   
   ---------------------
   PatchSet 6 
@@ -402,11 +409,12 @@ testing debugcvsps
   Author: * (glob)
   Branch: HEAD
   Tag: (none) 
+  Branchpoints: branch 
   Log:
   ci1
   
   Members: 
-  	b/c:1.2->1.3 
+  	a:1.1->1.2 
   
   ---------------------
   PatchSet 7 
@@ -459,3 +467,4 @@ testing debugcvsps
   	b/c:1.1.2.1->1.1.2.2 
   
 
+  $ cd ..

@@ -7,11 +7,77 @@
 
 from i18n import _
 import errno, getpass, os, socket, sys, tempfile, traceback
-import config, scmutil, util, error
+import config, scmutil, util, error, formatter
+from node import hex
+
+samplehgrcs = {
+    'user':
+"""# example user config (see "hg help config" for more info)
+[ui]
+# name and email, e.g.
+# username = Jane Doe <jdoe@example.com>
+username =
+
+[extensions]
+# uncomment these lines to enable some popular extensions
+# (see "hg help extensions" for more info)
+#
+# pager =
+# progress =
+# color =""",
+
+    'cloned':
+"""# example repository config (see "hg help config" for more info)
+[paths]
+default = %s
+
+# path aliases to other clones of this repo in URLs or filesystem paths
+# (see "hg help config.paths" for more info)
+#
+# default-push = ssh://jdoe@example.net/hg/jdoes-fork
+# my-fork      = ssh://jdoe@example.net/hg/jdoes-fork
+# my-clone     = /home/jdoe/jdoes-clone
+
+[ui]
+# name and email (local to this repository, optional), e.g.
+# username = Jane Doe <jdoe@example.com>
+""",
+
+    'local':
+"""# example repository config (see "hg help config" for more info)
+[paths]
+# path aliases to other clones of this repo in URLs or filesystem paths
+# (see "hg help config.paths" for more info)
+#
+# default      = http://example.com/hg/example-repo
+# default-push = ssh://jdoe@example.net/hg/jdoes-fork
+# my-fork      = ssh://jdoe@example.net/hg/jdoes-fork
+# my-clone     = /home/jdoe/jdoes-clone
+
+[ui]
+# name and email (local to this repository, optional), e.g.
+# username = Jane Doe <jdoe@example.com>
+""",
+
+    'global':
+"""# example system-wide hg config (see "hg help config" for more info)
+
+[extensions]
+# uncomment these lines to enable some popular extensions
+# (see "hg help extensions" for more info)
+#
+# blackbox =
+# progress =
+# color =
+# pager =""",
+}
 
 class ui(object):
     def __init__(self, src=None):
+        # _buffers: used for temporary capture of output
         self._buffers = []
+        # _bufferstates: Should the temporary capture includes stderr
+        self._bufferstates = []
         self.quiet = self.verbose = self.debugflag = self.tracebackflag = False
         self._reportuntrusted = True
         self._ocfg = config.config() # overlay
@@ -19,6 +85,7 @@ class ui(object):
         self._ucfg = config.config() # untrusted
         self._trustusers = set()
         self._trustgroups = set()
+        self.callhooks = True
 
         if src:
             self.fout = src.fout
@@ -31,6 +98,7 @@ class ui(object):
             self._trustusers = src._trustusers.copy()
             self._trustgroups = src._trustgroups.copy()
             self.environ = src.environ
+            self.callhooks = src.callhooks
             self.fixconfig()
         else:
             self.fout = sys.stdout
@@ -46,7 +114,10 @@ class ui(object):
     def copy(self):
         return self.__class__(self)
 
-    def _is_trusted(self, fp, f):
+    def formatter(self, topic, opts):
+        return formatter.formatter(self, topic, opts)
+
+    def _trusted(self, fp, f):
         st = util.fstat(fp)
         if util.isowner(st):
             return True
@@ -61,7 +132,7 @@ class ui(object):
             return True
 
         if self._reportuntrusted:
-            self.warn(_('Not trusting file %s from untrusted '
+            self.warn(_('not trusting file %s from untrusted '
                         'user %s, group %s\n') % (f, user, group))
         return False
 
@@ -75,14 +146,15 @@ class ui(object):
             raise
 
         cfg = config.config()
-        trusted = sections or trust or self._is_trusted(fp, filename)
+        trusted = sections or trust or self._trusted(fp, filename)
 
         try:
             cfg.read(filename, fp, sections=sections, remap=remap)
+            fp.close()
         except error.ConfigError, inst:
             if trusted:
                 raise
-            self.warn(_("Ignored: %s\n") % str(inst))
+            self.warn(_("ignored: %s\n") % str(inst))
 
         if self.plain():
             for k in ('debug', 'fallbackencoding', 'quiet', 'slash',
@@ -141,11 +213,18 @@ class ui(object):
             self._trustusers.update(self.configlist('trusted', 'users'))
             self._trustgroups.update(self.configlist('trusted', 'groups'))
 
-    def setconfig(self, section, name, value, overlay=True):
-        if overlay:
-            self._ocfg.set(section, name, value)
-        self._tcfg.set(section, name, value)
-        self._ucfg.set(section, name, value)
+    def backupconfig(self, section, item):
+        return (self._ocfg.backup(section, item),
+                self._tcfg.backup(section, item),
+                self._ucfg.backup(section, item),)
+    def restoreconfig(self, data):
+        self._ocfg.restore(data[0])
+        self._tcfg.restore(data[1])
+        self._ucfg.restore(data[2])
+
+    def setconfig(self, section, name, value, source=''):
+        for cfg in (self._ocfg, self._tcfg, self._ucfg):
+            cfg.set(section, name, value, source)
         self.fixconfig(section=section)
 
     def _data(self, untrusted):
@@ -155,21 +234,36 @@ class ui(object):
         return self._data(untrusted).source(section, name) or 'none'
 
     def config(self, section, name, default=None, untrusted=False):
-        value = self._data(untrusted).get(section, name, default)
+        if isinstance(name, list):
+            alternates = name
+        else:
+            alternates = [name]
+
+        for n in alternates:
+            value = self._data(untrusted).get(section, n, None)
+            if value is not None:
+                name = n
+                break
+        else:
+            value = default
+
         if self.debugflag and not untrusted and self._reportuntrusted:
-            uvalue = self._ucfg.get(section, name)
-            if uvalue is not None and uvalue != value:
-                self.debug("ignoring untrusted configuration option "
-                           "%s.%s = %s\n" % (section, name, uvalue))
+            for n in alternates:
+                uvalue = self._ucfg.get(section, n)
+                if uvalue is not None and uvalue != value:
+                    self.debug("ignoring untrusted configuration option "
+                               "%s.%s = %s\n" % (section, n, uvalue))
         return value
 
     def configpath(self, section, name, default=None, untrusted=False):
-        'get a path config item, expanded relative to config file'
+        'get a path config item, expanded relative to repo root or config file'
         v = self.config(section, name, default, untrusted)
+        if v is None:
+            return None
         if not os.path.isabs(v) or "://" not in v:
             src = self.configsource(section, name, untrusted)
             if ':' in src:
-                base = os.path.dirname(src.rsplit(':'))
+                base = os.path.dirname(src.rsplit(':')[0])
                 v = os.path.join(base, os.path.expanduser(v))
         return v
 
@@ -232,6 +326,39 @@ class ui(object):
         except ValueError:
             raise error.ConfigError(_("%s.%s is not an integer ('%s')")
                                     % (section, name, v))
+
+    def configbytes(self, section, name, default=0, untrusted=False):
+        """parse a configuration element as a quantity in bytes
+
+        Units can be specified as b (bytes), k or kb (kilobytes), m or
+        mb (megabytes), g or gb (gigabytes).
+
+        >>> u = ui(); s = 'foo'
+        >>> u.setconfig(s, 'val1', '42')
+        >>> u.configbytes(s, 'val1')
+        42
+        >>> u.setconfig(s, 'val2', '42.5 kb')
+        >>> u.configbytes(s, 'val2')
+        43520
+        >>> u.configbytes(s, 'unknown', '7 MB')
+        7340032
+        >>> u.setconfig(s, 'invalid', 'somevalue')
+        >>> u.configbytes(s, 'invalid')
+        Traceback (most recent call last):
+            ...
+        ConfigError: foo.invalid is not a byte quantity ('somevalue')
+        """
+
+        value = self.config(section, name)
+        if value is None:
+            if not isinstance(default, str):
+                return default
+            value = default
+        try:
+            return util.sizetoint(value)
+        except error.ParseError:
+            raise error.ConfigError(_("%s.%s is not a byte quantity ('%s')")
+                                    % (section, name, value))
 
     def configlist(self, section, name, default=None, untrusted=False):
         """parse a configuration element as a list of comma/space separated
@@ -372,7 +499,7 @@ class ui(object):
         """
         user = os.environ.get("HGUSER")
         if user is None:
-            user = self.config("ui", "username")
+            user = self.config("ui", ["username", "user"])
             if user is not None:
                 user = os.path.expandvars(user)
         if user is None:
@@ -382,11 +509,13 @@ class ui(object):
         if user is None and not self.interactive():
             try:
                 user = '%s@%s' % (util.getuser(), socket.getfqdn())
-                self.warn(_("No username found, using '%s' instead\n") % user)
+                self.warn(_("no username found, using '%s' instead\n") % user)
             except KeyError:
                 pass
         if not user:
-            raise util.Abort(_('no username supplied (see "hg help config")'))
+            raise util.Abort(_('no username supplied'),
+                             hint=_('use "hg config --edit" '
+                                    'to set your username'))
         if "\n" in user:
             raise util.Abort(_("username %s contains a newline\n") % repr(user))
         return user
@@ -407,8 +536,12 @@ class ui(object):
             path = self.config('paths', default)
         return path or loc
 
-    def pushbuffer(self):
+    def pushbuffer(self, error=False):
+        """install a buffer to capture standard output of the ui object
+
+        If error is True, the error output will be captured too."""
         self._buffers.append([])
+        self._bufferstates.append(error)
 
     def popbuffer(self, labeled=False):
         '''pop the last buffer and return the buffered output
@@ -420,6 +553,7 @@ class ui(object):
         is being buffered so it can be captured and parsed or
         processed, labeled should not be set to True.
         '''
+        self._bufferstates.pop()
         return "".join(self._buffers.pop())
 
     def write(self, *args, **opts):
@@ -447,6 +581,8 @@ class ui(object):
 
     def write_err(self, *args, **opts):
         try:
+            if self._bufferstates and self._bufferstates[-1]:
+                return self.write(*args, **opts)
             if not getattr(self.fout, 'closed', False):
                 self.fout.flush()
             for a in args:
@@ -456,14 +592,19 @@ class ui(object):
             if not getattr(self.ferr, 'closed', False):
                 self.ferr.flush()
         except IOError, inst:
-            if inst.errno not in (errno.EPIPE, errno.EIO):
+            if inst.errno not in (errno.EPIPE, errno.EIO, errno.EBADF):
                 raise
 
     def flush(self):
         try: self.fout.flush()
-        except: pass
+        except (IOError, ValueError): pass
         try: self.ferr.flush()
-        except: pass
+        except (IOError, ValueError): pass
+
+    def _isatty(self, fh):
+        if self.configbool('ui', 'nontty', False):
+            return False
+        return util.isatty(fh)
 
     def interactive(self):
         '''is interactive input allowed?
@@ -483,7 +624,7 @@ class ui(object):
         if i is None:
             # some environments replace stdin without implementing isatty
             # usually those are non-interactive
-            return util.isatty(self.fin)
+            return self._isatty(self.fin)
 
         return i
 
@@ -521,12 +662,12 @@ class ui(object):
         if i is None:
             # some environments replace stdout without implementing isatty
             # usually those are non-interactive
-            return util.isatty(self.fout)
+            return self._isatty(self.fout)
 
         return i
 
     def _readline(self, prompt=''):
-        if util.isatty(self.fin):
+        if self._isatty(self.fin):
             try:
                 # magically add command line editing support, where
                 # available
@@ -537,12 +678,21 @@ class ui(object):
             except Exception:
                 pass
 
-        # instead of trying to emulate raw_input, swap our in/out
-        # with sys.stdin/out
-        old = sys.stdout, sys.stdin
-        sys.stdout, sys.stdin = self.fout, self.fin
-        line = raw_input(prompt)
-        sys.stdout, sys.stdin = old
+        # call write() so output goes through subclassed implementation
+        # e.g. color extension on Windows
+        self.write(prompt)
+
+        # instead of trying to emulate raw_input, swap (self.fin,
+        # self.fout) with (sys.stdin, sys.stdout)
+        oldin = sys.stdin
+        oldout = sys.stdout
+        sys.stdin = self.fin
+        sys.stdout = self.fout
+        # prompt ' ' must exist; otherwise readline may delete entire line
+        # - http://bugs.python.org/issue12833
+        line = raw_input(' ')
+        sys.stdin = oldin
+        sys.stdout = oldout
 
         # When stdin is in binary mode on Windows, it can cause
         # raw_input() to emit an extra trailing carriage return
@@ -558,21 +708,42 @@ class ui(object):
             self.write(msg, ' ', default, "\n")
             return default
         try:
-            r = self._readline(self.label(msg, 'ui.prompt') + ' ')
+            r = self._readline(self.label(msg, 'ui.prompt'))
             if not r:
-                return default
+                r = default
+            if self.configbool('ui', 'promptecho'):
+                self.write(r, "\n")
             return r
         except EOFError:
             raise util.Abort(_('response expected'))
 
-    def promptchoice(self, msg, choices, default=0):
-        """Prompt user with msg, read response, and ensure it matches
-        one of the provided choices. The index of the choice is returned.
-        choices is a sequence of acceptable responses with the format:
-        ('&None', 'E&xec', 'Sym&link') Responses are case insensitive.
-        If ui is not interactive, the default is returned.
+    @staticmethod
+    def extractchoices(prompt):
+        """Extract prompt message and list of choices from specified prompt.
+
+        This returns tuple "(message, choices)", and "choices" is the
+        list of tuple "(response character, text without &)".
         """
-        resps = [s[s.index('&')+1].lower() for s in choices]
+        parts = prompt.split('$$')
+        msg = parts[0].rstrip(' ')
+        choices = [p.strip(' ') for p in parts[1:]]
+        return (msg,
+                [(s[s.index('&') + 1].lower(), s.replace('&', '', 1))
+                 for s in choices])
+
+    def promptchoice(self, prompt, default=0):
+        """Prompt user with a message, read response, and ensure it matches
+        one of the provided choices. The prompt is formatted as follows:
+
+           "would you like fries with that (Yn)? $$ &Yes $$ &No"
+
+        The index of the choice is returned. Responses are case
+        insensitive. If ui is not interactive, the default is
+        returned.
+        """
+
+        msg, choices = self.extractchoices(prompt)
+        resps = [r for r, t in choices]
         while True:
             r = self.prompt(msg, resps[default])
             if r.lower() in resps:
@@ -583,7 +754,13 @@ class ui(object):
         if not self.interactive():
             return default
         try:
-            return getpass.getpass(prompt or _('password: '))
+            self.write_err(self.label(prompt or _('password: '), 'ui.prompt'))
+            # disable getpass() only if explicitly specified. it's still valid
+            # to interact with tty even if fin is not a tty.
+            if self.configbool('ui', 'nontty'):
+                return self.fin.readline().rstrip('\n')
+            else:
+                return getpass.getpass('')
         except EOFError:
             raise util.Abort(_('response expected'))
     def status(self, *msg, **opts):
@@ -617,7 +794,7 @@ class ui(object):
         if self.debugflag:
             opts['label'] = opts.get('label', '') + ' ui.debug'
             self.write(*msg, **opts)
-    def edit(self, text, user):
+    def edit(self, text, user, extra={}, editform=None):
         (fd, name) = tempfile.mkstemp(prefix="hg-editor-", suffix=".txt",
                                       text=True)
         try:
@@ -625,12 +802,21 @@ class ui(object):
             f.write(text)
             f.close()
 
+            environ = {'HGUSER': user}
+            if 'transplant_source' in extra:
+                environ.update({'HGREVISION': hex(extra['transplant_source'])})
+            for label in ('source', 'rebase_source'):
+                if label in extra:
+                    environ.update({'HGREVISION': extra[label]})
+                    break
+            if editform:
+                environ.update({'HGEDITFORM': editform})
+
             editor = self.geteditor()
 
-            util.system("%s \"%s\"" % (editor, name),
-                        environ={'HGUSER': user},
-                        onerr=util.Abort, errprefix=_("edit failed"),
-                        out=self.fout)
+            self.system("%s \"%s\"" % (editor, name),
+                        environ=environ,
+                        onerr=util.Abort, errprefix=_("edit failed"))
 
             f = open(name)
             t = f.read()
@@ -640,23 +826,50 @@ class ui(object):
 
         return t
 
-    def traceback(self, exc=None):
-        '''print exception traceback if traceback printing enabled.
+    def system(self, cmd, environ={}, cwd=None, onerr=None, errprefix=None):
+        '''execute shell command with appropriate output stream. command
+        output will be redirected if fout is not stdout.
+        '''
+        return util.system(cmd, environ=environ, cwd=cwd, onerr=onerr,
+                           errprefix=errprefix, out=self.fout)
+
+    def traceback(self, exc=None, force=False):
+        '''print exception traceback if traceback printing enabled or forced.
         only to call in exception handler. returns true if traceback
         printed.'''
-        if self.tracebackflag:
-            if exc:
-                traceback.print_exception(exc[0], exc[1], exc[2])
+        if self.tracebackflag or force:
+            if exc is None:
+                exc = sys.exc_info()
+            cause = getattr(exc[1], 'cause', None)
+
+            if cause is not None:
+                causetb = traceback.format_tb(cause[2])
+                exctb = traceback.format_tb(exc[2])
+                exconly = traceback.format_exception_only(cause[0], cause[1])
+
+                # exclude frame where 'exc' was chained and rethrown from exctb
+                self.write_err('Traceback (most recent call last):\n',
+                               ''.join(exctb[:-1]),
+                               ''.join(causetb),
+                               ''.join(exconly))
             else:
-                traceback.print_exc()
-        return self.tracebackflag
+                traceback.print_exception(exc[0], exc[1], exc[2],
+                                          file=self.ferr)
+        return self.tracebackflag or force
 
     def geteditor(self):
         '''return editor to use'''
+        if sys.platform == 'plan9':
+            # vi is the MIPS instruction simulator on Plan 9. We
+            # instead default to E to plumb commit messages to
+            # avoid confusion.
+            editor = 'E'
+        else:
+            editor = 'vi'
         return (os.environ.get("HGEDITOR") or
                 self.config("ui", "editor") or
                 os.environ.get("VISUAL") or
-                os.environ.get("EDITOR", "vi"))
+                os.environ.get("EDITOR", editor))
 
     def progress(self, topic, pos, item="", unit="", total=None):
         '''show a progress message
@@ -664,8 +877,8 @@ class ui(object):
         With stock hg, this is simply a debug message that is hidden
         by default, but with extensions or GUI tools it may be
         visible. 'topic' is the current operation, 'item' is a
-        non-numeric marker of the current position (ie the currently
-        in-process file), 'pos' is the current numeric position (ie
+        non-numeric marker of the current position (i.e. the currently
+        in-process file), 'pos' is the current numeric position (i.e.
         revision, bytes, etc.), unit is a corresponding unit label,
         and total is the highest expected pos.
 
@@ -690,7 +903,7 @@ class ui(object):
         else:
             self.debug('%s:%s %s%s\n' % (topic, item, pos, unit))
 
-    def log(self, service, message):
+    def log(self, service, *msg, **opts):
         '''hook for logging facility extensions
 
         service should be a readily-identifiable subsystem, which will

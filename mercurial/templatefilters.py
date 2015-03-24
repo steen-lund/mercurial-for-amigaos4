@@ -7,6 +7,8 @@
 
 import cgi, re, os, time, urllib
 import encoding, node, util
+import hbisect
+import templatekw
 
 def addbreaks(text):
     """:addbreaks: Any text. Add an XHTML "<br />" tag before the end of
@@ -14,15 +16,15 @@ def addbreaks(text):
     """
     return text.replace('\n', '<br/>\n')
 
-agescales = [("year", 3600 * 24 * 365),
-             ("month", 3600 * 24 * 30),
-             ("week", 3600 * 24 * 7),
-             ("day", 3600 * 24),
-             ("hour", 3600),
-             ("minute", 60),
-             ("second", 1)]
+agescales = [("year", 3600 * 24 * 365, 'Y'),
+             ("month", 3600 * 24 * 30, 'M'),
+             ("week", 3600 * 24 * 7, 'W'),
+             ("day", 3600 * 24, 'd'),
+             ("hour", 3600, 'h'),
+             ("minute", 60, 'm'),
+             ("second", 1, 's')]
 
-def age(date):
+def age(date, abbrev=False):
     """:age: Date. Returns a human-readable date/time difference between the
     given date/time and the current date/time.
     """
@@ -31,7 +33,9 @@ def age(date):
         if c == 1:
             return t
         return t + "s"
-    def fmt(t, c):
+    def fmt(t, c, a):
+        if abbrev:
+            return "%d%s" % (c, a)
         return "%d %s" % (c, plural(t, c))
 
     now = time.time()
@@ -47,12 +51,12 @@ def age(date):
         if delta > agescales[0][1] * 2:
             return util.shortdate(date)
 
-    for t, s in agescales:
+    for t, s, a in agescales:
         n = delta // s
         if n >= 2 or s == 1:
             if future:
-                return '%s from now' % fmt(t, n)
-            return '%s ago' % fmt(t, n)
+                return '%s from now' % fmt(t, n, a)
+            return '%s ago' % fmt(t, n, a)
 
 def basename(path):
     """:basename: Any text. Treats the text as a path, and returns the last
@@ -61,6 +65,10 @@ def basename(path):
     "baz" and "foo/bar//" becomes "bar".
     """
     return os.path.basename(path)
+
+def count(i):
+    """:count: List or text. Returns the length as an integer."""
+    return len(i)
 
 def datefilter(text):
     """:date: Date. Returns a date in a Unix date format, including the
@@ -91,15 +99,15 @@ def email(text):
 
 def escape(text):
     """:escape: Any text. Replaces the special XML/XHTML characters "&", "<"
-    and ">" with XML entities.
+    and ">" with XML entities, and filters out NUL characters.
     """
-    return cgi.escape(text, True)
+    return cgi.escape(text.replace('\0', ''), True)
 
 para_re = None
 space_re = None
 
-def fill(text, width):
-    '''fill many paragraphs.'''
+def fill(text, width, initindent='', hangindent=''):
+    '''fill many paragraphs with optional indentation.'''
     global para_re, space_re
     if para_re is None:
         para_re = re.compile('(\n\n|\n\\s*[-*]\\s*)', re.M)
@@ -120,7 +128,8 @@ def fill(text, width):
             yield text[start:m.start(0)], m.group(1)
             start = m.end(1)
 
-    return "".join([space_re.sub(' ', util.wrap(para, width=width)) + rest
+    return "".join([util.wrap(space_re.sub(' ', util.wrap(para, width)),
+                              width, initindent, hangindent) + rest
                     for para, rest in findparas()])
 
 def fill68(text):
@@ -188,17 +197,19 @@ def json(obj):
         return '"%s"' % jsonescape(u)
     elif isinstance(obj, unicode):
         return '"%s"' % jsonescape(obj)
-    elif hasattr(obj, 'keys'):
+    elif util.safehasattr(obj, 'keys'):
         out = []
-        for k, v in obj.iteritems():
+        for k, v in sorted(obj.iteritems()):
             s = '%s: %s' % (json(k), json(v))
             out.append(s)
         return '{' + ', '.join(out) + '}'
-    elif hasattr(obj, '__iter__'):
+    elif util.safehasattr(obj, '__iter__'):
         out = []
         for i in obj:
             out.append(json(i))
         return '[' + ', '.join(out) + ']'
+    elif util.safehasattr(obj, '__call__'):
+        return json(obj())
     else:
         raise TypeError('cannot encode type %s' % obj.__class__.__name__)
 
@@ -211,6 +222,7 @@ def _uescape(c):
 _escapes = [
     ('\\', '\\\\'), ('"', '\\"'), ('\t', '\\t'), ('\n', '\\n'),
     ('\r', '\\r'), ('\f', '\\f'), ('\b', '\\b'),
+    ('<', '\\u003c'), ('>', '\\u003e'), ('\0', '\\u0000')
 ]
 
 def jsonescape(s):
@@ -220,7 +232,7 @@ def jsonescape(s):
 
 def localdate(text):
     """:localdate: Date. Converts a date to local date."""
-    return (text[0], util.makedate()[1])
+    return (util.parsedate(text)[0], util.makedate()[1])
 
 def nonempty(str):
     """:nonempty: Any text. Returns '(none)' if the string is empty."""
@@ -241,12 +253,29 @@ def permissions(flags):
     return "-rw-r--r--"
 
 def person(author):
-    """:person: Any text. Returns the text before an email address."""
-    if not '@' in author:
+    """:person: Any text. Returns the name before an email address,
+    interpreting it as per RFC 5322.
+
+    >>> person('foo@bar')
+    'foo'
+    >>> person('Foo Bar <foo@bar>')
+    'Foo Bar'
+    >>> person('"Foo Bar" <foo@bar>')
+    'Foo Bar'
+    >>> person('"Foo \"buz\" Bar" <foo@bar>')
+    'Foo "buz" Bar'
+    >>> # The following are invalid, but do exist in real-life
+    ...
+    >>> person('Foo "buz" Bar <foo@bar>')
+    'Foo "buz" Bar'
+    >>> person('"Foo Bar <foo@bar>')
+    'Foo Bar'
+    """
+    if '@' not in author:
         return author
     f = author.find('<')
     if f != -1:
-        return author[:f].rstrip()
+        return author[:f].strip(' "').replace('\\"', '"')
     f = author.find('@')
     return author[:f].replace('.', ' ')
 
@@ -268,9 +297,21 @@ def short(text):
     """
     return text[:12]
 
+def shortbisect(text):
+    """:shortbisect: Any text. Treats `text` as a bisection status, and
+    returns a single-character representing the status (G: good, B: bad,
+    S: skipped, U: untested, I: ignored). Returns single space if `text`
+    is not a valid bisection status.
+    """
+    return hbisect.shortlabel(text) or ' '
+
 def shortdate(text):
     """:shortdate: Date. Returns a date like "2006-09-18"."""
     return util.shortdate(text)
+
+def splitlines(text):
+    """:splitlines: Any text. Split text into a list of lines."""
+    return templatekw.showlist('line', text.splitlines(), 'lines')
 
 def stringescape(text):
     return text.encode('string_escape')
@@ -279,7 +320,7 @@ def stringify(thing):
     """:stringify: Any type. Turns the value into text by converting values into
     text and concatenating them.
     """
-    if hasattr(thing, '__iter__') and not isinstance(thing, str):
+    if util.safehasattr(thing, '__iter__') and not isinstance(thing, str):
         return "".join([stringify(t) for t in thing if t is not None])
     return str(thing)
 
@@ -298,8 +339,8 @@ def stripdir(text):
         return dir
 
 def tabindent(text):
-    """:tabindent: Any text. Returns the text, with every line except the
-    first starting with a tab character.
+    """:tabindent: Any text. Returns the text, with every non-empty line
+    except the first starting with a tab character.
     """
     return indent(text, '\t')
 
@@ -310,8 +351,13 @@ def urlescape(text):
     return urllib.quote(text)
 
 def userfilter(text):
-    """:user: Any text. Returns the user portion of an email address."""
+    """:user: Any text. Returns a short representation of a user name or email
+    address."""
     return util.shortuser(text)
+
+def emailuser(text):
+    """:emailuser: Any text. Returns the user portion of an email address."""
+    return util.emailuser(text)
 
 def xmlescape(text):
     text = (text
@@ -326,6 +372,7 @@ filters = {
     "addbreaks": addbreaks,
     "age": age,
     "basename": basename,
+    "count": count,
     "date": datefilter,
     "domain": domain,
     "email": email,
@@ -347,7 +394,9 @@ filters = {
     "rfc3339date": rfc3339date,
     "rfc822date": rfc822date,
     "short": short,
+    "shortbisect": shortbisect,
     "shortdate": shortdate,
+    "splitlines": splitlines,
     "stringescape": stringescape,
     "stringify": stringify,
     "strip": strip,
@@ -355,8 +404,18 @@ filters = {
     "tabindent": tabindent,
     "urlescape": urlescape,
     "user": userfilter,
+    "emailuser": emailuser,
     "xmlescape": xmlescape,
 }
+
+def websub(text, websubtable):
+    """:websub: Any text. Only applies to hgweb. Applies the regular
+    expression replacements defined in the websub section.
+    """
+    if websubtable:
+        for regexp, format in websubtable:
+            text = regexp.sub(format, text)
+    return text
 
 # tell hggettext to extract docstrings from these functions:
 i18nfunctions = filters.values()

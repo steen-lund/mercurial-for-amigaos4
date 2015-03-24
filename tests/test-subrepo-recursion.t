@@ -23,10 +23,10 @@ Add files --- .hgsub files must go first to trigger subrepos:
   $ hg add -S .hgsub
   $ hg add -S foo/.hgsub
   $ hg add -S foo/bar
-  adding foo/bar/z.txt
+  adding foo/bar/z.txt (glob)
   $ hg add -S
   adding x.txt
-  adding foo/y.txt
+  adding foo/y.txt (glob)
 
 Test recursive status without committing anything:
 
@@ -58,9 +58,16 @@ Test recursive diff without committing anything:
 
 Commits:
 
-  $ hg commit -m 0-0-0
+  $ hg commit -m fails
+  abort: uncommitted changes in subrepo foo
+  (use --subrepos for recursive commit)
+  [255]
+
+The --subrepos flag overwrite the config setting:
+
+  $ hg commit -m 0-0-0 --config ui.commitsubrepos=No --subrepos
   committing subrepository foo
-  committing subrepository foo/bar
+  committing subrepository foo/bar (glob)
 
   $ cd foo
   $ echo y2 >> y.txt
@@ -72,11 +79,9 @@ Commits:
 
   $ cd ..
   $ hg commit -m 0-2-1
-  committing subrepository bar
 
   $ cd ..
   $ hg commit -m 1-2-1
-  committing subrepository foo
 
 Change working directory:
 
@@ -157,6 +162,14 @@ Status with relative path:
   M ../foo/bar/z.txt
   M ../foo/y.txt
   ? a.txt
+
+XXX: filtering lfilesrepo.status() in 3.3-rc causes these files to be listed as
+added instead of modified.
+  $ hg status -S .. --config extensions.largefiles=
+  M ../foo/bar/z.txt
+  M ../foo/y.txt
+  ? a.txt
+
   $ hg diff --nodates -S ..
   diff -r d254738c5f5e foo/y.txt
   --- a/foo/y.txt
@@ -177,9 +190,26 @@ Status with relative path:
 Cleanup and final commit:
 
   $ rm -r dir
-  $ hg commit -m 2-3-2
+  $ hg commit --subrepos -m 2-3-2
   committing subrepository foo
-  committing subrepository foo/bar
+  committing subrepository foo/bar (glob)
+
+Test explicit path commands within subrepos: add/forget
+  $ echo z1 > foo/bar/z2.txt
+  $ hg status -S
+  ? foo/bar/z2.txt
+  $ hg add foo/bar/z2.txt
+  $ hg status -S
+  A foo/bar/z2.txt
+  $ hg forget foo/bar/z2.txt
+  $ hg status -S
+  ? foo/bar/z2.txt
+  $ hg forget foo/bar/z2.txt
+  not removing foo/bar/z2.txt: file is already untracked (glob)
+  [1]
+  $ hg status -S
+  ? foo/bar/z2.txt
+  $ rm foo/bar/z2.txt
 
 Log with the relationships between repo and its subrepo:
 
@@ -238,31 +268,33 @@ Enable progress extension for archive tests:
 Test archiving to a directory tree (the doubled lines in the output
 only show up in the test output, not in real usage):
 
-  $ hg archive --subrepos ../archive 2>&1 | $TESTDIR/filtercr.py
-  
-  archiving [                                           ] 0/3
-  archiving [                                           ] 0/3
-  archiving [=============>                             ] 1/3
-  archiving [=============>                             ] 1/3
-  archiving [===========================>               ] 2/3
-  archiving [===========================>               ] 2/3
-  archiving [==========================================>] 3/3
-  archiving [==========================================>] 3/3
-                                                              
-  archiving (foo) [                                     ] 0/3
-  archiving (foo) [                                     ] 0/3
-  archiving (foo) [===========>                         ] 1/3
-  archiving (foo) [===========>                         ] 1/3
-  archiving (foo) [=======================>             ] 2/3
-  archiving (foo) [=======================>             ] 2/3
-  archiving (foo) [====================================>] 3/3
-  archiving (foo) [====================================>] 3/3
-                                                              
-  archiving (foo/bar) [                                 ] 0/1
-  archiving (foo/bar) [                                 ] 0/1
-  archiving (foo/bar) [================================>] 1/1
-  archiving (foo/bar) [================================>] 1/1
-                                                              \r (esc)
+  $ hg archive --subrepos ../archive
+  \r (no-eol) (esc)
+  archiving [                                           ] 0/3\r (no-eol) (esc)
+  archiving [                                           ] 0/3\r (no-eol) (esc)
+  archiving [=============>                             ] 1/3\r (no-eol) (esc)
+  archiving [=============>                             ] 1/3\r (no-eol) (esc)
+  archiving [===========================>               ] 2/3\r (no-eol) (esc)
+  archiving [===========================>               ] 2/3\r (no-eol) (esc)
+  archiving [==========================================>] 3/3\r (no-eol) (esc)
+  archiving [==========================================>] 3/3\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  archiving (foo) [                                     ] 0/3\r (no-eol) (esc)
+  archiving (foo) [                                     ] 0/3\r (no-eol) (esc)
+  archiving (foo) [===========>                         ] 1/3\r (no-eol) (esc)
+  archiving (foo) [===========>                         ] 1/3\r (no-eol) (esc)
+  archiving (foo) [=======================>             ] 2/3\r (no-eol) (esc)
+  archiving (foo) [=======================>             ] 2/3\r (no-eol) (esc)
+  archiving (foo) [====================================>] 3/3\r (no-eol) (esc)
+  archiving (foo) [====================================>] 3/3\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  archiving (foo/bar) [                                 ] 0/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [                                 ] 0/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [================================>] 1/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [================================>] 1/1\r (no-eol) (glob) (esc)
+                                                              \r (no-eol) (esc)
   $ find ../archive | sort
   ../archive
   ../archive/.hg_archival.txt
@@ -278,35 +310,92 @@ only show up in the test output, not in real usage):
 
 Test archiving to zip file (unzip output is unstable):
 
-  $ hg archive --subrepos ../archive.zip 2>&1 | $TESTDIR/filtercr.py
-  
-  archiving [                                           ] 0/3
-  archiving [                                           ] 0/3
-  archiving [=============>                             ] 1/3
-  archiving [=============>                             ] 1/3
-  archiving [===========================>               ] 2/3
-  archiving [===========================>               ] 2/3
-  archiving [==========================================>] 3/3
-  archiving [==========================================>] 3/3
-                                                              
-  archiving (foo) [                                     ] 0/3
-  archiving (foo) [                                     ] 0/3
-  archiving (foo) [===========>                         ] 1/3
-  archiving (foo) [===========>                         ] 1/3
-  archiving (foo) [=======================>             ] 2/3
-  archiving (foo) [=======================>             ] 2/3
-  archiving (foo) [====================================>] 3/3
-  archiving (foo) [====================================>] 3/3
-                                                              
-  archiving (foo/bar) [                                 ] 0/1
-  archiving (foo/bar) [                                 ] 0/1
-  archiving (foo/bar) [================================>] 1/1
-  archiving (foo/bar) [================================>] 1/1
-                                                              \r (esc)
+  $ hg archive --subrepos ../archive.zip
+  \r (no-eol) (esc)
+  archiving [                                           ] 0/3\r (no-eol) (esc)
+  archiving [                                           ] 0/3\r (no-eol) (esc)
+  archiving [=============>                             ] 1/3\r (no-eol) (esc)
+  archiving [=============>                             ] 1/3\r (no-eol) (esc)
+  archiving [===========================>               ] 2/3\r (no-eol) (esc)
+  archiving [===========================>               ] 2/3\r (no-eol) (esc)
+  archiving [==========================================>] 3/3\r (no-eol) (esc)
+  archiving [==========================================>] 3/3\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  archiving (foo) [                                     ] 0/3\r (no-eol) (esc)
+  archiving (foo) [                                     ] 0/3\r (no-eol) (esc)
+  archiving (foo) [===========>                         ] 1/3\r (no-eol) (esc)
+  archiving (foo) [===========>                         ] 1/3\r (no-eol) (esc)
+  archiving (foo) [=======================>             ] 2/3\r (no-eol) (esc)
+  archiving (foo) [=======================>             ] 2/3\r (no-eol) (esc)
+  archiving (foo) [====================================>] 3/3\r (no-eol) (esc)
+  archiving (foo) [====================================>] 3/3\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  archiving (foo/bar) [                                 ] 0/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [                                 ] 0/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [================================>] 1/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [================================>] 1/1\r (no-eol) (glob) (esc)
+                                                              \r (no-eol) (esc)
+
+Test archiving a revision that references a subrepo that is not yet
+cloned:
+
+  $ hg clone -U . ../empty
+  $ cd ../empty
+  $ hg archive --subrepos -r tip ../archive.tar.gz
+  \r (no-eol) (esc)
+  archiving [                                           ] 0/3\r (no-eol) (esc)
+  archiving [                                           ] 0/3\r (no-eol) (esc)
+  archiving [=============>                             ] 1/3\r (no-eol) (esc)
+  archiving [=============>                             ] 1/3\r (no-eol) (esc)
+  archiving [===========================>               ] 2/3\r (no-eol) (esc)
+  archiving [===========================>               ] 2/3\r (no-eol) (esc)
+  archiving [==========================================>] 3/3\r (no-eol) (esc)
+  archiving [==========================================>] 3/3\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  archiving (foo) [                                     ] 0/3\r (no-eol) (esc)
+  archiving (foo) [                                     ] 0/3\r (no-eol) (esc)
+  archiving (foo) [===========>                         ] 1/3\r (no-eol) (esc)
+  archiving (foo) [===========>                         ] 1/3\r (no-eol) (esc)
+  archiving (foo) [=======================>             ] 2/3\r (no-eol) (esc)
+  archiving (foo) [=======================>             ] 2/3\r (no-eol) (esc)
+  archiving (foo) [====================================>] 3/3\r (no-eol) (esc)
+  archiving (foo) [====================================>] 3/3\r (no-eol) (esc)
+                                                              \r (no-eol) (esc)
+  \r (no-eol) (esc)
+  archiving (foo/bar) [                                 ] 0/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [                                 ] 0/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [================================>] 1/1\r (no-eol) (glob) (esc)
+  archiving (foo/bar) [================================>] 1/1\r (no-eol) (glob) (esc)
+                                                              \r (no-eol) (esc)
+  cloning subrepo foo from $TESTTMP/repo/foo
+  cloning subrepo foo/bar from $TESTTMP/repo/foo/bar (glob)
+
+The newly cloned subrepos contain no working copy:
+
+  $ hg -R foo summary
+  parent: -1:000000000000  (no revision checked out)
+  branch: default
+  commit: (clean)
+  update: 4 new changesets (update)
 
 Disable progress extension and cleanup:
 
   $ mv $HGRCPATH.no-progress $HGRCPATH
+
+Test archiving when there is a directory in the way for a subrepo
+created by archive:
+
+  $ hg clone -U . ../almost-empty
+  $ cd ../almost-empty
+  $ mkdir foo
+  $ echo f > foo/f
+  $ hg archive --subrepos -r tip archive
+  cloning subrepo foo from $TESTTMP/empty/foo
+  abort: destination '$TESTTMP/almost-empty/foo' is not empty (in subrepo foo) (glob)
+  [255]
 
 Clone and test outgoing:
 
@@ -314,11 +403,11 @@ Clone and test outgoing:
   $ hg clone repo repo2
   updating to branch default
   cloning subrepo foo from $TESTTMP/repo/foo
-  cloning subrepo foo/bar from $TESTTMP/repo/foo/bar
+  cloning subrepo foo/bar from $TESTTMP/repo/foo/bar (glob)
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ cd repo2
   $ hg outgoing -S
-  comparing with $TESTTMP/repo
+  comparing with $TESTTMP/repo (glob)
   searching for changes
   no changes found
   comparing with $TESTTMP/repo/foo
@@ -341,10 +430,10 @@ Make nested change:
    y2
    y3
   +y4
-  $ hg commit -m 3-4-2
+  $ hg commit --subrepos -m 3-4-2
   committing subrepository foo
   $ hg outgoing -S
-  comparing with $TESTTMP/repo
+  comparing with $TESTTMP/repo (glob)
   searching for changes
   changeset:   3:2655b8ecc4ee
   tag:         tip
@@ -374,7 +463,7 @@ Switch to original repo and setup default path:
 Test incoming:
 
   $ hg incoming -S
-  comparing with $TESTTMP/repo2
+  comparing with $TESTTMP/repo2 (glob)
   searching for changes
   changeset:   3:2655b8ecc4ee
   tag:         tip
@@ -415,3 +504,5 @@ The subrepo must sorts after the explicit filename.
   $ hg add .hgsub
   $ touch a x/a
   $ hg add a x/a
+
+  $ cd ..

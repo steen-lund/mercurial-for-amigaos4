@@ -1,3 +1,5 @@
+#require no-msys # MSYS will translate web paths as if they were file paths
+
 This tests if CGI files from after d0db3462d568 but
 before d74fc8dec2b4 still work.
 

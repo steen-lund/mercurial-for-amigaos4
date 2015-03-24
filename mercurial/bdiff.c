@@ -9,42 +9,11 @@
  Based roughly on Python difflib
 */
 
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-
-#if defined __hpux || defined __SUNPRO_C || defined _AIX
-#define inline
-#endif
-
-#ifdef __linux
-#define inline __inline
-#endif
-
-#ifdef _WIN32
-#ifdef _MSC_VER
-#define inline __inline
-typedef unsigned long uint32_t;
-#else
-#include <stdint.h>
-#endif
-static uint32_t htonl(uint32_t x)
-{
-	return ((x & 0x000000ffUL) << 24) |
-		((x & 0x0000ff00UL) <<  8) |
-		((x & 0x00ff0000UL) >>  8) |
-		((x & 0xff000000UL) >> 24);
-}
-#else
-#include <sys/types.h>
-#if defined __BEOS__ && !defined __HAIKU__
-#include <ByteOrder.h>
-#else
-#include <arpa/inet.h>
-#endif
-#include <inttypes.h>
-#endif
 
 #if defined(__amigaos4__)
 #define htonl(x) x
@@ -53,7 +22,8 @@ static uint32_t htonl(uint32_t x)
 #include "util.h"
 
 struct line {
-	int hash, len, n, e;
+	int hash, n, e;
+	Py_ssize_t len;
 	const char *l;
 };
 
@@ -67,7 +37,7 @@ struct hunk {
 	struct hunk *next;
 };
 
-static int splitlines(const char *a, int len, struct line **lr)
+static int splitlines(const char *a, Py_ssize_t len, struct line **lr)
 {
 	unsigned hash;
 	int i;
@@ -337,6 +307,8 @@ static PyObject *blocks(PyObject *self, PyObject *args)
 	struct hunk l, *h;
 	int an, bn, count, pos = 0;
 
+	l.next = NULL;
+
 	if (!PyArg_ParseTuple(args, "SS:bdiff", &sa, &sb))
 		return NULL;
 
@@ -346,7 +318,6 @@ static PyObject *blocks(PyObject *self, PyObject *args)
 	if (!a || !b)
 		goto nomem;
 
-	l.next = NULL;
 	count = diff(a, an, b, bn, &l);
 	if (count < 0)
 		goto nomem;
@@ -370,22 +341,30 @@ nomem:
 
 static PyObject *bdiff(PyObject *self, PyObject *args)
 {
-	char *sa, *sb;
+	char *sa, *sb, *rb;
 	PyObject *result = NULL;
 	struct line *al, *bl;
 	struct hunk l, *h;
-	char encode[12], *rb;
-	int an, bn, len = 0, la, lb, count;
+	int an, bn, count;
+	Py_ssize_t len = 0, la, lb;
+	PyThreadState *_save;
+
+	l.next = NULL;
 
 	if (!PyArg_ParseTuple(args, "s#s#:bdiff", &sa, &la, &sb, &lb))
 		return NULL;
 
+	if (la > UINT_MAX || lb > UINT_MAX) {
+		PyErr_SetString(PyExc_ValueError, "bdiff inputs too large");
+		return NULL;
+	}
+
+	_save = PyEval_SaveThread();
 	an = splitlines(sa, la, &al);
 	bn = splitlines(sb, lb, &bl);
 	if (!al || !bl)
 		goto nomem;
 
-	l.next = NULL;
 	count = diff(al, an, bl, bn, &l);
 	if (count < 0)
 		goto nomem;
@@ -398,6 +377,8 @@ static PyObject *bdiff(PyObject *self, PyObject *args)
 		la = h->a2;
 		lb = h->b2;
 	}
+	PyEval_RestoreThread(_save);
+	_save = NULL;
 
 	result = PyBytes_FromStringAndSize(NULL, len);
 
@@ -411,10 +392,9 @@ static PyObject *bdiff(PyObject *self, PyObject *args)
 	for (h = l.next; h; h = h->next) {
 		if (h->a1 != la || h->b1 != lb) {
 			len = bl[h->b1].l - bl[lb].l;
-			*(uint32_t *)(encode)     = htonl(al[la].l - al->l);
-			*(uint32_t *)(encode + 4) = htonl(al[h->a1].l - al->l);
-			*(uint32_t *)(encode + 8) = htonl(len);
-			memcpy(rb, encode, 12);
+			putbe32((uint32_t)(al[la].l - al->l), rb);
+			putbe32((uint32_t)(al[h->a1].l - al->l), rb + 4);
+			putbe32((uint32_t)len, rb + 8);
 			memcpy(rb + 12, bl[lb].l, len);
 			rb += 12 + len;
 		}
@@ -423,17 +403,63 @@ static PyObject *bdiff(PyObject *self, PyObject *args)
 	}
 
 nomem:
+	if (_save)
+		PyEval_RestoreThread(_save);
 	free(al);
 	free(bl);
 	freehunks(l.next);
 	return result ? result : PyErr_NoMemory();
 }
 
+/*
+ * If allws != 0, remove all whitespace (' ', \t and \r). Otherwise,
+ * reduce whitespace sequences to a single space and trim remaining whitespace
+ * from end of lines.
+ */
+static PyObject *fixws(PyObject *self, PyObject *args)
+{
+	PyObject *s, *result = NULL;
+	char allws, c;
+	const char *r;
+	Py_ssize_t i, rlen, wlen = 0;
+	char *w;
+
+	if (!PyArg_ParseTuple(args, "Sb:fixws", &s, &allws))
+		return NULL;
+	r = PyBytes_AsString(s);
+	rlen = PyBytes_Size(s);
+
+	w = (char *)malloc(rlen ? rlen : 1);
+	if (!w)
+		goto nomem;
+
+	for (i = 0; i != rlen; i++) {
+		c = r[i];
+		if (c == ' ' || c == '\t' || c == '\r') {
+			if (!allws && (wlen == 0 || w[wlen - 1] != ' '))
+				w[wlen++] = ' ';
+		} else if (c == '\n' && !allws
+			  && wlen > 0 && w[wlen - 1] == ' ') {
+			w[wlen - 1] = '\n';
+		} else {
+			w[wlen++] = c;
+		}
+	}
+
+	result = PyBytes_FromStringAndSize(w, wlen);
+
+nomem:
+	free(w);
+	return result ? result : PyErr_NoMemory();
+}
+
+
 static char mdiff_doc[] = "Efficient binary diff.";
 
 static PyMethodDef methods[] = {
 	{"bdiff", bdiff, METH_VARARGS, "calculate a binary diff\n"},
 	{"blocks", blocks, METH_VARARGS, "find a list of matching lines\n"},
+	{"fixws", fixws, METH_VARARGS, "normalize diff whitespaces\n"},
 	{NULL, NULL}
 };
 

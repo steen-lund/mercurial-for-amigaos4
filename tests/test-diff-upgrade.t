@@ -1,8 +1,11 @@
+#require execbit
 
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "autodiff=$TESTDIR/autodiff.py" >> $HGRCPATH
-  $ echo "[diff]" >> $HGRCPATH
-  $ echo "nodates=1" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > autodiff = $TESTDIR/autodiff.py
+  > [diff]
+  > nodates = 1
+  > EOF
 
   $ hg init repo
   $ cd repo
@@ -13,7 +16,7 @@ make a combination of new, changed and deleted file
 
   $ echo regular > regular
   $ echo rmregular > rmregular
-  $ python -c "file('bintoregular', 'wb').write('\0')"
+  $ $PYTHON -c "file('bintoregular', 'wb').write('\0')"
   $ touch rmempty
   $ echo exec > exec
   $ chmod +x exec
@@ -23,7 +26,7 @@ make a combination of new, changed and deleted file
   $ echo unsetexec > unsetexec
   $ chmod +x unsetexec
   $ echo binary > binary
-  $ python -c "file('rmbinary', 'wb').write('\0')"
+  $ $PYTHON -c "file('rmbinary', 'wb').write('\0')"
   $ hg ci -Am addfiles
   adding binary
   adding bintoregular
@@ -47,8 +50,8 @@ make a combination of new, changed and deleted file
   $ rm rmexec
   $ chmod +x setexec
   $ chmod -x unsetexec
-  $ python -c "file('binary', 'wb').write('\0\0')"
-  $ python -c "file('newbinary', 'wb').write('\0')"
+  $ $PYTHON -c "file('binary', 'wb').write('\0\0')"
+  $ $PYTHON -c "file('newbinary', 'wb').write('\0')"
   $ rm rmbinary
   $ hg addremove -s 0
   adding newbinary
@@ -182,7 +185,7 @@ git=auto: regular diff for regular files and non-binary removals
   % git=auto: git diff for newbinary
   diff --git a/newbinary b/newbinary
   new file mode 100644
-  index 0000000000000000000000000000000000000000..f76dd238ade08917e6712764a16a22005a50573d
+  index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..f76dd238ade08917e6712764a16a22005a50573d
   GIT binary patch
   literal 1
   Ic${MZ000310RR91
@@ -199,7 +202,11 @@ git=auto: regular diff for regular files and non-binary removals
   % git=auto: git diff for rmbinary
   diff --git a/rmbinary b/rmbinary
   deleted file mode 100644
-  Binary file rmbinary has changed
+  index f76dd238ade08917e6712764a16a22005a50573d..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+  GIT binary patch
+  literal 0
+  Hc$@<O00001
+  
   
   % git=auto: git diff for bintoregular
   diff --git a/bintoregular b/bintoregular
@@ -208,6 +215,7 @@ git=auto: regular diff for regular files and non-binary removals
   literal 13
   Uc$`bh%qz(+N=+}#Ni5<5043uE82|tP
   
+
 
 git=warn: regular diff with data loss warnings
 

@@ -1,3 +1,5 @@
+#require serve
+
 setting up repo
 
   $ hg init test
@@ -15,7 +17,7 @@ set up hgweb
 
 revision
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/rev/tip'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'rev/tip'
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -57,14 +59,14 @@ revision
   
   <div class="main">
   
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>changeset 1:c78f6c5cbea9  <span class="tag">tip</span>  </h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="description">del</div>
@@ -76,7 +78,7 @@ revision
   </tr>
   <tr>
    <th class="date">date</th>
-   <td class="date age">Thu Jan 01 00:00:00 1970 +0000</td></tr>
+   <td class="date age">Thu, 01 Jan 1970 00:00:00 +0000</td></tr>
   <tr>
    <th class="author">parents</th>
    <td class="author"><a href="/rev/cb9a9f314b8b">cb9a9f314b8b</a> </td>
@@ -94,11 +96,11 @@ revision
     <td class="diffstat">
        1 files changed, 0 insertions(+), 1 deletions(-)
   
-      <a id="diffstatexpand" href="javascript:showDiffstat()"/>[<tt>+</tt>]</a>
+      <a id="diffstatexpand" href="javascript:toggleDiffstat()">[<tt>+</tt>]</a>
       <div id="diffstatdetails" style="display:none;">
-        <a href="javascript:hideDiffstat()"/>[<tt>-</tt>]</a>
-        <p>
-        <table>  <tr class="parity0">
+        <a href="javascript:toggleDiffstat()">[<tt>-</tt>]</a>
+        <p></p>
+        <table class="stripes2">  <tr>
       <td class="diffstat-file"><a href="#l1.1">a</a></td>
       <td class="diffstat-total" align="right">1</td>
       <td class="diffstat-graph">
@@ -113,13 +115,15 @@ revision
   </table>
   
   <div class="overflow">
-  <div class="sourcefirst">   line diff</div>
-  
-  <div class="source bottomline parity0"><pre><a href="#l1.1" id="l1.1">     1.1</a> <span class="minusline">--- a/a	Thu Jan 01 00:00:00 1970 +0000
-  </span><a href="#l1.2" id="l1.2">     1.2</a> <span class="plusline">+++ /dev/null	Thu Jan 01 00:00:00 1970 +0000
-  </span><a href="#l1.3" id="l1.3">     1.3</a> <span class="atline">@@ -1,1 +0,0 @@
-  </span><a href="#l1.4" id="l1.4">     1.4</a> <span class="minusline">-a
-  </span></pre></div>
+  <div class="sourcefirst linewraptoggle">line wrap: <a class="linewraplink" href="javascript:toggleLinewrap()">on</a></div>
+  <div class="sourcefirst"> line diff</div>
+  <div class="stripes2 diffblocks">
+  <div class="bottomline inc-lineno"><pre class="sourcelines wrap">
+  <span id="l1.1" class="minusline">--- a/a	Thu Jan 01 00:00:00 1970 +0000</span><a href="#l1.1"></a>
+  <span id="l1.2" class="plusline">+++ /dev/null	Thu Jan 01 00:00:00 1970 +0000</span><a href="#l1.2"></a>
+  <span id="l1.3" class="atline">@@ -1,1 +0,0 @@</span><a href="#l1.3"></a>
+  <span id="l1.4" class="minusline">-a</span><a href="#l1.4"></a></pre></div>
+  </div>
   </div>
   
   </div>
@@ -133,7 +137,7 @@ revision
 
 diff removed file
 
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/diff/tip/a'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'diff/tip/a'
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -169,6 +173,7 @@ diff removed file
   <li><a href="/file/c78f6c5cbea9/a">file</a></li>
   <li><a href="/file/tip/a">latest</a></li>
   <li class="active">diff</li>
+  <li><a href="/comparison/c78f6c5cbea9/a">comparison</a></li>
   <li><a href="/annotate/c78f6c5cbea9/a">annotate</a></li>
   <li><a href="/log/c78f6c5cbea9/a">file log</a></li>
   <li><a href="/raw-file/c78f6c5cbea9/a">raw</a></li>
@@ -179,14 +184,14 @@ diff removed file
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>diff a @ 1:c78f6c5cbea9</h3>
   
   <form class="search" action="/log">
   <p></p>
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="description">del</div>
@@ -198,7 +203,7 @@ diff removed file
   </tr>
   <tr>
    <th>date</th>
-   <td class="date age">Thu Jan 01 00:00:00 1970 +0000</td>
+   <td class="date age">Thu, 01 Jan 1970 00:00:00 +0000</td>
   </tr>
   <tr>
    <th>parents</th>
@@ -208,17 +213,18 @@ diff removed file
    <th>children</th>
    <td></td>
   </tr>
-  
   </table>
   
   <div class="overflow">
-  <div class="sourcefirst">   line diff</div>
-  
-  <div class="source bottomline parity0"><pre><a href="#l1.1" id="l1.1">     1.1</a> <span class="minusline">--- a/a	Thu Jan 01 00:00:00 1970 +0000
-  </span><a href="#l1.2" id="l1.2">     1.2</a> <span class="plusline">+++ /dev/null	Thu Jan 01 00:00:00 1970 +0000
-  </span><a href="#l1.3" id="l1.3">     1.3</a> <span class="atline">@@ -1,1 +0,0 @@
-  </span><a href="#l1.4" id="l1.4">     1.4</a> <span class="minusline">-a
-  </span></pre></div>
+  <div class="sourcefirst linewraptoggle">line wrap: <a class="linewraplink" href="javascript:toggleLinewrap()">on</a></div>
+  <div class="sourcefirst"> line diff</div>
+  <div class="stripes2 diffblocks">
+  <div class="bottomline inc-lineno"><pre class="sourcelines wrap">
+  <span id="l1.1" class="minusline">--- a/a	Thu Jan 01 00:00:00 1970 +0000</span><a href="#l1.1"></a>
+  <span id="l1.2" class="plusline">+++ /dev/null	Thu Jan 01 00:00:00 1970 +0000</span><a href="#l1.2"></a>
+  <span id="l1.3" class="atline">@@ -1,1 +0,0 @@</span><a href="#l1.3"></a>
+  <span id="l1.4" class="minusline">-a</span><a href="#l1.4"></a></pre></div>
+  </div>
   </div>
   </div>
   </div>
@@ -229,3 +235,5 @@ diff removed file
   </body>
   </html>
   
+
+  $ cd ..

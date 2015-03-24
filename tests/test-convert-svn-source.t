@@ -1,27 +1,21 @@
+#require svn svn-bindings
 
-  $ "$TESTDIR/hghave" svn svn-bindings || exit 80
-
-  $ fixpath()
-  > {
-  >     tr '\\' /
-  > }
   $ cat >> $HGRCPATH <<EOF
   > [extensions]
-  > convert = 
-  > graphlog =
+  > convert =
   > [convert]
   > svn.trunk = mytrunk
   > EOF
 
   $ svnadmin create svn-repo
-  $ svnpath=`pwd | fixpath`
-
-
-  $ expr "$svnpath" : "\/" > /dev/null
-  > if [ $? -ne 0 ]; then
-  >   svnpath="/$svnpath"
-  > fi
-  > svnurl="file://$svnpath/svn-repo"
+  $ SVNREPOPATH=`pwd`/svn-repo
+#if windows
+  $ SVNREPOURL=file:///`$PYTHON -c "import urllib, sys; sys.stdout.write(urllib.quote(sys.argv[1]))" "$SVNREPOPATH"`
+#else
+  $ SVNREPOURL=file://`$PYTHON -c "import urllib, sys; sys.stdout.write(urllib.quote(sys.argv[1]))" "$SVNREPOPATH"`
+#endif
+  $ INVALIDREVISIONID=svn:x2147622-4a9f-4db4-a8d3-13562ff547b2/proj%20B/mytrunk@1
+  $ VALIDREVISIONID=svn:a2147622-4a9f-4db4-a8d3-13562ff547b2/proj%20B/mytrunk/mytrunk@1
 
 Now test that it works with trunk/tags layout, but no branches yet.
 
@@ -33,16 +27,15 @@ Initial svn import
   $ mkdir tags
   $ cd ..
 
-  $ svnurl="file://$svnpath/svn-repo/proj%20B"
-  $ svn import -m "init projB" projB "$svnurl" | fixpath
-  Adding         projB/mytrunk
-  Adding         projB/tags
+  $ svn import -m "init projB" projB "$SVNREPOURL/proj%20B" | sort
   
+  Adding         projB/mytrunk (glob)
+  Adding         projB/tags (glob)
   Committed revision 1.
 
 Update svn repository
 
-  $ svn co "$svnurl"/mytrunk B | fixpath
+  $ svn co "$SVNREPOURL/proj%20B/mytrunk" B
   Checked out revision 1.
   $ cd B
   $ echo hello > 'letter .txt'
@@ -59,7 +52,7 @@ Update svn repository
   Transmitting file data .
   Committed revision 3.
 
-  $ svn copy -m "tag v0.1" "$svnurl"/mytrunk "$svnurl"/tags/v0.1
+  $ svn copy -m "tag v0.1" "$SVNREPOURL/proj%20B/mytrunk" "$SVNREPOURL/proj%20B/tags/v0.1"
   
   Committed revision 4.
 
@@ -70,9 +63,16 @@ Update svn repository
   Committed revision 5.
   $ cd ..
 
-Convert to hg once
+Convert to hg once and also test localtimezone option
 
-  $ hg convert "$svnurl" B-hg
+NOTE: This doesn't check all time zones -- it merely determines that
+the configuration option is taking effect.
+
+An arbitrary (U.S.) time zone is used here.  TZ=US/Hawaii is selected
+since it does not use DST (unlike other U.S. time zones) and is always
+a fixed difference from UTC.
+
+  $ TZ=US/Hawaii hg convert --config convert.localtimezone=True "$SVNREPOURL/proj%20B" B-hg
   initializing destination B-hg repository
   scanning source...
   sorting...
@@ -96,7 +96,7 @@ Update svn repository again
   Transmitting file data ..
   Committed revision 6.
 
-  $ svn copy -m "tag v0.2" "$svnurl"/mytrunk "$svnurl"/tags/v0.2
+  $ svn copy -m "tag v0.2" "$SVNREPOURL/proj%20B/mytrunk" "$SVNREPOURL/proj%20B/tags/v0.2"
   
   Committed revision 7.
 
@@ -107,7 +107,7 @@ Update svn repository again
   Committed revision 8.
   $ cd ..
 
-  $ hg convert -s svn "$svnurl/non-existent-path" dest
+  $ hg convert -s svn "$SVNREPOURL/proj%20B/non-existent-path" dest
   initializing destination dest repository
   abort: no revision found in module /proj B/non-existent-path
   [255]
@@ -116,7 +116,7 @@ Update svn repository again
 
 Test incremental conversion
 
-  $ hg convert "$svnurl" B-hg
+  $ TZ=US/Hawaii hg convert --config convert.localtimezone=True "$SVNREPOURL/proj%20B" B-hg
   scanning source...
   sorting...
   converting...
@@ -125,22 +125,22 @@ Test incremental conversion
   updating tags
 
   $ cd B-hg
-  $ hg glog --template '{rev} {desc|firstline} files: {files}\n'
-  o  7 update tags files: .hgtags
+  $ hg log -G --template '{rev} {desc|firstline} date: {date|date} files: {files}\n'
+  o  7 update tags date: * +0000 files: .hgtags (glob)
   |
-  o  6 work in progress files: letter2.txt
+  o  6 work in progress date: * -1000 files: letter2.txt (glob)
   |
-  o  5 second letter files: letter .txt letter2.txt
+  o  5 second letter date: * -1000 files: letter .txt letter2.txt (glob)
   |
-  o  4 update tags files: .hgtags
+  o  4 update tags date: * +0000 files: .hgtags (glob)
   |
-  o  3 nice day files: letter .txt
+  o  3 nice day date: * -1000 files: letter .txt (glob)
   |
-  o  2 world files: letter .txt
+  o  2 world date: * -1000 files: letter .txt (glob)
   |
-  o  1 hello files: letter .txt
+  o  1 hello date: * -1000 files: letter .txt (glob)
   |
-  o  0 init projB files:
+  o  0 init projB date: * -1000 files: (glob)
   
   $ hg tags -q
   tip
@@ -150,7 +150,7 @@ Test incremental conversion
 
 Test filemap
   $ echo 'include letter2.txt' > filemap
-  $ hg convert --filemap filemap "$svnurl"/mytrunk fmap
+  $ hg convert --filemap filemap "$SVNREPOURL/proj%20B/mytrunk" fmap
   initializing destination fmap repository
   scanning source...
   sorting...
@@ -163,14 +163,44 @@ Test filemap
   0 work in progress
   $ hg -R fmap branch -q
   default
-  $ hg glog -R fmap --template '{rev} {desc|firstline} files: {files}\n'
+  $ hg log -G -R fmap --template '{rev} {desc|firstline} files: {files}\n'
   o  1 work in progress files: letter2.txt
   |
   o  0 second letter files: letter2.txt
   
+Convert with --full adds and removes files that didn't change
+
+  $ cd B
+  $ echo >> "letter .txt"
+  $ svn ci -m 'nothing'
+  Sending        letter .txt
+  Transmitting file data .
+  Committed revision 9.
+  $ cd ..
+
+  $ echo 'rename letter2.txt letter3.txt' > filemap
+  $ hg convert --filemap filemap --full "$SVNREPOURL/proj%20B/mytrunk" fmap
+  scanning source...
+  sorting...
+  converting...
+  0 nothing
+  $ hg -R fmap st --change tip
+  A letter .txt
+  A letter3.txt
+  R letter2.txt
+
+test invalid splicemap1
+
+  $ cat > splicemap <<EOF
+  > $INVALIDREVISIONID $VALIDREVISIONID
+  > EOF
+  $ hg convert --splicemap splicemap "$SVNREPOURL/proj%20B/mytrunk" smap
+  initializing destination smap repository
+  abort: splicemap entry svn:x2147622-4a9f-4db4-a8d3-13562ff547b2/proj%20B/mytrunk@1 is not a valid revision identifier
+  [255]
 
 Test stop revision
-  $ hg convert --rev 1 "$svnurl"/mytrunk stoprev
+  $ hg convert --rev 1 "$SVNREPOURL/proj%20B/mytrunk" stoprev
   initializing destination stoprev repository
   scanning source...
   sorting...
@@ -187,3 +217,38 @@ This is also the only place testing more than one extra field in a revision.
   extra:       branch=default
   extra:       convert_revision=svn:........-....-....-....-............/proj B/mytrunk@1 (re)
   $ cd ..
+
+Test converting empty heads (issue3347).
+Also tests getting logs directly without debugsvnlog.
+
+  $ svnadmin create svn-empty
+  $ svnadmin load -q svn-empty < "$TESTDIR/svn/empty.svndump"
+  $ hg --config convert.svn.trunk= --config convert.svn.debugsvnlog=0 convert svn-empty
+  assuming destination svn-empty-hg
+  initializing destination svn-empty-hg repository
+  scanning source...
+  sorting...
+  converting...
+  1 init projA
+  0 adddir
+  $ hg --config convert.svn.trunk= convert "$SVNREPOURL/../svn-empty/trunk"
+  assuming destination trunk-hg
+  initializing destination trunk-hg repository
+  scanning source...
+  sorting...
+  converting...
+  1 init projA
+  0 adddir
+
+Test that a too-new repository format is properly rejected:
+  $ mv svn-empty/format format
+  $ echo 999 > svn-empty/format
+It's important that this command explicitly specify svn, otherwise it
+can have surprising side effects (like falling back to a perforce
+depot that can be seen from the test environment and slurping from that.)
+  $ hg convert --source-type svn svn-empty this-will-fail
+  initializing destination this-will-fail repository
+  file:/*/$TESTTMP/svn-empty does not look like a Subversion repository to libsvn version 1.*.* (glob)
+  abort: svn-empty: missing or unsupported repository
+  [255]
+  $ mv format svn-empty/format

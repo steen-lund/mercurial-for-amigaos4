@@ -9,7 +9,7 @@
 import util, hook, wireproto, changegroup
 import os, sys
 
-class sshserver(object):
+class sshserver(wireproto.abstractserverproto):
     def __init__(self, ui, repo):
         self.ui = ui
         self.repo = repo
@@ -71,8 +71,9 @@ class sshserver(object):
         self.fout.flush()
 
     def sendstream(self, source):
+        write = self.fout.write
         for chunk in source.gen:
-            self.fout.write(chunk)
+            write(chunk)
         self.fout.flush()
 
     def sendpushresponse(self, rsp):
@@ -81,6 +82,12 @@ class sshserver(object):
 
     def sendpusherror(self, rsp):
         self.sendresponse(rsp.res)
+
+    def sendooberror(self, rsp):
+        self.ui.ferr.write('%s\n-\n' % rsp.message)
+        self.ui.ferr.flush()
+        self.fout.write('\n')
+        self.fout.flush()
 
     def serve_forever(self):
         try:
@@ -96,6 +103,7 @@ class sshserver(object):
         wireproto.streamres: sendstream,
         wireproto.pushres: sendpushresponse,
         wireproto.pusherr: sendpusherror,
+        wireproto.ooberror: sendooberror,
     }
 
     def serve_one(self):
@@ -134,9 +142,9 @@ class sshserver(object):
             return
 
         self.sendresponse("")
-        cg = changegroup.unbundle10(self.fin, "UN")
-        r = self.repo.addchangegroup(cg, 'serve', self._client(),
-                                     lock=self.lock)
+        cg = changegroup.cg1unpacker(self.fin, "UN")
+        r = changegroup.addchangegroup(self.repo, cg, 'serve', self._client())
+        self.lock.release()
         return str(r)
 
     def _client(self):

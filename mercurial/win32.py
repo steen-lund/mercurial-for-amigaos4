@@ -5,8 +5,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-import encoding
-import ctypes, errno, os, struct, subprocess, random
+import ctypes, errno, os, subprocess, random
 
 _kernel32 = ctypes.windll.kernel32
 _advapi32 = ctypes.windll.advapi32
@@ -25,6 +24,7 @@ _INVALID_HANDLE_VALUE = _HANDLE(-1).value
 
 # GetLastError
 _ERROR_SUCCESS = 0
+_ERROR_NO_MORE_FILES = 18
 _ERROR_INVALID_PARAMETER = 87
 _ERROR_INSUFFICIENT_BUFFER = 122
 
@@ -53,12 +53,14 @@ class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
                 ('nFileIndexHigh', _DWORD),
                 ('nFileIndexLow', _DWORD)]
 
-# CreateFile 
+# CreateFile
 _FILE_SHARE_READ = 0x00000001
 _FILE_SHARE_WRITE = 0x00000002
 _FILE_SHARE_DELETE = 0x00000004
 
 _OPEN_EXISTING = 3
+
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 
 # SetFileAttributes
 _FILE_ATTRIBUTE_NORMAL = 0x80
@@ -69,13 +71,6 @@ _PROCESS_QUERY_INFORMATION = 0x0400
 
 # GetExitCodeProcess
 _STILL_ACTIVE = 259
-
-# registry
-_HKEY_CURRENT_USER = 0x80000001L
-_HKEY_LOCAL_MACHINE = 0x80000002L
-_KEY_READ = 0x20019
-_REG_SZ = 1
-_REG_DWORD = 4
 
 class _STARTUPINFO(ctypes.Structure):
     _fields_ = [('cb', _DWORD),
@@ -103,8 +98,7 @@ class _PROCESS_INFORMATION(ctypes.Structure):
                 ('dwProcessId', _DWORD),
                 ('dwThreadId', _DWORD)]
 
-_DETACHED_PROCESS = 0x00000008
-_STARTF_USESHOWWINDOW = 0x00000001
+_CREATE_NO_WINDOW = 0x08000000
 _SW_HIDE = 0
 
 class _COORD(ctypes.Structure):
@@ -126,6 +120,27 @@ class _CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
 
 _STD_ERROR_HANDLE = _DWORD(-12).value
 
+# CreateToolhelp32Snapshot, Process32First, Process32Next
+_TH32CS_SNAPPROCESS = 0x00000002
+_MAX_PATH = 260
+
+class _tagPROCESSENTRY32(ctypes.Structure):
+    _fields_ = [('dwsize', _DWORD),
+                ('cntUsage', _DWORD),
+                ('th32ProcessID', _DWORD),
+                ('th32DefaultHeapID', ctypes.c_void_p),
+                ('th32ModuleID', _DWORD),
+                ('cntThreads', _DWORD),
+                ('th32ParentProcessID', _DWORD),
+                ('pcPriClassBase', _LONG),
+                ('dwFlags', _DWORD),
+                ('szExeFile', ctypes.c_char * _MAX_PATH)]
+
+    def __init__(self):
+        super(_tagPROCESSENTRY32, self).__init__()
+        self.dwsize = ctypes.sizeof(self)
+
+
 # types of parameters of C functions used (required by pypy)
 
 _kernel32.CreateFileA.argtypes = [_LPCSTR, _DWORD, _DWORD, ctypes.c_void_p,
@@ -138,8 +153,11 @@ _kernel32.GetFileInformationByHandle.restype = _BOOL
 _kernel32.CloseHandle.argtypes = [_HANDLE]
 _kernel32.CloseHandle.restype = _BOOL
 
-_kernel32.CreateHardLinkA.argtypes = [_LPCSTR, _LPCSTR, ctypes.c_void_p]
-_kernel32.CreateHardLinkA.restype = _BOOL
+try:
+    _kernel32.CreateHardLinkA.argtypes = [_LPCSTR, _LPCSTR, ctypes.c_void_p]
+    _kernel32.CreateHardLinkA.restype = _BOOL
+except AttributeError:
+    pass
 
 _kernel32.SetFileAttributesA.argtypes = [_LPCSTR, _DWORD]
 _kernel32.SetFileAttributesA.restype = _BOOL
@@ -177,17 +195,6 @@ _kernel32.GetStdHandle.restype = _HANDLE
 _kernel32.GetConsoleScreenBufferInfo.argtypes = [_HANDLE, ctypes.c_void_p]
 _kernel32.GetConsoleScreenBufferInfo.restype = _BOOL
 
-_advapi32.RegOpenKeyExA.argtypes = [_HANDLE, _LPCSTR, _DWORD, _DWORD,
-    ctypes.c_void_p]
-_advapi32.RegOpenKeyExA.restype = _LONG
-
-_advapi32.RegQueryValueExA.argtypes = [_HANDLE, _LPCSTR, ctypes.c_void_p,
-    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-_advapi32.RegQueryValueExA.restype = _LONG
-
-_advapi32.RegCloseKey.argtypes = [_HANDLE]
-_advapi32.RegCloseKey.restype = _LONG
-
 _advapi32.GetUserNameA.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
 _advapi32.GetUserNameA.restype = _BOOL
 
@@ -201,6 +208,15 @@ _WNDENUMPROC = ctypes.WINFUNCTYPE(_BOOL, _HWND, _LPARAM)
 _user32.EnumWindows.argtypes = [_WNDENUMPROC, _LPARAM]
 _user32.EnumWindows.restype = _BOOL
 
+_kernel32.CreateToolhelp32Snapshot.argtypes = [_DWORD, _DWORD]
+_kernel32.CreateToolhelp32Snapshot.restype = _BOOL
+
+_kernel32.Process32First.argtypes = [_HANDLE, ctypes.c_void_p]
+_kernel32.Process32First.restype = _BOOL
+
+_kernel32.Process32Next.argtypes = [_HANDLE, ctypes.c_void_p]
+_kernel32.Process32Next.restype = _BOOL
+
 def _raiseoserror(name):
     err = ctypes.WinError()
     raise OSError(err.errno, '%s: %s' % (name, err.strerror))
@@ -208,7 +224,7 @@ def _raiseoserror(name):
 def _getfileinfo(name):
     fh = _kernel32.CreateFileA(name, 0,
             _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
-            None, _OPEN_EXISTING, 0, None)
+            None, _OPEN_EXISTING, _FILE_FLAG_BACKUP_SEMANTICS, None)
     if fh == _INVALID_HANDLE_VALUE:
         _raiseoserror(name)
     try:
@@ -230,20 +246,18 @@ def nlinks(name):
     '''return number of hardlinks for the given file'''
     return _getfileinfo(name).nNumberOfLinks
 
-def samefile(fpath1, fpath2):
-    '''Returns whether fpath1 and fpath2 refer to the same file. This is only
-    guaranteed to work for files, not directories.'''
-    res1 = _getfileinfo(fpath1)
-    res2 = _getfileinfo(fpath2)
+def samefile(path1, path2):
+    '''Returns whether path1 and path2 refer to the same file or directory.'''
+    res1 = _getfileinfo(path1)
+    res2 = _getfileinfo(path2)
     return (res1.dwVolumeSerialNumber == res2.dwVolumeSerialNumber
         and res1.nFileIndexHigh == res2.nFileIndexHigh
         and res1.nFileIndexLow == res2.nFileIndexLow)
 
-def samedevice(fpath1, fpath2):
-    '''Returns whether fpath1 and fpath2 are on the same device. This is only
-    guaranteed to work for files, not directories.'''
-    res1 = _getfileinfo(fpath1)
-    res2 = _getfileinfo(fpath2)
+def samedevice(path1, path2):
+    '''Returns whether path1 and path2 are on the same device.'''
+    res1 = _getfileinfo(path1)
+    res2 = _getfileinfo(path2)
     return res1.dwVolumeSerialNumber == res2.dwVolumeSerialNumber
 
 def testpid(pid):
@@ -259,50 +273,13 @@ def testpid(pid):
             _kernel32.CloseHandle(h)
     return _kernel32.GetLastError() != _ERROR_INVALID_PARAMETER
 
-def lookupreg(key, valname=None, scope=None):
-    ''' Look up a key/value name in the Windows registry.
-
-    valname: value name. If unspecified, the default value for the key
-    is used.
-    scope: optionally specify scope for registry lookup, this can be
-    a sequence of scopes to look up in order. Default (CURRENT_USER,
-    LOCAL_MACHINE).
-    '''
-    byref = ctypes.byref
-    if scope is None:
-        scope = (_HKEY_CURRENT_USER, _HKEY_LOCAL_MACHINE)
-    elif not isinstance(scope, (list, tuple)):
-        scope = (scope,)
-    for s in scope:
-        kh = _HANDLE()
-        res = _advapi32.RegOpenKeyExA(s, key, 0, _KEY_READ, ctypes.byref(kh))
-        if res != _ERROR_SUCCESS:
-            continue
-        try:
-            size = _DWORD(600)
-            type = _DWORD()
-            buf = ctypes.create_string_buffer(size.value + 1)
-            res = _advapi32.RegQueryValueExA(kh.value, valname, None,
-                                       byref(type), buf, byref(size))
-            if res != _ERROR_SUCCESS:
-                continue
-            if type.value == _REG_SZ:
-                # never let a Unicode string escape into the wild
-                return encoding.tolocal(buf.value.encode('UTF-8'))
-            elif type.value == _REG_DWORD:
-                fmt = '<L'
-                s = ctypes.string_at(byref(buf), struct.calcsize(fmt))
-                return struct.unpack(fmt, s)[0]
-        finally:
-            _advapi32.RegCloseKey(kh.value)
-
 def executablepath():
     '''return full path of hg.exe'''
     size = 600
     buf = ctypes.create_string_buffer(size + 1)
     len = _kernel32.GetModuleFileNameA(None, ctypes.byref(buf), size)
     if len == 0:
-        raise ctypes.WinError()
+        raise ctypes.WinError
     elif len == size:
         raise ctypes.WinError(_ERROR_INSUFFICIENT_BUFFER)
     return buf.value
@@ -312,7 +289,7 @@ def getuser():
     size = _DWORD(300)
     buf = ctypes.create_string_buffer(size.value + 1)
     if not _advapi32.GetUserNameA(ctypes.byref(buf), ctypes.byref(size)):
-        raise ctypes.WinError()
+        raise ctypes.WinError
     return buf.value
 
 _signalhandler = []
@@ -330,7 +307,7 @@ def setsignalhandler():
     h = _SIGNAL_HANDLER(handler)
     _signalhandler.append(h) # needed to prevent garbage collection
     if not _kernel32.SetConsoleCtrlHandler(h, True):
-        raise ctypes.WinError()
+        raise ctypes.WinError
 
 def hidewindow():
 
@@ -363,6 +340,51 @@ def termwidth():
     width = csbi.srWindow.Right - csbi.srWindow.Left
     return width
 
+def _1stchild(pid):
+    '''return the 1st found child of the given pid
+
+    None is returned when no child is found'''
+    pe = _tagPROCESSENTRY32()
+
+    # create handle to list all processes
+    ph = _kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if ph == _INVALID_HANDLE_VALUE:
+        raise ctypes.WinError
+    try:
+        r = _kernel32.Process32First(ph, ctypes.byref(pe))
+        # loop over all processes
+        while r:
+            if pe.th32ParentProcessID == pid:
+                # return first child found
+                return pe.th32ProcessID
+            r = _kernel32.Process32Next(ph, ctypes.byref(pe))
+    finally:
+        _kernel32.CloseHandle(ph)
+    if _kernel32.GetLastError() != _ERROR_NO_MORE_FILES:
+        raise ctypes.WinError
+    return None # no child found
+
+class _tochildpid(int): # pid is _DWORD, which always matches in an int
+    '''helper for spawndetached, returns the child pid on conversion to string
+
+    Does not resolve the child pid immediately because the child may not yet be
+    started.
+    '''
+    def childpid(self):
+        '''returns the child pid of the first found child of the process
+        with this pid'''
+        return _1stchild(self)
+    def __str__(self):
+        # run when the pid is written to the file
+        ppid = self.childpid()
+        if ppid is None:
+            # race, child has exited since check
+            # fall back to this pid. Its process will also have disappeared,
+            # raising the same error type later as when the child pid would
+            # be returned.
+            return " %d" % self
+        return str(ppid)
+
 def spawndetached(args):
     # No standard library function really spawns a fully detached
     # process under win32 because they allocate pipes or other objects
@@ -371,8 +393,6 @@ def spawndetached(args):
     # which makes really detached processes impossible.
     si = _STARTUPINFO()
     si.cb = ctypes.sizeof(_STARTUPINFO)
-    si.dwFlags = _STARTF_USESHOWWINDOW
-    si.wShowWindow = _SW_HIDE
 
     pi = _PROCESS_INFORMATION()
 
@@ -384,21 +404,28 @@ def spawndetached(args):
     env += '\0'
 
     args = subprocess.list2cmdline(args)
-    # Not running the command in shell mode makes python26 hang when
+    # Not running the command in shell mode makes Python 2.6 hang when
     # writing to hgweb output socket.
     comspec = os.environ.get("COMSPEC", "cmd.exe")
     args = comspec + " /c " + args
 
     res = _kernel32.CreateProcessA(
-        None, args, None, None, False, _DETACHED_PROCESS,
+        None, args, None, None, False, _CREATE_NO_WINDOW,
         env, os.getcwd(), ctypes.byref(si), ctypes.byref(pi))
     if not res:
-        raise ctypes.WinError()
+        raise ctypes.WinError
 
-    return pi.dwProcessId
+    # _tochildpid because the process is the child of COMSPEC
+    return _tochildpid(pi.dwProcessId)
 
 def unlink(f):
     '''try to implement POSIX' unlink semantics on Windows'''
+
+    if os.path.isdir(f):
+        # use EPERM because it is POSIX prescribed value, even though
+        # unlink(2) on directories returns EISDIR on Linux
+        raise IOError(errno.EPERM,
+                      "Unlinking directory not permitted: '%s'" % f)
 
     # POSIX allows to unlink and rename open files. Windows has serious
     # problems with doing that:
@@ -426,7 +453,7 @@ def unlink(f):
             if e.errno != errno.EEXIST:
                 raise
     else:
-        raise IOError, (errno.EEXIST, "No usable temporary filename found")
+        raise IOError(errno.EEXIST, "No usable temporary filename found")
 
     try:
         os.unlink(temp)

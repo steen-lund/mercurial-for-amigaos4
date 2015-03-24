@@ -1,3 +1,5 @@
+#require execbit
+
   $ umask 027
 
   $ hg init test1
@@ -77,8 +79,11 @@ the changelog should mention file a:
 
   $ hg -v merge
   resolving manifests
-  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
+  $ cat a
+  123
+  $ [ -x a ]
 
   $ cd ../test3
   $ echo 123 >>b
@@ -126,7 +131,7 @@ the changelog should mention file a:
 
   $ hg -v merge
   resolving manifests
-  0 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
 
   $ ls -l ../test[123]/a > foo
@@ -136,12 +141,14 @@ the changelog should mention file a:
   -rwxr-x---
 
   $ hg debugindex a
-     rev    offset  length   base linkrev nodeid       p1           p2
-       0         0       0      0       0 b80de5d13875 000000000000 000000000000
+     rev    offset  length  ..... linkrev nodeid       p1           p2 (re)
+       0         0       0  .....       0 b80de5d13875 000000000000 000000000000 (re)
   $ hg debugindex -R ../test2 a
-     rev    offset  length   base linkrev nodeid       p1           p2
-       0         0       0      0       0 b80de5d13875 000000000000 000000000000
+     rev    offset  length  ..... linkrev nodeid       p1           p2 (re)
+       0         0       0  .....       0 b80de5d13875 000000000000 000000000000 (re)
   $ hg debugindex -R ../test1 a
-     rev    offset  length   base linkrev nodeid       p1           p2
-       0         0       0      0       0 b80de5d13875 000000000000 000000000000
-       1         0       5      1       1 7fe919cc0336 b80de5d13875 000000000000
+     rev    offset  length  ..... linkrev nodeid       p1           p2 (re)
+       0         0       0  .....       0 b80de5d13875 000000000000 000000000000 (re)
+       1         0       5  .....       1 7fe919cc0336 b80de5d13875 000000000000 (re)
+
+  $ cd ..

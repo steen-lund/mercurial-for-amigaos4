@@ -8,9 +8,9 @@
 # GNU General Public License version 2 or any later version.
 
 from i18n import _
-import changelog, byterange, url, error
+import changelog, byterange, url, error, namespaces
 import localrepo, manifest, util, scmutil, store
-import urllib, urllib2, errno
+import urllib, urllib2, errno, os
 
 class httprangereader(object):
     def __init__(self, url, opener):
@@ -26,20 +26,17 @@ class httprangereader(object):
         end = ''
         if bytes:
             end = self.pos + bytes - 1
-        req.add_header('Range', 'bytes=%d-%s' % (self.pos, end))
+        if self.pos or end:
+            req.add_header('Range', 'bytes=%d-%s' % (self.pos, end))
 
         try:
             f = self.opener.open(req)
             data = f.read()
-            if hasattr(f, 'getcode'):
-                # python 2.6+
-                code = f.getcode()
-            elif hasattr(f, 'code'):
-                # undocumented attribute, seems to be set in 2.4 and 2.5
-                code = f.code
-            else:
-                # Don't know how to check, hope for the best.
-                code = 206
+            # Python 2.6+ defines a getcode() function, and 2.4 and
+            # 2.5 appear to always have an undocumented code attribute
+            # set. If we can't read either of those, fall back to 206
+            # and hope for the best.
+            code = getattr(f, 'getcode', lambda : getattr(f, 'code', 206))()
         except urllib2.HTTPError, inst:
             num = inst.code == 404 and errno.ENOENT or None
             raise IOError(num, inst)
@@ -57,8 +54,10 @@ class httprangereader(object):
             data = data[:bytes]
         self.pos += len(data)
         return data
+    def readlines(self):
+        return self.read().splitlines(True)
     def __iter__(self):
-        return iter(self.read().splitlines(1))
+        return iter(self.readlines())
     def close(self):
         pass
 
@@ -67,19 +66,33 @@ def build_opener(ui, authinfo):
     urlopener = url.opener(ui, authinfo)
     urlopener.add_handler(byterange.HTTPRangeHandler())
 
-    class statichttpopener(scmutil.abstractopener):
+    class statichttpvfs(scmutil.abstractvfs):
         def __init__(self, base):
             self.base = base
 
-        def __call__(self, path, mode="r", atomictemp=None):
+        def __call__(self, path, mode='r', *args, **kw):
             if mode not in ('r', 'rb'):
                 raise IOError('Permission denied')
             f = "/".join((self.base, urllib.quote(path)))
             return httprangereader(f, urlopener)
 
-    return statichttpopener
+        def join(self, path):
+            if path:
+                return os.path.join(self.base, path)
+            else:
+                return self.base
+
+    return statichttpvfs
+
+class statichttppeer(localrepo.localpeer):
+    def local(self):
+        return None
+    def canpush(self):
+        return False
 
 class statichttprepository(localrepo.localrepository):
+    supported = localrepo.localrepository._basesupported
+
     def __init__(self, ui, path):
         self._url = path
         self.ui = ui
@@ -90,9 +103,13 @@ class statichttprepository(localrepo.localrepository):
 
         opener = build_opener(ui, authinfo)
         self.opener = opener(self.path)
+        self.vfs = self.opener
+        self._phasedefaults = []
+
+        self.names = namespaces.namespaces()
 
         try:
-            requirements = scmutil.readrequires(self.opener, self.supported)
+            requirements = scmutil.readrequires(self.vfs, self.supported)
         except IOError, inst:
             if inst.errno != errno.ENOENT:
                 raise
@@ -100,7 +117,7 @@ class statichttprepository(localrepo.localrepository):
 
             # check if it is a non-empty old-style repository
             try:
-                fp = self.opener("00changelog.i")
+                fp = self.vfs("00changelog.i")
                 fp.read(1)
                 fp.close()
             except IOError, inst:
@@ -113,24 +130,32 @@ class statichttprepository(localrepo.localrepository):
         # setup store
         self.store = store.store(requirements, self.path, opener)
         self.spath = self.store.path
-        self.sopener = self.store.opener
+        self.svfs = self.store.opener
+        self.sopener = self.svfs
         self.sjoin = self.store.join
+        self._filecache = {}
+        self.requirements = requirements
 
-        self.manifest = manifest.manifest(self.sopener)
-        self.changelog = changelog.changelog(self.sopener)
+        self.manifest = manifest.manifest(self.svfs)
+        self.changelog = changelog.changelog(self.svfs)
         self._tags = None
         self.nodetagscache = None
-        self._branchcache = None
-        self._branchcachetip = None
+        self._branchcaches = {}
         self.encodepats = None
         self.decodepats = None
-        self.capabilities.difference_update(["pushkey"])
+
+    def _restrictcapabilities(self, caps):
+        caps = super(statichttprepository, self)._restrictcapabilities(caps)
+        return caps.difference(["pushkey"])
 
     def url(self):
         return self._url
 
     def local(self):
         return False
+
+    def peer(self):
+        return statichttppeer(self)
 
     def lock(self, wait=True):
         raise util.Abort(_('cannot lock static-http repository'))

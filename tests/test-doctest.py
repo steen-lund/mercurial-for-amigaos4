@@ -1,35 +1,34 @@
 # this is hack to make sure no escape characters are inserted into the output
-import os
+import os, sys
 if 'TERM' in os.environ:
     del os.environ['TERM']
 import doctest
 
-import mercurial.changelog
-doctest.testmod(mercurial.changelog)
+def testmod(name, optionflags=0, testtarget=None):
+    __import__(name)
+    mod = sys.modules[name]
+    if testtarget is not None:
+        mod = getattr(mod, testtarget)
+    doctest.testmod(mod, optionflags=optionflags)
 
-import mercurial.dagparser
-doctest.testmod(mercurial.dagparser, optionflags=doctest.NORMALIZE_WHITESPACE)
-
-import mercurial.match
-doctest.testmod(mercurial.match)
-
-import mercurial.store
-doctest.testmod(mercurial.store)
-
-import mercurial.ui
-doctest.testmod(mercurial.ui)
-
-import mercurial.url
-doctest.testmod(mercurial.url)
-
-import mercurial.util
-doctest.testmod(mercurial.util)
-
-import mercurial.encoding
-doctest.testmod(mercurial.encoding)
-
-import mercurial.hgweb.hgwebdir_mod
-doctest.testmod(mercurial.hgweb.hgwebdir_mod)
-
-import hgext.convert.cvsps
-doctest.testmod(hgext.convert.cvsps)
+testmod('mercurial.changelog')
+testmod('mercurial.dagparser', optionflags=doctest.NORMALIZE_WHITESPACE)
+testmod('mercurial.dispatch')
+testmod('mercurial.encoding')
+testmod('mercurial.hg')
+testmod('mercurial.hgweb.hgwebdir_mod')
+testmod('mercurial.match')
+testmod('mercurial.minirst')
+testmod('mercurial.pathutil')
+testmod('mercurial.revset')
+testmod('mercurial.store')
+testmod('mercurial.subrepo')
+testmod('mercurial.templatefilters')
+testmod('mercurial.ui')
+testmod('mercurial.url')
+testmod('mercurial.util')
+testmod('mercurial.util', testtarget='platform')
+testmod('hgext.convert.cvsps')
+testmod('hgext.convert.filemap')
+testmod('hgext.convert.subversion')
+testmod('hgext.mq')

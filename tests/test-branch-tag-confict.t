@@ -14,6 +14,7 @@ Create a branch with the same name as the tag.
 
   $ hg branch branchortag
   marked working directory as branch branchortag
+  (branches are permanent and global, did you want a bookmark?)
   $ hg ci -m 'Create a branch with the same name as a tag.'
 
 This is what we have:
@@ -60,3 +61,5 @@ Updating to the branch:
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     Create a branch with the same name as a tag.
   
+
+  $ cd ..

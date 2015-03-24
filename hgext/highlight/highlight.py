@@ -32,25 +32,31 @@ def pygmentize(field, fctx, style, tmpl):
     if util.binary(text):
         return
 
+    # str.splitlines() != unicode.splitlines() because "reasons"
+    for c in "\x0c\x1c\x1d\x1e":
+        if c in text:
+            text = text.replace(c, '')
+
     # Pygments is best used with Unicode strings:
     # <http://pygments.org/docs/unicode/>
     text = text.decode(encoding.encoding, 'replace')
 
     # To get multi-line strings right, we can't format line-by-line
     try:
-        lexer = guess_lexer_for_filename(fctx.path(), text[:1024])
+        lexer = guess_lexer_for_filename(fctx.path(), text[:1024],
+                                         stripnl=False)
     except (ClassNotFound, ValueError):
         try:
-            lexer = guess_lexer(text[:1024])
+            lexer = guess_lexer(text[:1024], stripnl=False)
         except (ClassNotFound, ValueError):
-            lexer = TextLexer()
+            lexer = TextLexer(stripnl=False)
 
     formatter = HtmlFormatter(style=style)
 
     colorized = highlight(text, lexer, formatter)
     # strip wrapping div
     colorized = colorized[:colorized.find('\n</pre>')]
-    colorized = colorized[colorized.find('<pre>')+5:]
+    colorized = colorized[colorized.find('<pre>') + 5:]
     coloriter = (s.encode(encoding.encoding, 'replace')
                  for s in colorized.splitlines())
 

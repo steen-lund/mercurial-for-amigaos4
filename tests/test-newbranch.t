@@ -1,4 +1,14 @@
-  $ branchcache=.hg/cache/branchheads
+  $ branchcache=.hg/cache/branch2
+
+  $ listbranchcaches() {
+  >    for f in .hg/cache/branch2*;
+  >       do echo === $f ===;
+  >       cat $f;
+  >     done;
+  > }
+  $ purgebranchcaches() {
+  >     rm .hg/cache/branch2*
+  > }
 
   $ hg init t
   $ cd t
@@ -9,11 +19,13 @@
   $ hg ci -m "initial"
   $ hg branch foo
   marked working directory as branch foo
+  (branches are permanent and global, did you want a bookmark?)
   $ hg branch
   foo
   $ hg ci -m "add branch name"
   $ hg branch bar
   marked working directory as branch bar
+  (branches are permanent and global, did you want a bookmark?)
   $ hg ci -m "change branch name"
 
 Branch shadowing:
@@ -25,6 +37,7 @@ Branch shadowing:
 
   $ hg branch -f default
   marked working directory as branch default
+  (branches are permanent and global, did you want a bookmark?)
 
   $ hg ci -m "clear branch name"
   created new head
@@ -38,11 +51,28 @@ There should be only one default branch head
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     clear branch name
   
+Merging and branches
 
   $ hg co foo
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg branch
   foo
+
+ set existing branch name fails unless force - setting existing parent branch works without force:
+
+  $ hg branch bar
+  abort: a branch of the same name already exists
+  (use 'hg update' to switch to it)
+  [255]
+
+  $ hg branch -f bar
+  marked working directory as branch bar
+  (branches are permanent and global, did you want a bookmark?)
+
+  $ hg branch foo
+  marked working directory as branch foo
+  (branches are permanent and global, did you want a bookmark?)
+
   $ echo bleah > a
   $ hg ci -m "modify a branch"
 
@@ -52,46 +82,40 @@ There should be only one default branch head
 
   $ hg branch
   foo
+
+ set existing branch name where branch head is ancestor:
+
+  $ hg branch bar
+  abort: a branch of the same name already exists
+  (use 'hg update' to switch to it)
+  [255]
+
+ set (other) parent branch as branch name
+
+  $ hg branch default
+  marked working directory as branch default
+  (branches are permanent and global, did you want a bookmark?)
+
+ set (first) parent branch as branch name
+
+  $ hg branch foo
+  marked working directory as branch foo
+  (branches are permanent and global, did you want a bookmark?)
+
   $ hg ci -m "merge"
 
-  $ hg log
-  changeset:   5:530046499edf
-  branch:      foo
-  tag:         tip
-  parent:      4:adf1a74a7f7b
-  parent:      3:1c28f494dae6
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     merge
-  
-  changeset:   4:adf1a74a7f7b
-  branch:      foo
-  parent:      1:6c0e42da283a
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     modify a branch
-  
-  changeset:   3:1c28f494dae6
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     clear branch name
-  
-  changeset:   2:c21617b13b22
-  branch:      bar
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     change branch name
-  
-  changeset:   1:6c0e42da283a
-  branch:      foo
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     add branch name
-  
-  changeset:   0:db01e8ea3388
-  user:        test
-  date:        Thu Jan 01 00:00:00 1970 +0000
-  summary:     initial
+  $ hg log -G -T '{rev}:{node|short} {branch} {desc}\n'
+  @    5:530046499edf foo merge
+  |\
+  | o  4:adf1a74a7f7b foo modify a branch
+  | |
+  o |  3:1c28f494dae6 default clear branch name
+  | |
+  o |  2:c21617b13b22 bar change branch name
+  |/
+  o  1:6c0e42da283a foo add branch name
+  |
+  o  0:db01e8ea3388 default initial
   
   $ hg branches
   foo                            5:530046499edf
@@ -109,7 +133,7 @@ Test for invalid branch cache:
   repository tip rolled back to revision 4 (undo commit)
   working directory now based on revisions 4 and 3
 
-  $ cp $branchcache .hg/bc-invalid
+  $ cp ${branchcache}-served .hg/bc-invalid
 
   $ hg log -r foo
   changeset:   4:adf1a74a7f7b
@@ -123,10 +147,10 @@ Test for invalid branch cache:
   $ cp .hg/bc-invalid $branchcache
 
   $ hg --debug log -r foo
-  invalidating branch cache (tip differs)
   changeset:   4:adf1a74a7f7b4cd193d12992f5d0d6a004ed21d6
   branch:      foo
   tag:         tip
+  phase:       draft
   parent:      1:6c0e42da283a56b5edc5b4fadb491365ec7f5fa8
   parent:      -1:0000000000000000000000000000000000000000
   manifest:    1:8c342a37dfba0b3d3ce073562a00d8a813c54ffe
@@ -138,17 +162,20 @@ Test for invalid branch cache:
   modify a branch
   
   
-  $ rm $branchcache
+  $ purgebranchcaches
   $ echo corrupted > $branchcache
 
   $ hg log -qr foo
   4:adf1a74a7f7b
 
-  $ cat $branchcache
+  $ listbranchcaches
+  === .hg/cache/branch2 ===
+  corrupted
+  === .hg/cache/branch2-served ===
   adf1a74a7f7b4cd193d12992f5d0d6a004ed21d6 4
-  1c28f494dae69a2f8fc815059d257eccf3fcfe75 default
-  adf1a74a7f7b4cd193d12992f5d0d6a004ed21d6 foo
-  c21617b13b220988e7a2e26290fbe4325ffa7139 bar
+  c21617b13b220988e7a2e26290fbe4325ffa7139 o bar
+  1c28f494dae69a2f8fc815059d257eccf3fcfe75 o default
+  adf1a74a7f7b4cd193d12992f5d0d6a004ed21d6 o foo
 
 Push should update the branch cache:
 
@@ -158,19 +185,21 @@ Pushing just rev 0:
 
   $ hg push -qr 0 ../target
 
-  $ cat ../target/$branchcache
+  $ (cd ../target/; listbranchcaches)
+  === .hg/cache/branch2-base ===
   db01e8ea3388fd3c7c94e1436ea2bd6a53d581c5 0
-  db01e8ea3388fd3c7c94e1436ea2bd6a53d581c5 default
+  db01e8ea3388fd3c7c94e1436ea2bd6a53d581c5 o default
 
 Pushing everything:
 
   $ hg push -qf ../target
 
-  $ cat ../target/$branchcache
+  $ (cd ../target/; listbranchcaches)
+  === .hg/cache/branch2-base ===
   adf1a74a7f7b4cd193d12992f5d0d6a004ed21d6 4
-  1c28f494dae69a2f8fc815059d257eccf3fcfe75 default
-  adf1a74a7f7b4cd193d12992f5d0d6a004ed21d6 foo
-  c21617b13b220988e7a2e26290fbe4325ffa7139 bar
+  c21617b13b220988e7a2e26290fbe4325ffa7139 o bar
+  1c28f494dae69a2f8fc815059d257eccf3fcfe75 o default
+  adf1a74a7f7b4cd193d12992f5d0d6a004ed21d6 o foo
 
 Update with no arguments: tipmost revision of the current branch:
 
@@ -186,15 +215,17 @@ Update with no arguments: tipmost revision of the current branch:
 
   $ hg branch foobar
   marked working directory as branch foobar
+  (branches are permanent and global, did you want a bookmark?)
 
   $ hg up
   abort: branch foobar not found
   [255]
 
-Fastforward merge:
+Fast-forward merge:
 
   $ hg branch ff
   marked working directory as branch ff
+  (branches are permanent and global, did you want a bookmark?)
 
   $ echo ff > ff
   $ hg ci -Am'fast forward'
@@ -256,6 +287,7 @@ Test merging, add 3 default heads and one test head:
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ hg branch test
   marked working directory as branch test
+  (branches are permanent and global, did you want a bookmark?)
   $ echo e >> e
   $ hg ci -Ame
   adding e
@@ -320,3 +352,4 @@ Implicit merge with default branch as parent:
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
 
+  $ cd ..

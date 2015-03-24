@@ -1,4 +1,4 @@
-  $ "$TESTDIR/hghave" symlink || exit 80
+#require symlink
 
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "mq=" >> $HGRCPATH
@@ -11,7 +11,7 @@
   $ echo ccc > c
   $ hg add a b c
   $ hg qrefresh
-  $ $TESTDIR/readlink.py a
+  $ "$TESTDIR/readlink.py" a
   a -> a not a symlink
 
 
@@ -21,7 +21,7 @@ test replacing a file with a symlink
   $ rm a
   $ ln -s b a
   $ hg qrefresh --git
-  $ $TESTDIR/readlink.py a
+  $ "$TESTDIR/readlink.py" a
   a -> b
 
   $ hg qpop
@@ -30,7 +30,7 @@ test replacing a file with a symlink
   $ hg qpush
   applying symlink.patch
   now at: symlink.patch
-  $ $TESTDIR/readlink.py a
+  $ "$TESTDIR/readlink.py" a
   a -> b
 
 
@@ -39,7 +39,7 @@ test updating a symlink
   $ rm a
   $ ln -s c a
   $ hg qnew --git -f updatelink
-  $ $TESTDIR/readlink.py a
+  $ "$TESTDIR/readlink.py" a
   a -> c
   $ hg qpop
   popping updatelink
@@ -47,9 +47,12 @@ test updating a symlink
   $ hg qpush --debug
   applying updatelink
   patching file a
+  committing files:
   a
+  committing manifest
+  committing changelog
   now at: updatelink
-  $ $TESTDIR/readlink.py a
+  $ "$TESTDIR/readlink.py" a
   a -> c
   $ hg st
 
@@ -104,5 +107,5 @@ replace broken symlink with another broken symlink
   $ hg qpush
   applying movelink
   now at: movelink
-  $ $TESTDIR/readlink.py linkb
+  $ "$TESTDIR/readlink.py" linkb
   linkb -> linkb

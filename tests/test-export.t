@@ -7,7 +7,7 @@
   >    hg ci -m "foo-$i"
   > done
 
-  $ for out in "%nof%N" "%%%H" "%b-%R" "%h" "%r"; do
+  $ for out in "%nof%N" "%%%H" "%b-%R" "%h" "%r" "%m"; do
   >    echo
   >    echo "# foo-$out.patch"
   >    hg export -v -o "foo-$out.patch" 2:tip
@@ -77,6 +77,29 @@
   foo-09.patch
   foo-10.patch
   foo-11.patch
+  
+  # foo-%m.patch
+  exporting patches:
+  foo-foo_2.patch
+  foo-foo_3.patch
+  foo-foo_4.patch
+  foo-foo_5.patch
+  foo-foo_6.patch
+  foo-foo_7.patch
+  foo-foo_8.patch
+  foo-foo_9.patch
+  foo-foo_10.patch
+  foo-foo_11.patch
+
+Doing it again clobbers the files rather than appending:
+  $ hg export -v -o "foo-%m.patch" 2:3
+  exporting patches:
+  foo-foo_2.patch
+  foo-foo_3.patch
+  $ grep HG foo-foo_2.patch | wc -l
+  \s*1 (re)
+  $ grep HG foo-foo_3.patch | wc -l
+  \s*1 (re)
 
 Exporting 4 changesets to a file:
 
@@ -84,7 +107,12 @@ Exporting 4 changesets to a file:
   $ grep HG export_internal | wc -l
   \s*4 (re)
 
-Exporting 4 changesets to a file:
+Doing it again clobbers the file rather than appending:
+  $ hg export -o export_internal 1 2 3 4
+  $ grep HG export_internal | wc -l
+  \s*4 (re)
+
+Exporting 4 changesets to stdout:
 
   $ hg export 1 2 3 4 | grep HG | wc -l
   \s*4 (re)
@@ -95,6 +123,7 @@ Exporting revision -2 to a file:
   # HG changeset patch
   # User test
   # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
   # Node ID 5f17a83f5fbd9414006a5e563eab4c8a00729efd
   # Parent  747d3c68f8ec44bb35816bfcd59aeb50b9654c2f
   foo-10
@@ -108,3 +137,69 @@ Exporting revision -2 to a file:
    foo-9
   +foo-10
 
+Checking if only alphanumeric characters are used in the file name (%m option):
+
+  $ echo "line" >> foo
+  $ hg commit -m " !\"#$%&(,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_\`abcdefghijklmnopqrstuvwxyz{|}~"
+  $ hg export -v -o %m.patch tip
+  exporting patch:
+  ____________0123456789_______ABCDEFGHIJKLMNOPQRSTUVWXYZ______abcdefghijklmnopqrstuvwxyz____.patch
+
+Catch exporting unknown revisions (especially empty revsets, see issue3353)
+
+  $ hg export
+  # HG changeset patch
+  # User test
+  # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
+  # Node ID 197ecd81a57f760b54f34a58817ad5b04991fa47
+  # Parent  f3acbafac161ec68f1598af38f794f28847ca5d3
+   !"#$%&(,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+  
+  diff -r f3acbafac161 -r 197ecd81a57f foo
+  --- a/foo	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/foo	Thu Jan 01 00:00:00 1970 +0000
+  @@ -10,3 +10,4 @@
+   foo-9
+   foo-10
+   foo-11
+  +line
+
+  $ hg export ""
+  hg: parse error: empty query
+  [255]
+  $ hg export 999
+  abort: unknown revision '999'!
+  [255]
+  $ hg export "not all()"
+  abort: export requires at least one changeset
+  [255]
+
+Check for color output
+  $ cat <<EOF >> $HGRCPATH
+  > [color]
+  > mode = ansi
+  > [extensions]
+  > color =
+  > EOF
+
+  $ hg export --color always --nodates tip
+  # HG changeset patch
+  # User test
+  # Date 0 0
+  #      Thu Jan 01 00:00:00 1970 +0000
+  # Node ID * (glob)
+  # Parent * (glob)
+   !"#$%&(,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+  
+  \x1b[0;1mdiff -r f3acbafac161 -r 197ecd81a57f foo\x1b[0m (esc)
+  \x1b[0;31;1m--- a/foo\x1b[0m (esc)
+  \x1b[0;32;1m+++ b/foo\x1b[0m (esc)
+  \x1b[0;35m@@ -10,3 +10,4 @@\x1b[0m (esc)
+   foo-9
+   foo-10
+   foo-11
+  \x1b[0;32m+line\x1b[0m (esc)
+
+
+  $ cd ..

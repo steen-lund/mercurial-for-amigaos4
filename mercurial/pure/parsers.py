@@ -7,13 +7,19 @@
 
 from mercurial.node import bin, nullid
 from mercurial import util
-import struct, zlib
+import struct, zlib, cStringIO
 
 _pack = struct.pack
 _unpack = struct.unpack
 _compress = zlib.compress
 _decompress = zlib.decompress
 _sha = util.sha1
+
+# Some code below makes tuples directly because it's more convenient. However,
+# code outside this module should always use dirstatetuple.
+def dirstatetuple(*x):
+    # x is a tuple
+    return x
 
 def parse_manifest(mfdict, fdict, lines):
     for l in lines.splitlines():
@@ -36,7 +42,7 @@ def parse_index2(data, inline):
     s = struct.calcsize(indexformatng)
     index = []
     cache = None
-    n = off = 0
+    off = 0
 
     l = len(data) - s
     append = index.append
@@ -45,7 +51,6 @@ def parse_index2(data, inline):
         while off <= l:
             e = _unpack(indexformatng, data[off:off + s])
             append(e)
-            n += 1
             if e[1] < 0:
                 break
             off += e[1] + s
@@ -53,7 +58,6 @@ def parse_index2(data, inline):
         while off <= l:
             e = _unpack(indexformatng, data[off:off + s])
             append(e)
-            n += 1
             off += s
 
     if off != len(data):
@@ -72,7 +76,7 @@ def parse_index2(data, inline):
 
 def parse_dirstate(dmap, copymap, st):
     parents = [st[:20], st[20: 40]]
-    # deref fields so they will be local in loop
+    # dereference fields so they will be local in loop
     format = ">cllll"
     e_size = struct.calcsize(format)
     pos1 = 40
@@ -89,3 +93,29 @@ def parse_dirstate(dmap, copymap, st):
             copymap[f] = c
         dmap[f] = e[:4]
     return parents
+
+def pack_dirstate(dmap, copymap, pl, now):
+    now = int(now)
+    cs = cStringIO.StringIO()
+    write = cs.write
+    write("".join(pl))
+    for f, e in dmap.iteritems():
+        if e[0] == 'n' and e[3] == now:
+            # The file was last modified "simultaneously" with the current
+            # write to dirstate (i.e. within the same second for file-
+            # systems with a granularity of 1 sec). This commonly happens
+            # for at least a couple of files on 'update'.
+            # The user could change the file without changing its size
+            # within the same second. Invalidate the file's mtime in
+            # dirstate, forcing future 'status' calls to compare the
+            # contents of the file if the size is the same. This prevents
+            # mistakenly treating such files as clean.
+            e = dirstatetuple(e[0], e[1], e[2], -1)
+            dmap[f] = e
+
+        if f in copymap:
+            f = "%s\0%s" % (f, copymap[f])
+        e = _pack(">cllll", e[0], e[1], e[2], e[3], len(f))
+        write(e)
+        write(f)
+    return cs.getvalue()

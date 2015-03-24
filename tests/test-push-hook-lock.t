@@ -15,7 +15,12 @@
   updating to branch default
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
 
+  $ cat <<EOF > $TESTTMP/debuglocks-pretxn-hook.sh
+  > hg debuglocks
+  > true
+  > EOF
   $ echo '[hooks]' >> 2/.hg/hgrc
+  $ echo "pretxnchangegroup.a = sh $TESTTMP/debuglocks-pretxn-hook.sh" >> 2/.hg/hgrc
   $ echo 'changegroup.push = hg push -qf ../1' >> 2/.hg/hgrc
 
   $ echo bar >> 3/foo
@@ -28,4 +33,6 @@
   adding manifests
   adding file changes
   added 1 changesets with 1 changes to 1 files
+  lock:  user *, process * (*s) (glob)
+  wlock: free
 

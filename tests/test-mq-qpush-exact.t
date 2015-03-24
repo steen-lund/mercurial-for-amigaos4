@@ -1,6 +1,5 @@
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "mq=" >> $HGRCPATH
-  $ echo "graphlog=" >> $HGRCPATH
 
 make a test repository that looks like this:
 
@@ -243,6 +242,7 @@ qpush --exact --force with changes to a patched file
   +cp1
   $ hg qpop -aqf
   patch queue now empty
+  $ hg forget fp1
   $ rm fp1
   $ rm fp1.rej
 
@@ -286,3 +286,4 @@ qpush --exact a patch without a parent recorded
   abort: p0 does not have a parent recorded
   [255]
 
+  $ cd ..

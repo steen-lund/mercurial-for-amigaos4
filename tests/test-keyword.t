@@ -9,6 +9,9 @@
   > interactive = true
   > EOF
 
+hide outer repo
+  $ hg init
+
 Run kwdemo before [keyword] files are set up
 as it would succeed without uisetup otherwise
 
@@ -132,8 +135,11 @@ Interrupted commit should not change state or run commit hook
 Commit with several checks
 
   $ hg --debug commit -mabsym -u 'User Name <user@example.com>'
+  committing files:
   a
   b
+  committing manifest
+  committing changelog
   overwriting a expanding keywords
   running hook commit.test: cp a hooktest
   committed changeset 1:ef63ca68695bc9495032c6fda1350c71e6d256e9
@@ -160,12 +166,30 @@ hg cat files and symlink, no expansion
   ignore $Id$
   a
 
-Test hook execution
-
   $ diff a hooktest
 
   $ cp $HGRCPATH.nohooks $HGRCPATH
   $ rm hooktest
+
+hg status of kw-ignored binary file starting with '\1\n'
+
+  >>> open("i", "wb").write("\1\nfoo")
+  $ hg -q commit -Am metasep i
+  $ hg status
+  >>> open("i", "wb").write("\1\nbar")
+  $ hg status
+  M i
+  $ hg -q commit -m "modify metasep" i
+  $ hg status --rev 2:3
+  M i
+  $ touch empty
+  $ hg -q commit -A -m "another file"
+  $ hg status -A --rev 3:4 i
+  C i
+
+  $ hg -q strip --no-backup 2
+
+Test hook execution
 
 bundle
 
@@ -208,7 +232,7 @@ Pull from bundle and trigger notify
   Message-Id: <hg.a2392c293916*> (glob)
   To: Test
   
-  changeset a2392c293916 in $TESTTMP/Test
+  changeset a2392c293916 in $TESTTMP/Test (glob)
   details: $TESTTMP/Test?cmd=changeset;node=a2392c293916
   description:
   	addsym
@@ -231,7 +255,7 @@ Pull from bundle and trigger notify
   Message-Id: <hg.ef63ca68695b*> (glob)
   To: Test
   
-  changeset ef63ca68695b in $TESTTMP/Test
+  changeset ef63ca68695b in $TESTTMP/Test (glob)
   details: $TESTTMP/Test?cmd=changeset;node=ef63ca68695b
   description:
   	absym
@@ -270,15 +294,24 @@ Update and expand
   xxx $
   ignore $Id$
 
-Check whether expansion is filewise
+Check whether expansion is filewise and file mode is preserved
 
   $ echo '$Id$' > c
   $ echo 'tests for different changenodes' >> c
+#if unix-permissions
+  $ chmod 600 c
+  $ ls -l c | cut -b 1-10
+  -rw-------
+#endif
 
 commit file c
 
   $ hg commit -A -mcndiff -d '1 0' -u 'User Name <user@example.com>'
   adding c
+#if unix-permissions
+  $ ls -l c | cut -b 1-10
+  -rw-------
+#endif
 
 force expansion
 
@@ -302,30 +335,35 @@ record
 
 record chunk
 
-  $ python -c \
-  > 'l=open("a").readlines();l.insert(1,"foo\n");l.append("bar\n");open("a","w").writelines(l);'
-  $ hg record -d '1 10' -m rectest a<<EOF
+  >>> lines = open('a', 'rb').readlines()
+  >>> lines.insert(1, 'foo\n')
+  >>> lines.append('bar\n')
+  >>> open('a', 'wb').writelines(lines)
+  $ hg record -d '10 1' -m rectest a<<EOF
   > y
   > y
   > n
   > EOF
   diff --git a/a b/a
   2 hunks, 2 lines changed
-  examine changes to 'a'? [Ynsfdaq?] 
+  examine changes to 'a'? [Ynesfdaq?] y
+  
   @@ -1,3 +1,4 @@
    expand $Id$
   +foo
    do not process $Id:
    xxx $
-  record change 1/2 to 'a'? [Ynsfdaq?] 
+  record change 1/2 to 'a'? [Ynesfdaq?] y
+  
   @@ -2,2 +3,3 @@
    do not process $Id:
    xxx $
   +bar
-  record change 2/2 to 'a'? [Ynsfdaq?] 
+  record change 2/2 to 'a'? [Ynesfdaq?] n
+  
 
   $ hg identify
-  d17e03c92c97+ tip
+  5f5eb23505c3+ tip
   $ hg status
   M a
   A r
@@ -333,7 +371,7 @@ record chunk
 Cat modified file a
 
   $ cat a
-  expand $Id: a,v d17e03c92c97 1970/01/01 00:00:01 test $
+  expand $Id: a,v 5f5eb23505c3 1970/01/01 00:00:10 test $
   foo
   do not process $Id:
   xxx $
@@ -342,8 +380,8 @@ Cat modified file a
 Diff remaining chunk
 
   $ hg diff a
-  diff -r d17e03c92c97 a
-  --- a/a	Wed Dec 31 23:59:51 1969 -0000
+  diff -r 5f5eb23505c3 a
+  --- a/a	Thu Jan 01 00:00:09 1970 -0000
   +++ b/a	* (glob)
   @@ -2,3 +2,4 @@
    foo
@@ -361,25 +399,28 @@ Record all chunks in file a
 
  - do not use "hg record -m" here!
 
-  $ hg record -l msg -d '1 11' a<<EOF
+  $ hg record -l msg -d '11 1' a<<EOF
   > y
   > y
   > y
   > EOF
   diff --git a/a b/a
   2 hunks, 2 lines changed
-  examine changes to 'a'? [Ynsfdaq?] 
+  examine changes to 'a'? [Ynesfdaq?] y
+  
   @@ -1,3 +1,4 @@
    expand $Id$
   +foo
    do not process $Id:
    xxx $
-  record change 1/2 to 'a'? [Ynsfdaq?] 
+  record change 1/2 to 'a'? [Ynesfdaq?] y
+  
   @@ -2,2 +3,3 @@
    do not process $Id:
    xxx $
   +bar
-  record change 2/2 to 'a'? [Ynsfdaq?] 
+  record change 2/2 to 'a'? [Ynesfdaq?] y
+  
 
 File a should be clean
 
@@ -389,7 +430,7 @@ File a should be clean
 rollback and revert expansion
 
   $ cat a
-  expand $Id: a,v 59f969a3b52c 1970/01/01 00:00:01 test $
+  expand $Id: a,v 78e0a02d76aa 1970/01/01 00:00:11 test $
   foo
   do not process $Id:
   xxx $
@@ -430,15 +471,21 @@ Only z should be overwritten
 
 record added file alone
 
-  $ hg -v record -l msg -d '1 12' r<<EOF
+  $ hg -v record -l msg -d '12 2' r<<EOF
   > y
   > EOF
   diff --git a/r b/r
   new file mode 100644
-  examine changes to 'r'? [Ynsfdaq?] 
+  examine changes to 'r'? [Ynesfdaq?] y
+  
+  committing files:
   r
-  committed changeset 3:899491280810
+  committing manifest
+  committing changelog
+  committed changeset 3:82a2f715724d
   overwriting r expanding keywords
+ - status call required for dirstate.normallookup() check
+  $ hg status r
   $ hg --verbose rollback
   repository tip rolled back to revision 2 (undo commit)
   working directory now based on revision 2
@@ -452,19 +499,38 @@ record added keyword ignored file
 
   $ echo '$Id$' > i
   $ hg add i
-  $ hg --verbose record -d '1 13' -m recignored<<EOF
+  $ hg --verbose record -d '13 1' -m recignored<<EOF
   > y
   > EOF
   diff --git a/i b/i
   new file mode 100644
-  examine changes to 'i'? [Ynsfdaq?] 
+  examine changes to 'i'? [Ynesfdaq?] y
+  
+  committing files:
   i
-  committed changeset 3:5f40fe93bbdc
+  committing manifest
+  committing changelog
+  committed changeset 3:9f40ceb5a072
   $ cat i
   $Id$
   $ hg -q rollback
   $ hg forget i
   $ rm i
+
+amend
+
+  $ echo amend >> a
+  $ echo amend >> b
+  $ hg -q commit -d '14 1' -m 'prepare amend'
+
+  $ hg --debug commit --amend -d '15 1' -m 'amend without changes' | grep keywords
+  overwriting a expanding keywords
+  $ hg -q id
+  67d8c481a6be
+  $ head -1 a
+  expand $Id: a,v 67d8c481a6be 1970/01/01 00:00:15 test $
+
+  $ hg -q strip --no-backup tip
 
 Test patch queue repo
 
@@ -478,6 +544,7 @@ Keywords should not be expanded in patch
   # HG changeset patch
   # User User Name <user@example.com>
   # Date 1 0
+  #      Thu Jan 01 00:00:01 1970 +0000
   # Node ID 40a904bbbe4cd4ab0a1f28411e35db26341a40ad
   # Parent  ef63ca68695bc9495032c6fda1350c71e6d256e9
   cndiff
@@ -527,8 +594,11 @@ Copy and show added kwfiles
 Commit and show expansion in original and copy
 
   $ hg --debug commit -ma2c -d '1 0' -u 'User Name <user@example.com>'
+  committing files:
   c
    c: copy a:0045e12f6c5791aac80ca6cbfd97709a88307292
+  committing manifest
+  committing changelog
   overwriting c expanding keywords
   committed changeset 2:25736cf2f5cbe41f6be4e6784ef6ecf9f3bbcc7d
   $ cat a c
@@ -564,6 +634,7 @@ Copy ignored file to ignored file: no overwriting
 cp symlink file; hg cp -A symlink file (part1)
 - copied symlink points to kwfile: overwrite
 
+#if symlink
   $ cp sym i
   $ ls -l i
   -rw-r--r--* (glob)
@@ -576,6 +647,7 @@ cp symlink file; hg cp -A symlink file (part1)
   expand $Id$
   $ hg forget i
   $ rm i
+#endif
 
 Test different options of hg kwfiles
 
@@ -612,6 +684,8 @@ Status after rollback:
   $ hg update --clean
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
 
+#if symlink
+
 cp symlink file; hg cp -A symlink file (part2)
 - copied symlink points to kw ignored file: do not overwrite
 
@@ -632,6 +706,8 @@ cp symlink file; hg cp -A symlink file (part2)
   $ hg update --clean
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ rm i symignored
+
+#endif
 
 Custom keywordmaps as argument to kwdemo
 
@@ -671,7 +747,7 @@ Cat and hg cat files before custom expansion
   ignore $Id$
   a
 
-Write custom keyword and prepare multiline commit message
+Write custom keyword and prepare multi-line commit message
 
   $ echo '$Xinfo$' >> a
   $ cat <<EOF >> log
@@ -689,10 +765,13 @@ Interrupted commit should not change state
   ? c
   ? log
 
-Commit with multiline message and custom expansion
+Commit with multi-line message and custom expansion
 
   $ hg --debug commit -l log -d '2 0' -u 'User Name <user@example.com>'
+  committing files:
   a
+  committing manifest
+  committing changelog
   overwriting a expanding keywords
   committed changeset 2:bb948857c743469b22bbf51f7ec8112279ca5d83
   $ rm log
@@ -734,6 +813,9 @@ remove with status checks
   $ hg debugrebuildstate
   $ hg remove a
   $ hg --debug commit -m rma
+  committing files:
+  committing manifest
+  committing changelog
   committed changeset 3:d14c712653769de926994cf7fbb06c8fbd68f012
   $ hg status
   ? c
@@ -757,7 +839,7 @@ Clone to test global and local configurations
 
   $ cd ..
 
-Expansion in destinaton with global configuration
+Expansion in destination with global configuration
 
   $ hg --quiet clone Test globalconf
   $ cat globalconf/a
@@ -790,7 +872,7 @@ Clone to test incoming
   > default = ../Test
   > EOF
   $ hg incoming
-  comparing with $TESTTMP/Test
+  comparing with $TESTTMP/Test (glob)
   searching for changes
   changeset:   2:bb948857c743
   tag:         tip
@@ -800,10 +882,14 @@ Clone to test incoming
   
 Imported patch should not be rejected
 
-  $ python -c \
-  > 'import re; s=re.sub("(Id.*)","\\1 rejecttest",open("a").read()); open("a","wb").write(s);'
+  >>> import re
+  >>> text = re.sub(r'(Id.*)', r'\1 rejecttest', open('a').read())
+  >>> open('a', 'wb').write(text)
   $ hg --debug commit -m'rejects?' -d '3 0' -u 'User Name <user@example.com>'
+  committing files:
   a
+  committing manifest
+  committing changelog
   overwriting a expanding keywords
   committed changeset 2:85e279d709ffc28c9fdd1b868570985fc3d87082
   $ hg export -o ../rejecttest.diff tip
@@ -818,7 +904,7 @@ Imported patch should not be rejected
   ignore $Id$
 
   $ hg rollback
-  repository tip rolled back to revision 2 (undo commit)
+  repository tip rolled back to revision 2 (undo import)
   working directory now based on revision 2
   $ hg update --clean
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
@@ -829,6 +915,8 @@ kwexpand/kwshrink on selected files
   $ hg copy a x/a
   $ hg --verbose kwshrink a
   overwriting a shrinking keywords
+ - sleep required for dirstate.normal() check
+  $ sleep 1
   $ hg status a
   $ hg --verbose kwexpand a
   overwriting a expanding keywords
@@ -841,8 +929,11 @@ kwexpand x/a should abort
   [255]
   $ cd x
   $ hg --debug commit -m xa -d '3 0' -u 'User Name <user@example.com>'
+  committing files:
   x/a
    x/a: copy a:779c764182ce5d43e2b1eb66ce06d7b47bfe342e
+  committing manifest
+  committing changelog
   overwriting x/a expanding keywords
   committed changeset 3:b4560182a3f9a358179fd2d835c15e9da379c1e4
   $ cat a
@@ -868,6 +959,7 @@ kwexpand nonexistent
   nonexistent:* (glob)
 
 
+#if serve
 hg serve
  - expand with hgweb file
  - no expansion with hgweb annotate/changeset/filediff
@@ -875,14 +967,14 @@ hg serve
 
   $ hg serve -p $HGPORT -d --pid-file=hg.pid -A access.log -E errors.log
   $ cat hg.pid >> $DAEMON_PIDS
-  $ $TESTDIR/get-with-headers.py localhost:$HGPORT '/file/tip/a/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file/tip/a/?style=raw'
   200 Script output follows
   
   expand $Id: a bb948857c743 Thu, 01 Jan 1970 00:00:02 +0000 user $
   do not process $Id:
   xxx $
   $Xinfo: User Name <user@example.com>: firstline $
-  $ $TESTDIR/get-with-headers.py localhost:$HGPORT '/annotate/tip/a/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'annotate/tip/a/?style=raw'
   200 Script output follows
   
   
@@ -894,7 +986,7 @@ hg serve
   
   
   
-  $ $TESTDIR/get-with-headers.py localhost:$HGPORT '/rev/tip/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'rev/tip/?style=raw'
   200 Script output follows
   
   
@@ -914,7 +1006,7 @@ hg serve
   +xxx $
   +$Xinfo$
   
-  $ $TESTDIR/get-with-headers.py localhost:$HGPORT '/diff/bb948857c743/a?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT 'diff/bb948857c743/a?style=raw'
   200 Script output follows
   
   
@@ -931,12 +1023,13 @@ hg serve
   
   
   $ cat errors.log
+#endif
 
 Prepare merge and resolve tests
 
   $ echo '$Id$' > m
   $ hg add m
-  $ hg commit -m 4kw 
+  $ hg commit -m 4kw
   $ echo foo >> m
   $ hg commit -m 5foo
 
@@ -965,24 +1058,25 @@ conflict: keyword should stay outside conflict zone
   $ hg merge
   merging m
   warning: conflicts during merge.
-  merging m failed!
+  merging m incomplete! (edit conflicts, then use 'hg resolve --mark')
   0 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges or 'hg update -C .' to abandon
   [1]
   $ cat m
   $Id$
-  <<<<<<< local
+  <<<<<<< local: 88a80c8d172e - test: 8bar
   bar
   =======
   foo
-  >>>>>>> other
+  >>>>>>> other: 85d2d2d732a5  - test: simplemerge
 
-resolve to local
+resolve to local, m must contain hash of last change (local parent)
 
-  $ HGMERGE=internal:local hg resolve -a
+  $ hg resolve -t internal:local -a
+  (no more unresolved files)
   $ hg commit -m localresolve
   $ cat m
-  $Id: m 800511b3a22d Thu, 01 Jan 1970 00:00:00 +0000 test $
+  $Id: m 88a80c8d172e Thu, 01 Jan 1970 00:00:00 +0000 test $
   bar
 
 Test restricted mode with transplant -b
@@ -991,6 +1085,7 @@ Test restricted mode with transplant -b
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg branch foo
   marked working directory as branch foo
+  (branches are permanent and global, did you want a bookmark?)
   $ mv a a.bak
   $ echo foobranch > a
   $ cat a.bak >> a
@@ -1058,6 +1153,7 @@ Keywords shrunk in working directory, but not yet disabled
 
 Now disable keyword expansion
 
+  $ cp $HGRCPATH $HGRCPATH.backup
   $ rm "$HGRCPATH"
   $ cat a b
   expand $Id$
@@ -1072,3 +1168,159 @@ Now disable keyword expansion
   $Xinfo$
   ignore $Id$
   a
+
+enable keyword expansion again
+
+  $ cat $HGRCPATH.backup >> $HGRCPATH
+
+Test restricted mode with unshelve
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > shelve =
+  > EOF
+
+  $ echo xxxx >> a
+  $ hg diff
+  diff -r 800511b3a22d a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	* (glob)
+  @@ -2,3 +2,4 @@
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  +xxxx
+  $ hg shelve -q --name tmp
+  $ hg shelve --list --patch
+  tmp             (*)    changes to 'localresolve' (glob)
+  
+  diff --git a/a b/a
+  --- a/a
+  +++ b/a
+  @@ -2,3 +2,4 @@
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  +xxxx
+
+  $ hg update -q -C 10
+  $ hg unshelve -q tmp
+  $ hg diff
+  diff -r 4aa30d025d50 a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	* (glob)
+  @@ -3,3 +3,4 @@
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  +xxxx
+
+Test restricted mode with rebase
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > rebase =
+  > EOF
+
+  $ hg update -q -C 9
+
+  $ echo xxxx >> a
+  $ hg commit -m '#11'
+  $ hg diff -c 11
+  diff -r 800511b3a22d -r b07670694489 a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	Thu Jan 01 00:00:00 1970 +0000
+  @@ -2,3 +2,4 @@
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  +xxxx
+
+  $ hg diff -c 10
+  diff -r 27d48ee14f67 -r 4aa30d025d50 a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,3 +1,4 @@
+  +foobranch
+   expand $Id$
+   do not process $Id:
+   xxx $
+
+  $ hg rebase -q -s 10 -d 11 --keep
+  $ hg diff -r 9 -r 12 a
+  diff -r 800511b3a22d -r 1939b927726c a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,4 +1,6 @@
+  +foobranch
+   expand $Id$
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  +xxxx
+
+Test restricted mode with graft
+
+  $ hg graft -q 10
+  $ hg diff -r 9 -r 13 a
+  diff -r 800511b3a22d -r 01a68de1003a a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,4 +1,6 @@
+  +foobranch
+   expand $Id$
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  +xxxx
+
+Test restricted mode with backout
+
+  $ hg backout -q 11
+  $ hg diff a
+  diff -r 01a68de1003a a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	* (glob)
+  @@ -3,4 +3,3 @@
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  -xxxx
+
+Test restricted mode with histedit
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > histedit =
+  > EOF
+
+  $ hg commit -m 'backout #11'
+  $ hg histedit -q --command - 13 <<EOF
+  > pick 49f5f2d940c3 14 backout #11
+  > pick 01a68de1003a 13 9foobranch
+  > EOF
+
+Test restricted mode with fetch (with merge)
+
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > fetch =
+  > EOF
+
+  $ hg clone -q -r 9 . ../fetch-merge
+  $ cd ../fetch-merge
+  $ hg -R ../Test export 10 | hg import -q -
+  $ hg fetch -q -r 11
+  $ hg diff -r 9 a
+  diff -r 800511b3a22d a
+  --- a/a	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/a	* (glob)
+  @@ -1,4 +1,6 @@
+  +foobranch
+   expand $Id$
+   do not process $Id:
+   xxx $
+   $Xinfo$
+  +xxxx
+
+  $ cd ..

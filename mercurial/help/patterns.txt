@@ -6,6 +6,11 @@ patterns.
 
 Alternate pattern notations must be specified explicitly.
 
+.. note::
+
+  Patterns specified in ``.hgignore`` are not rooted.
+  Please see :hg:`help hgignore` for details.
+
 To use a plain path name without any pattern matching, start it with
 ``path:``. These path names must completely match starting at the
 current repository root.
@@ -24,6 +29,10 @@ To read name patterns from a file, use ``listfile:`` or ``listfile0:``.
 The latter expects null delimited patterns while the former expects line
 feeds. Each string read from the file is itself treated as a file
 pattern.
+
+All patterns, except for ``glob:`` specified in command line (not for
+``-I`` or ``-X`` options), can match also against directories: files
+under matched directories are treated as matched.
 
 Plain examples::
 

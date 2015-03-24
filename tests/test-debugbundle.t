@@ -6,8 +6,13 @@ Create a test repository:
   $ touch a ; hg add a ; hg ci -ma
   $ touch b ; hg add b ; hg ci -mb
   $ touch c ; hg add c ; hg ci -mc
-  $ hg bundle --base 0 --rev tip bundle.hg
+  $ hg bundle --base 0 --rev tip bundle.hg -v
   2 changesets found
+  uncompressed size of bundle content:
+       332 (changelog)
+       282 (manifests)
+       105  b
+       105  c
 
 Terse output:
 
@@ -34,3 +39,4 @@ Verbose output:
   c
   b80de5d138758541c5f05265ad144ab9fa86d1db 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 991a3460af53952d10ec8a295d3d2cc2e5fa9690 0000000000000000000000000000000000000000 12
 
+  $ cd ..

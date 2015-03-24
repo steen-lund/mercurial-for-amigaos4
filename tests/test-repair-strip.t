@@ -1,3 +1,4 @@
+#require unix-permissions no-root
 
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "mq=">> $HGRCPATH
@@ -128,3 +129,4 @@
   checking files
   2 files, 2 changesets, 2 total revisions
 
+  $ cd ..

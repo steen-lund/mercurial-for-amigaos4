@@ -6,8 +6,11 @@
 # GNU General Public License version 2 or any later version.
 
 from i18n import _
-import sys, os
-import util, config, templatefilters, parser, error
+import os, re
+import util, config, templatefilters, templatekw, parser, error
+import revset as revsetmod
+import types
+import minirst
 
 # template parsing
 
@@ -19,6 +22,7 @@ elements = {
     ")": (0, None, None),
     "symbol": (0, ("symbol",), None),
     "string": (0, ("string",), None),
+    "rawstring": (0, ("rawstring",), None),
     "end": (0, None, None),
 }
 
@@ -36,18 +40,21 @@ def tokenizer(data):
             if c == 'r':
                 pos += 1
                 c = program[pos]
-                decode = lambda x: x
+                decode = False
             else:
-                decode = lambda x: x.decode('string-escape')
+                decode = True
             pos += 1
             s = pos
             while pos < end: # find closing quote
                 d = program[pos]
-                if d == '\\': # skip over escaped characters
+                if decode and d == '\\': # skip over escaped characters
                     pos += 2
                     continue
                 if d == c:
-                    yield ('string', decode(program[s:pos]), s)
+                    if not decode:
+                        yield ('rawstring', program[s:pos], s)
+                        break
+                    yield ('string', program[s:pos], s)
                     break
                 pos += 1
             else:
@@ -71,23 +78,22 @@ def tokenizer(data):
         pos += 1
     yield ('end', None, pos)
 
-def compiletemplate(tmpl, context):
+def compiletemplate(tmpl, context, strtoken="string"):
     parsed = []
     pos, stop = 0, len(tmpl)
     p = parser.parser(tokenizer, elements)
-
     while pos < stop:
         n = tmpl.find('{', pos)
         if n < 0:
-            parsed.append(("string", tmpl[pos:]))
+            parsed.append((strtoken, tmpl[pos:]))
             break
         if n > 0 and tmpl[n - 1] == '\\':
             # escaped
-            parsed.append(("string", tmpl[pos:n - 1] + "{"))
+            parsed.append((strtoken, (tmpl[pos:n - 1] + "{")))
             pos = n + 1
             continue
         if n > pos:
-            parsed.append(("string", tmpl[pos:n]))
+            parsed.append((strtoken, tmpl[pos:n]))
 
         pd = [tmpl, n + 1, stop]
         parseres, pos = p.parse(pd)
@@ -106,7 +112,7 @@ def compileexp(exp, context):
 def getsymbol(exp):
     if exp[0] == 'symbol':
         return exp[1]
-    raise error.ParseError(_("expected a symbol"))
+    raise error.ParseError(_("expected a symbol, got '%s'") % exp[0])
 
 def getlist(x):
     if not x:
@@ -122,21 +128,31 @@ def getfilter(exp, context):
     return context._filters[f]
 
 def gettemplate(exp, context):
-    if exp[0] == 'string':
-        return compiletemplate(exp[1], context)
+    if exp[0] == 'string' or exp[0] == 'rawstring':
+        return compiletemplate(exp[1], context, strtoken=exp[0])
     if exp[0] == 'symbol':
         return context._load(exp[1])
     raise error.ParseError(_("expected template specifier"))
 
 def runstring(context, mapping, data):
+    return data.decode("string-escape")
+
+def runrawstring(context, mapping, data):
     return data
 
 def runsymbol(context, mapping, key):
     v = mapping.get(key)
     if v is None:
-        v = context._defaults.get(key, '')
-    if hasattr(v, '__call__'):
+        v = context._defaults.get(key)
+    if v is None:
+        try:
+            v = context.process(key, mapping)
+        except TemplateNotFound:
+            v = ''
+    if callable(v):
         return v(**mapping)
+    if isinstance(v, types.GeneratorType):
+        v = list(v)
     return v
 
 def buildfilter(exp, context):
@@ -146,23 +162,38 @@ def buildfilter(exp, context):
 
 def runfilter(context, mapping, data):
     func, data, filt = data
-    return filt(func(context, mapping, data))
+    try:
+        return filt(func(context, mapping, data))
+    except (ValueError, AttributeError, TypeError):
+        if isinstance(data, tuple):
+            dt = data[1]
+        else:
+            dt = data
+        raise util.Abort(_("template filter '%s' is not compatible with "
+                           "keyword '%s'") % (filt.func_name, dt))
 
 def buildmap(exp, context):
     func, data = compileexp(exp[1], context)
     ctmpl = gettemplate(exp[2], context)
     return (runmap, (func, data, ctmpl))
 
+def runtemplate(context, mapping, template):
+    for func, data in template:
+        yield func(context, mapping, data)
+
 def runmap(context, mapping, data):
     func, data, ctmpl = data
     d = func(context, mapping, data)
+    if callable(d):
+        d = d()
+
     lm = mapping.copy()
 
     for i in d:
         if isinstance(i, dict):
             lm.update(i)
-            for f, d in ctmpl:
-                yield f(context, lm, d)
+            lm['originalnode'] = mapping.get('node')
+            yield runtemplate(context, lm, ctmpl)
         else:
             # v is not an iterable of dicts, this happen when 'key'
             # has been fully expanded already and format is useless.
@@ -172,17 +203,331 @@ def runmap(context, mapping, data):
 def buildfunc(exp, context):
     n = getsymbol(exp[1])
     args = [compileexp(x, context) for x in getlist(exp[2])]
+    if n in funcs:
+        f = funcs[n]
+        return (f, args)
     if n in context._filters:
         if len(args) != 1:
             raise error.ParseError(_("filter %s expects one argument") % n)
         f = context._filters[n]
         return (runfilter, (args[0][0], args[0][1], f))
-    elif n in context._funcs:
-        f = context._funcs[n]
-        return (f, args)
+    raise error.ParseError(_("unknown function '%s'") % n)
+
+def date(context, mapping, args):
+    if not (1 <= len(args) <= 2):
+        # i18n: "date" is a keyword
+        raise error.ParseError(_("date expects one or two arguments"))
+
+    date = args[0][0](context, mapping, args[0][1])
+    if len(args) == 2:
+        fmt = stringify(args[1][0](context, mapping, args[1][1]))
+        return util.datestr(date, fmt)
+    return util.datestr(date)
+
+def diff(context, mapping, args):
+    if len(args) > 2:
+        # i18n: "diff" is a keyword
+        raise error.ParseError(_("diff expects one, two or no arguments"))
+
+    def getpatterns(i):
+        if i < len(args):
+            s = args[i][1].strip()
+            if s:
+                return [s]
+        return []
+
+    ctx = mapping['ctx']
+    chunks = ctx.diff(match=ctx.match([], getpatterns(0), getpatterns(1)))
+
+    return ''.join(chunks)
+
+def fill(context, mapping, args):
+    if not (1 <= len(args) <= 4):
+        # i18n: "fill" is a keyword
+        raise error.ParseError(_("fill expects one to four arguments"))
+
+    text = stringify(args[0][0](context, mapping, args[0][1]))
+    width = 76
+    initindent = ''
+    hangindent = ''
+    if 2 <= len(args) <= 4:
+        try:
+            width = int(stringify(args[1][0](context, mapping, args[1][1])))
+        except ValueError:
+            # i18n: "fill" is a keyword
+            raise error.ParseError(_("fill expects an integer width"))
+        try:
+            initindent = stringify(_evalifliteral(args[2], context, mapping))
+            hangindent = stringify(_evalifliteral(args[3], context, mapping))
+        except IndexError:
+            pass
+
+    return templatefilters.fill(text, width, initindent, hangindent)
+
+def pad(context, mapping, args):
+    """usage: pad(text, width, fillchar=' ', right=False)
+    """
+    if not (2 <= len(args) <= 4):
+        # i18n: "pad" is a keyword
+        raise error.ParseError(_("pad() expects two to four arguments"))
+
+    width = int(args[1][1])
+
+    text = stringify(args[0][0](context, mapping, args[0][1]))
+    if args[0][0] == runstring:
+        text = stringify(runtemplate(context, mapping,
+            compiletemplate(text, context)))
+
+    right = False
+    fillchar = ' '
+    if len(args) > 2:
+        fillchar = stringify(args[2][0](context, mapping, args[2][1]))
+    if len(args) > 3:
+        right = util.parsebool(args[3][1])
+
+    if right:
+        return text.rjust(width, fillchar)
+    else:
+        return text.ljust(width, fillchar)
+
+def get(context, mapping, args):
+    if len(args) != 2:
+        # i18n: "get" is a keyword
+        raise error.ParseError(_("get() expects two arguments"))
+
+    dictarg = args[0][0](context, mapping, args[0][1])
+    if not util.safehasattr(dictarg, 'get'):
+        # i18n: "get" is a keyword
+        raise error.ParseError(_("get() expects a dict as first argument"))
+
+    key = args[1][0](context, mapping, args[1][1])
+    yield dictarg.get(key)
+
+def _evalifliteral(arg, context, mapping):
+    t = stringify(arg[0](context, mapping, arg[1]))
+    if arg[0] == runstring or arg[0] == runrawstring:
+        yield runtemplate(context, mapping,
+                          compiletemplate(t, context, strtoken='rawstring'))
+    else:
+        yield t
+
+def if_(context, mapping, args):
+    if not (2 <= len(args) <= 3):
+        # i18n: "if" is a keyword
+        raise error.ParseError(_("if expects two or three arguments"))
+
+    test = stringify(args[0][0](context, mapping, args[0][1]))
+    if test:
+        yield _evalifliteral(args[1], context, mapping)
+    elif len(args) == 3:
+        yield _evalifliteral(args[2], context, mapping)
+
+def ifcontains(context, mapping, args):
+    if not (3 <= len(args) <= 4):
+        # i18n: "ifcontains" is a keyword
+        raise error.ParseError(_("ifcontains expects three or four arguments"))
+
+    item = stringify(args[0][0](context, mapping, args[0][1]))
+    items = args[1][0](context, mapping, args[1][1])
+
+    # Iterating over items gives a formatted string, so we iterate
+    # directly over the raw values.
+    if ((callable(items) and item in [i.values()[0] for i in items()]) or
+        (isinstance(items, str) and item in items)):
+        yield _evalifliteral(args[2], context, mapping)
+    elif len(args) == 4:
+        yield _evalifliteral(args[3], context, mapping)
+
+def ifeq(context, mapping, args):
+    if not (3 <= len(args) <= 4):
+        # i18n: "ifeq" is a keyword
+        raise error.ParseError(_("ifeq expects three or four arguments"))
+
+    test = stringify(args[0][0](context, mapping, args[0][1]))
+    match = stringify(args[1][0](context, mapping, args[1][1]))
+    if test == match:
+        yield _evalifliteral(args[2], context, mapping)
+    elif len(args) == 4:
+        yield _evalifliteral(args[3], context, mapping)
+
+def join(context, mapping, args):
+    if not (1 <= len(args) <= 2):
+        # i18n: "join" is a keyword
+        raise error.ParseError(_("join expects one or two arguments"))
+
+    joinset = args[0][0](context, mapping, args[0][1])
+    if callable(joinset):
+        jf = joinset.joinfmt
+        joinset = [jf(x) for x in joinset()]
+
+    joiner = " "
+    if len(args) > 1:
+        joiner = stringify(args[1][0](context, mapping, args[1][1]))
+
+    first = True
+    for x in joinset:
+        if first:
+            first = False
+        else:
+            yield joiner
+        yield x
+
+def label(context, mapping, args):
+    if len(args) != 2:
+        # i18n: "label" is a keyword
+        raise error.ParseError(_("label expects two arguments"))
+
+    # ignore args[0] (the label string) since this is supposed to be a a no-op
+    yield _evalifliteral(args[1], context, mapping)
+
+def revset(context, mapping, args):
+    """usage: revset(query[, formatargs...])
+    """
+    if not len(args) > 0:
+        # i18n: "revset" is a keyword
+        raise error.ParseError(_("revset expects one or more arguments"))
+
+    raw = args[0][1]
+    ctx = mapping['ctx']
+    repo = ctx._repo
+
+    def query(expr):
+        m = revsetmod.match(repo.ui, expr)
+        return m(repo, revsetmod.spanset(repo))
+
+    if len(args) > 1:
+        formatargs = list([a[0](context, mapping, a[1]) for a in args[1:]])
+        revs = query(revsetmod.formatspec(raw, *formatargs))
+        revs = list([str(r) for r in revs])
+    else:
+        revsetcache = mapping['cache'].setdefault("revsetcache", {})
+        if raw in revsetcache:
+            revs = revsetcache[raw]
+        else:
+            revs = query(raw)
+            revs = list([str(r) for r in revs])
+            revsetcache[raw] = revs
+
+    return templatekw.showlist("revision", revs, **mapping)
+
+def rstdoc(context, mapping, args):
+    if len(args) != 2:
+        # i18n: "rstdoc" is a keyword
+        raise error.ParseError(_("rstdoc expects two arguments"))
+
+    text = stringify(args[0][0](context, mapping, args[0][1]))
+    style = stringify(args[1][0](context, mapping, args[1][1]))
+
+    return minirst.format(text, style=style, keep=['verbose'])
+
+def shortest(context, mapping, args):
+    """usage: shortest(node, minlength=4)
+    """
+    if not (1 <= len(args) <= 2):
+        # i18n: "shortest" is a keyword
+        raise error.ParseError(_("shortest() expects one or two arguments"))
+
+    node = stringify(args[0][0](context, mapping, args[0][1]))
+
+    minlength = 4
+    if len(args) > 1:
+        minlength = int(args[1][1])
+
+    cl = mapping['ctx']._repo.changelog
+    def isvalid(test):
+        try:
+            try:
+                cl.index.partialmatch(test)
+            except AttributeError:
+                # Pure mercurial doesn't support partialmatch on the index.
+                # Fallback to the slow way.
+                if cl._partialmatch(test) is None:
+                    return False
+
+            try:
+                i = int(test)
+                # if we are a pure int, then starting with zero will not be
+                # confused as a rev; or, obviously, if the int is larger than
+                # the value of the tip rev
+                if test[0] == '0' or i > len(cl):
+                    return True
+                return False
+            except ValueError:
+                return True
+        except error.RevlogError:
+            return False
+
+    shortest = node
+    startlength = max(6, minlength)
+    length = startlength
+    while True:
+        test = node[:length]
+        if isvalid(test):
+            shortest = test
+            if length == minlength or length > startlength:
+                return shortest
+            length -= 1
+        else:
+            length += 1
+            if len(shortest) <= length:
+                return shortest
+
+def strip(context, mapping, args):
+    if not (1 <= len(args) <= 2):
+        # i18n: "strip" is a keyword
+        raise error.ParseError(_("strip expects one or two arguments"))
+
+    text = stringify(args[0][0](context, mapping, args[0][1]))
+    if len(args) == 2:
+        chars = stringify(args[1][0](context, mapping, args[1][1]))
+        return text.strip(chars)
+    return text.strip()
+
+def sub(context, mapping, args):
+    if len(args) != 3:
+        # i18n: "sub" is a keyword
+        raise error.ParseError(_("sub expects three arguments"))
+
+    pat = stringify(args[0][0](context, mapping, args[0][1]))
+    rpl = stringify(args[1][0](context, mapping, args[1][1]))
+    src = stringify(_evalifliteral(args[2], context, mapping))
+    yield re.sub(pat, rpl, src)
+
+def startswith(context, mapping, args):
+    if len(args) != 2:
+        # i18n: "startswith" is a keyword
+        raise error.ParseError(_("startswith expects two arguments"))
+
+    patn = stringify(args[0][0](context, mapping, args[0][1]))
+    text = stringify(args[1][0](context, mapping, args[1][1]))
+    if text.startswith(patn):
+        return text
+    return ''
+
+
+def word(context, mapping, args):
+    """return nth word from a string"""
+    if not (2 <= len(args) <= 3):
+        # i18n: "word" is a keyword
+        raise error.ParseError(_("word expects two or three arguments, got %d")
+                               % len(args))
+
+    num = int(stringify(args[0][0](context, mapping, args[0][1])))
+    text = stringify(args[1][0](context, mapping, args[1][1]))
+    if len(args) == 3:
+        splitter = stringify(args[2][0](context, mapping, args[2][1]))
+    else:
+        splitter = None
+
+    tokens = text.split(splitter)
+    if num >= len(tokens):
+        return ''
+    else:
+        return tokens[num]
 
 methods = {
     "string": lambda e, c: (runstring, e[1]),
+    "rawstring": lambda e, c: (runrawstring, e[1]),
     "symbol": lambda e, c: (runsymbol, e[1]),
     "group": lambda e, c: compileexp(e[1], c),
 #    ".": buildmember,
@@ -191,23 +536,42 @@ methods = {
     "func": buildfunc,
     }
 
+funcs = {
+    "date": date,
+    "diff": diff,
+    "fill": fill,
+    "get": get,
+    "if": if_,
+    "ifcontains": ifcontains,
+    "ifeq": ifeq,
+    "join": join,
+    "label": label,
+    "pad": pad,
+    "revset": revset,
+    "rstdoc": rstdoc,
+    "shortest": shortest,
+    "startswith": startswith,
+    "strip": strip,
+    "sub": sub,
+    "word": word,
+}
+
 # template engine
 
-path = ['templates', '../templates']
 stringify = templatefilters.stringify
 
 def _flatten(thing):
     '''yield a single stream from a possibly nested set of iterators'''
     if isinstance(thing, str):
         yield thing
-    elif not hasattr(thing, '__iter__'):
+    elif not util.safehasattr(thing, '__iter__'):
         if thing is not None:
             yield str(thing)
     else:
         for i in thing:
             if isinstance(i, str):
                 yield i
-            elif not hasattr(i, '__iter__'):
+            elif not util.safehasattr(i, '__iter__'):
                 if i is not None:
                     yield str(i)
             elif i is not None:
@@ -260,10 +624,24 @@ class engine(object):
         '''Perform expansion. t is name of map element to expand.
         mapping contains added elements for use during expansion. Is a
         generator.'''
-        return _flatten(func(self, mapping, data) for func, data in
-                         self._load(t))
+        return _flatten(runtemplate(self, mapping, self._load(t)))
 
 engines = {'default': engine}
+
+def stylelist():
+    paths = templatepaths()
+    if not paths:
+        return _('no templates found, try `hg debuginstall` for more info')
+    dirlist =  os.listdir(paths[0])
+    stylelist = []
+    for file in dirlist:
+        split = file.split(".")
+        if split[0] == "map-cmdline":
+            stylelist.append(split[1])
+    return ", ".join(sorted(stylelist))
+
+class TemplateNotFound(util.Abort):
+    pass
 
 class templater(object):
 
@@ -286,12 +664,15 @@ class templater(object):
         if not mapfile:
             return
         if not os.path.exists(mapfile):
-            raise util.Abort(_('style not found: %s') % mapfile)
+            raise util.Abort(_("style '%s' not found") % mapfile,
+                             hint=_("available styles: %s") % stylelist())
 
         conf = config.config()
         conf.read(mapfile)
 
         for key, val in conf[''].items():
+            if not val:
+                raise SyntaxError(_('%s: missing value') % conf.source('', key))
             if val[0] in "'\"":
                 try:
                     self.cache[key] = parsestring(val)
@@ -309,11 +690,12 @@ class templater(object):
 
     def load(self, t):
         '''Get the template for the given template name. Use a local cache.'''
-        if not t in self.cache:
+        if t not in self.cache:
             try:
                 self.cache[t] = util.readfile(self.map[t][1])
             except KeyError, inst:
-                raise util.Abort(_('"%s" not in template map') % inst.args[0])
+                raise TemplateNotFound(_('"%s" not in template map') %
+                                       inst.args[0])
             except IOError, inst:
                 raise IOError(inst.args[0], _('template file %s: %s') %
                               (self.map[t][1], inst.args[1]))
@@ -332,30 +714,20 @@ class templater(object):
                                            max=self.maxchunk)
         return stream
 
-def templatepath(name=None):
-    '''return location of template file or directory (if no name).
-    returns None if not found.'''
-    normpaths = []
+def templatepaths():
+    '''return locations used for template files.'''
+    pathsrel = ['templates']
+    paths = [os.path.normpath(os.path.join(util.datapath, f))
+             for f in pathsrel]
+    return [p for p in paths if os.path.isdir(p)]
 
-    # executable version (py2exe) doesn't support __file__
-    if hasattr(sys, 'frozen'):
-        module = sys.executable
-    else:
-        module = __file__
-    for f in path:
-        if f.startswith('/'):
-            p = f
-        else:
-            fl = f.split('/')
-            p = os.path.join(os.path.dirname(module), *fl)
-        if name:
-            p = os.path.join(p, name)
-        if name and os.path.exists(p):
-            return os.path.normpath(p)
-        elif os.path.isdir(p):
-            normpaths.append(os.path.normpath(p))
-
-    return normpaths
+def templatepath(name):
+    '''return location of template file. returns None if not found.'''
+    for p in templatepaths():
+        f = os.path.join(p, name)
+        if os.path.exists(f):
+            return f
+    return None
 
 def stylemap(styles, paths=None):
     """Return path to mapfile for a given style.
@@ -367,7 +739,7 @@ def stylemap(styles, paths=None):
     """
 
     if paths is None:
-        paths = templatepath()
+        paths = templatepaths()
     elif isinstance(paths, str):
         paths = [paths]
 

@@ -28,10 +28,12 @@ http://mercurial.selenic.com/bts/issue1175
   $ hg ci -Am4 a
 
   $ hg ci --debug --traceback -Am5 b
+  committing files:
   b
-   b: searching for copy revision for a
-   b: copy a:b80de5d138758541c5f05265ad144ab9fa86d1db
-  committed changeset 5:89e8e4be0de296fa3d6dd7825ccc44d7dc0f1f3b
+  warning: can't find ancestor for 'b' copied from 'a'!
+  committing manifest
+  committing changelog
+  committed changeset 5:83a687e8a97c80992ba385bbfd766be181bfb1d1
 
   $ hg verify
   checking changesets
@@ -44,10 +46,51 @@ http://mercurial.selenic.com/bts/issue1175
   # HG changeset patch
   # User test
   # Date 0 0
-  # Node ID 89e8e4be0de296fa3d6dd7825ccc44d7dc0f1f3b
-  # Parent  7fc86ba705e717a721dbc361bf8c9bc05a18ca2f
+  #      Thu Jan 01 00:00:00 1970 +0000
+  # Node ID 83a687e8a97c80992ba385bbfd766be181bfb1d1
+  # Parent  1d1625283f71954f21d14c3d44d0ad3c019c597f
   5
   
   diff --git a/b b/b
   new file mode 100644
+
+http://bz.selenic.com/show_bug.cgi?id=4476
+
+  $ hg init foo
+  $ cd foo
+  $ touch a && hg ci -Aqm a
+  $ hg mv a b
+  $ echo b1 >> b
+  $ hg ci -Aqm b1
+  $ hg up 0
+  1 files updated, 0 files merged, 1 files removed, 0 files unresolved
+  $ hg mv a b
+  $ echo b2 >> b
+  $ hg ci -Aqm b2
+  $ hg graft 1
+  grafting 1:5974126fad84 "b1"
+  merging b
+  warning: conflicts during merge.
+  merging b incomplete! (edit conflicts, then use 'hg resolve --mark')
+  abort: unresolved conflicts, can't continue
+  (use hg resolve and hg graft --continue)
+  [255]
+  $ echo a > b
+  $ echo b3 >> b
+  $ hg resolve --mark b
+  (no more unresolved files)
+  $ hg graft --continue
+  grafting 1:5974126fad84 "b1"
+  warning: can't find ancestor for 'b' copied from 'a'!
+  $ hg log -f b -T 'changeset:   {rev}:{node|short}\nsummary:     {desc}\n\n'
+  changeset:   3:376d30ccffc0
+  summary:     b1
+  
+  changeset:   2:416baaa2e5e4
+  summary:     b2
+  
+  changeset:   0:3903775176ed
+  summary:     a
+  
+
 

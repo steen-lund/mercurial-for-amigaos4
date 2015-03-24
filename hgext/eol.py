@@ -49,12 +49,14 @@ Example versioned ``.hgeol`` file::
   native = LF
 
 .. note::
+
    The rules will first apply when files are touched in the working
    copy, e.g. by updating to null and back to tip to touch all files.
 
-The extension uses an optional ``[eol]`` section in your hgrc file
-(not the ``.hgeol`` file) for settings that control the overall
-behavior. There are two settings:
+The extension uses an optional ``[eol]`` section read from both the
+normal Mercurial configuration files and the ``.hgeol`` file, with the
+latter overriding the former. You can use that section to control the
+overall behavior. There are three settings:
 
 - ``eol.native`` (default ``os.linesep``) can be set to ``LF`` or
   ``CRLF`` to override the default interpretation of ``native`` for
@@ -66,6 +68,10 @@ behavior. There are two settings:
   means that there is both ``CRLF`` and ``LF`` present in the file.
   Such files are normally not touched under the assumption that they
   have mixed EOLs on purpose.
+
+- ``eol.fix-trailing-newline`` (default False) can be set to True to
+  ensure that converted files end with a EOL character (either ``\\n``
+  or ``\\r\\n`` as per the configured patterns).
 
 The extension provides ``cleverencode:`` and ``cleverdecode:`` filters
 like the deprecated win32text extension does. This means that you can
@@ -89,10 +95,12 @@ from mercurial.i18n import _
 from mercurial import util, config, extensions, match, error
 import re, os
 
+testedwith = 'internal'
+
 # Matches a lone LF, i.e., one that is not part of CRLF.
 singlelf = re.compile('(^|[^\r])\n')
 # Matches a single EOL which can either be a CRLF where repeated CR
-# are removed or a LF. We do not care about old Machintosh files, so a
+# are removed or a LF. We do not care about old Macintosh files, so a
 # stray CR is an error.
 eolre = re.compile('\r*\n')
 
@@ -106,6 +114,9 @@ def tolf(s, params, ui, **kwargs):
         return s
     if ui.configbool('eol', 'only-consistent', True) and inconsistenteol(s):
         return s
+    if (ui.configbool('eol', 'fix-trailing-newline', False)
+        and s and s[-1] != '\n'):
+        s = s + '\n'
     return eolre.sub('\n', s)
 
 def tocrlf(s, params, ui, **kwargs):
@@ -114,6 +125,9 @@ def tocrlf(s, params, ui, **kwargs):
         return s
     if ui.configbool('eol', 'only-consistent', True) and inconsistenteol(s):
         return s
+    if (ui.configbool('eol', 'fix-trailing-newline', False)
+        and s and s[-1] != '\n'):
+        s = s + '\n'
     return eolre.sub('\r\n', s)
 
 def isbinary(s, params):
@@ -137,7 +151,7 @@ class eolfile(object):
         self.cfg = config.config()
         # Our files should not be touched. The pattern must be
         # inserted first override a '** = native' pattern.
-        self.cfg.set('patterns', '.hg*', 'BIN')
+        self.cfg.set('patterns', '.hg*', 'BIN', 'eol')
         # We can then parse the user's patterns.
         self.cfg.parse('.hgeol', data)
 
@@ -158,15 +172,18 @@ class eolfile(object):
         # about inconsistent newlines.
         self.match = match.match(root, '', [], include, exclude)
 
-    def setfilters(self, ui):
+    def copytoui(self, ui):
         for pattern, style in self.cfg.items('patterns'):
             key = style.upper()
             try:
-                ui.setconfig('decode', pattern, self._decode[key])
-                ui.setconfig('encode', pattern, self._encode[key])
+                ui.setconfig('decode', pattern, self._decode[key], 'eol')
+                ui.setconfig('encode', pattern, self._encode[key], 'eol')
             except KeyError:
                 ui.warn(_("ignoring unknown EOL style '%s' from %s\n")
                         % (style, self.cfg.source('patterns', pattern)))
+        # eol.only-consistent can be specified in ~/.hgrc or .hgeol
+        for k, v in self.cfg.items('eol'):
+            ui.setconfig('eol', k, v, 'eol')
 
     def checkrev(self, repo, ctx, files):
         failed = []
@@ -240,12 +257,11 @@ def checkheadshook(ui, repo, node, hooktype, **kwargs):
 hook = checkheadshook
 
 def preupdate(ui, repo, hooktype, parent1, parent2):
-    #print "preupdate for %s: %s -> %s" % (repo.root, parent1, parent2)
     repo.loadeol([parent1])
     return False
 
 def uisetup(ui):
-    ui.setconfig('hooks', 'preupdate.eol', preupdate)
+    ui.setconfig('hooks', 'preupdate.eol', preupdate, 'eol')
 
 def extsetup(ui):
     try:
@@ -258,14 +274,13 @@ def extsetup(ui):
 
 def reposetup(ui, repo):
     uisetup(repo.ui)
-    #print "reposetup for", repo.root
 
     if not repo.local():
         return
     for name, fn in filters.iteritems():
         repo.adddatafilter(name, fn)
 
-    ui.setconfig('patch', 'eol', 'auto')
+    ui.setconfig('patch', 'eol', 'auto', 'eol')
 
     class eolrepo(repo.__class__):
 
@@ -273,7 +288,7 @@ def reposetup(ui, repo):
             eol = parseeol(self.ui, self, nodes)
             if eol is None:
                 return None
-            eol.setfilters(self.ui)
+            eol.copytoui(self.ui)
             return eol.match
 
         def _hgcleardirstate(self):
@@ -293,7 +308,7 @@ def reposetup(ui, repo):
                 eolmtime = 0
 
             if eolmtime > cachemtime:
-                ui.debug("eol: detected change in .hgeol\n")
+                self.ui.debug("eol: detected change in .hgeol\n")
                 wlock = None
                 try:
                     wlock = self.wlock()
@@ -303,8 +318,8 @@ def reposetup(ui, repo):
                             # again since the new .hgeol file might no
                             # longer match a file it matched before
                             self.dirstate.normallookup(f)
-                    # Touch the cache to update mtime.
-                    self.opener("eol.cache", "w").close()
+                    # Create or touch the cache to update mtime
+                    self.vfs("eol.cache", "w").close()
                     wlock.release()
                 except error.LockUnavailable:
                     # If we cannot lock the repository and clear the
@@ -318,7 +333,10 @@ def reposetup(ui, repo):
             for f in sorted(ctx.added() + ctx.modified()):
                 if not self._eolfile(f):
                     continue
-                data = ctx[f].data()
+                fctx = ctx[f]
+                if fctx is None:
+                    continue
+                data = fctx.data()
                 if util.binary(data):
                     # We should not abort here, since the user should
                     # be able to say "** = native" to automatically
@@ -326,7 +344,7 @@ def reposetup(ui, repo):
                     continue
                 if inconsistenteol(data):
                     raise util.Abort(_("inconsistent newline style "
-                                       "in %s\n" % f))
+                                       "in %s\n") % f)
             return super(eolrepo, self).commitctx(ctx, error)
     repo.__class__ = eolrepo
     repo._hgcleardirstate()

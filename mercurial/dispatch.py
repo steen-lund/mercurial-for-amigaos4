@@ -12,7 +12,8 @@ import cmdutil, encoding
 import ui as uimod
 
 class request(object):
-    def __init__(self, args, ui=None, repo=None, fin=None, fout=None, ferr=None):
+    def __init__(self, args, ui=None, repo=None, fin=None, fout=None,
+                 ferr=None):
         self.args = args
         self.ui = ui
         self.repo = repo
@@ -24,7 +25,7 @@ class request(object):
 
 def run():
     "run the command in sys.argv"
-    sys.exit(dispatch(request(sys.argv[1:])))
+    sys.exit((dispatch(request(sys.argv[1:])) or 0) & 255)
 
 def dispatch(req):
     "run the command specified in req.args"
@@ -39,7 +40,7 @@ def dispatch(req):
         if not req.ui:
             req.ui = uimod.ui()
         if '--traceback' in req.args:
-            req.ui.setconfig('ui', 'traceback', 'on')
+            req.ui.setconfig('ui', 'traceback', 'on', '--traceback')
 
         # set ui streams from the request
         if req.fin:
@@ -57,11 +58,22 @@ def dispatch(req):
         if len(inst.args) > 1:
             ferr.write(_("hg: parse error at %s: %s\n") %
                              (inst.args[1], inst.args[0]))
+            if (inst.args[0][0] == ' '):
+                ferr.write(_("unexpected leading whitespace\n"))
         else:
             ferr.write(_("hg: parse error: %s\n") % inst.args[0])
         return -1
 
-    return _runcatch(req)
+    msg = ' '.join(' ' in a and repr(a) or a for a in req.args)
+    starttime = time.time()
+    ret = None
+    try:
+        ret = _runcatch(req)
+        return ret
+    finally:
+        duration = time.time() - starttime
+        req.ui.log("commandfinish", "%s exited %s after %0.2f seconds\n",
+                   msg, ret or 0, duration)
 
 def _runcatch(req):
     def catchterm(*args):
@@ -78,20 +90,61 @@ def _runcatch(req):
 
     try:
         try:
+            debugger = 'pdb'
+            debugtrace = {
+                'pdb' : pdb.set_trace
+            }
+            debugmortem = {
+                'pdb' : pdb.post_mortem
+            }
+
+            # read --config before doing anything else
+            # (e.g. to change trust settings for reading .hg/hgrc)
+            cfgs = _parseconfig(req.ui, _earlygetopt(['--config'], req.args))
+
+            if req.repo:
+                # copy configs that were passed on the cmdline (--config) to
+                # the repo ui
+                for sec, name, val in cfgs:
+                    req.repo.ui.setconfig(sec, name, val, source='--config')
+
+            # if we are in HGPLAIN mode, then disable custom debugging
+            debugger = ui.config("ui", "debugger")
+            debugmod = pdb
+            if not debugger or ui.plain():
+                debugger = 'pdb'
+            elif '--debugger' in req.args:
+                # This import can be slow for fancy debuggers, so only
+                # do it when absolutely necessary, i.e. when actual
+                # debugging has been requested
+                try:
+                    debugmod = __import__(debugger)
+                except ImportError:
+                    pass # Leave debugmod = pdb
+
+            debugtrace[debugger] = debugmod.set_trace
+            debugmortem[debugger] = debugmod.post_mortem
+
             # enter the debugger before command execution
             if '--debugger' in req.args:
                 ui.warn(_("entering debugger - "
                         "type c to continue starting hg or h for help\n"))
-                pdb.set_trace()
+
+                if (debugger != 'pdb' and
+                    debugtrace[debugger] == debugtrace['pdb']):
+                    ui.warn(_("%s debugger specified "
+                              "but its module was not found\n") % debugger)
+
+                debugtrace[debugger]()
             try:
                 return _dispatch(req)
             finally:
                 ui.flush()
-        except:
+        except: # re-raises
             # enter the debugger when we hit an exception
             if '--debugger' in req.args:
                 traceback.print_exc()
-                pdb.post_mortem(sys.exc_info()[2])
+                debugmortem[debugger](sys.exc_info()[2])
             ui.traceback()
             raise
 
@@ -104,6 +157,8 @@ def _runcatch(req):
         if len(inst.args) > 1:
             ui.warn(_("hg: parse error at %s: %s\n") %
                              (inst.args[1], inst.args[0]))
+            if (inst.args[0][0] == ' '):
+                ui.warn(_("unexpected leading whitespace\n"))
         else:
             ui.warn(_("hg: parse error: %s\n") % inst.args[0])
         return -1
@@ -123,6 +178,9 @@ def _runcatch(req):
         else:
             ui.warn(_("hg: %s\n") % inst.args[1])
             commands.help_(ui, 'shortlist')
+    except error.OutOfBandError, inst:
+        ui.warn(_("abort: remote error:\n"))
+        ui.warn(''.join(inst.args))
     except error.RepoError, inst:
         ui.warn(_("abort: %s!\n") % inst)
         if inst.hint:
@@ -135,6 +193,8 @@ def _runcatch(req):
             ui.warn(_(" empty string\n"))
         else:
             ui.warn("\n%r\n" % util.ellipsis(inst.args[1]))
+    except error.CensoredNodeError, inst:
+        ui.warn(_("abort: file censored %s!\n") % inst)
     except error.RevlogError, inst:
         ui.warn(_("abort: %s!\n") % inst)
     except error.SignalInterrupt:
@@ -147,6 +207,9 @@ def _runcatch(req):
             commands.help_(ui, inst.args[0], unknowncmd=True)
         except error.UnknownCommand:
             commands.help_(ui, 'shortlist')
+    except error.InterventionRequired, inst:
+        ui.warn("%s\n" % inst)
+        return 1
     except util.Abort, inst:
         ui.warn(_("abort: %s\n") % inst)
         if inst.hint:
@@ -159,16 +222,20 @@ def _runcatch(req):
         elif m in "zlib".split():
             ui.warn(_("(is your Python install correct?)\n"))
     except IOError, inst:
-        if hasattr(inst, "code"):
+        if util.safehasattr(inst, "code"):
             ui.warn(_("abort: %s\n") % inst)
-        elif hasattr(inst, "reason"):
+        elif util.safehasattr(inst, "reason"):
             try: # usually it is in the form (errno, strerror)
                 reason = inst.reason.args[1]
             except (AttributeError, IndexError):
-                 # it might be anything, for example a string
+                # it might be anything, for example a string
                 reason = inst.reason
+            if isinstance(reason, unicode):
+                # SSLError of Python 2.7.9 contains a unicode
+                reason = reason.encode(encoding.encoding, 'replace')
             ui.warn(_("abort: error: %s\n") % reason)
-        elif hasattr(inst, "args") and inst.args[0] == errno.EPIPE:
+        elif (util.safehasattr(inst, "args")
+              and inst.args and inst.args[0] == errno.EPIPE):
             if ui.debugflag:
                 ui.warn(_("broken pipe\n"))
         elif getattr(inst, "strerror", None):
@@ -179,8 +246,8 @@ def _runcatch(req):
         else:
             raise
     except OSError, inst:
-        if getattr(inst, "filename", None):
-            ui.warn(_("abort: %s: %s\n") % (inst.strerror, inst.filename))
+        if getattr(inst, "filename", None) is not None:
+            ui.warn(_("abort: %s: '%s'\n") % (inst.strerror, inst.filename))
         else:
             ui.warn(_("abort: %s\n") % inst.strerror)
     except KeyboardInterrupt:
@@ -200,45 +267,123 @@ def _runcatch(req):
         return inst.code
     except socket.error, inst:
         ui.warn(_("abort: %s\n") % inst.args[-1])
-    except:
-        ui.warn(_("** unknown exception encountered,"
-                  " please report by visiting\n"))
-        ui.warn(_("**  http://mercurial.selenic.com/wiki/BugTracker\n"))
-        ui.warn(_("** Python %s\n") % sys.version.replace('\n', ''))
-        ui.warn(_("** Mercurial Distributed SCM (version %s)\n")
-               % util.version())
-        ui.warn(_("** Extensions loaded: %s\n")
-               % ", ".join([x[0] for x in extensions.extensions()]))
+    except: # re-raises
+        myver = util.version()
+        # For compatibility checking, we discard the portion of the hg
+        # version after the + on the assumption that if a "normal
+        # user" is running a build with a + in it the packager
+        # probably built from fairly close to a tag and anyone with a
+        # 'make local' copy of hg (where the version number can be out
+        # of date) will be clueful enough to notice the implausible
+        # version number and try updating.
+        compare = myver.split('+')[0]
+        ct = tuplever(compare)
+        worst = None, ct, ''
+        for name, mod in extensions.extensions():
+            testedwith = getattr(mod, 'testedwith', '')
+            report = getattr(mod, 'buglink', _('the extension author.'))
+            if not testedwith.strip():
+                # We found an untested extension. It's likely the culprit.
+                worst = name, 'unknown', report
+                break
+
+            # Never blame on extensions bundled with Mercurial.
+            if testedwith == 'internal':
+                continue
+
+            tested = [tuplever(t) for t in testedwith.split()]
+            if ct in tested:
+                continue
+
+            lower = [t for t in tested if t < ct]
+            nearest = max(lower or tested)
+            if worst[0] is None or nearest < worst[1]:
+                worst = name, nearest, report
+        if worst[0] is not None:
+            name, testedwith, report = worst
+            if not isinstance(testedwith, str):
+                testedwith = '.'.join([str(c) for c in testedwith])
+            warning = (_('** Unknown exception encountered with '
+                         'possibly-broken third-party extension %s\n'
+                         '** which supports versions %s of Mercurial.\n'
+                         '** Please disable %s and try your action again.\n'
+                         '** If that fixes the bug please report it to %s\n')
+                       % (name, testedwith, name, report))
+        else:
+            warning = (_("** unknown exception encountered, "
+                         "please report by visiting\n") +
+                       _("** http://mercurial.selenic.com/wiki/BugTracker\n"))
+        warning += ((_("** Python %s\n") % sys.version.replace('\n', '')) +
+                    (_("** Mercurial Distributed SCM (version %s)\n") % myver) +
+                    (_("** Extensions loaded: %s\n") %
+                     ", ".join([x[0] for x in extensions.extensions()])))
+        ui.log("commandexception", "%s\n%s\n", warning, traceback.format_exc())
+        ui.warn(warning)
         raise
 
     return -1
 
+def tuplever(v):
+    try:
+        # Assertion: tuplever is only used for extension compatibility
+        # checking. Otherwise, the discarding of extra version fields is
+        # incorrect.
+        return tuple([int(i) for i in v.split('.')[0:2]])
+    except ValueError:
+        return tuple()
+
 def aliasargs(fn, givenargs):
     args = getattr(fn, 'args', [])
-    if args and givenargs:
+    if args:
         cmd = ' '.join(map(util.shellquote, args))
 
         nums = []
         def replacer(m):
             num = int(m.group(1)) - 1
             nums.append(num)
-            return givenargs[num]
+            if num < len(givenargs):
+                return givenargs[num]
+            raise util.Abort(_('too few arguments for command alias'))
         cmd = re.sub(r'\$(\d+|\$)', replacer, cmd)
         givenargs = [x for i, x in enumerate(givenargs)
                      if i not in nums]
         args = shlex.split(cmd)
     return args + givenargs
 
+def aliasinterpolate(name, args, cmd):
+    '''interpolate args into cmd for shell aliases
+
+    This also handles $0, $@ and "$@".
+    '''
+    # util.interpolate can't deal with "$@" (with quotes) because it's only
+    # built to match prefix + patterns.
+    replacemap = dict(('$%d' % (i + 1), arg) for i, arg in enumerate(args))
+    replacemap['$0'] = name
+    replacemap['$$'] = '$'
+    replacemap['$@'] = ' '.join(args)
+    # Typical Unix shells interpolate "$@" (with quotes) as all the positional
+    # parameters, separated out into words. Emulate the same behavior here by
+    # quoting the arguments individually. POSIX shells will then typically
+    # tokenize each argument into exactly one word.
+    replacemap['"$@"'] = ' '.join(util.shellquote(arg) for arg in args)
+    # escape '\$' for regex
+    regex = '|'.join(replacemap.keys()).replace('$', r'\$')
+    r = re.compile(regex)
+    return r.sub(lambda x: replacemap[x.group()], cmd)
+
 class cmdalias(object):
     def __init__(self, name, definition, cmdtable):
         self.name = self.cmd = name
         self.cmdname = ''
         self.definition = definition
+        self.fn = None
         self.args = []
         self.opts = []
         self.help = ''
         self.norepo = True
-        self.badalias = False
+        self.optionalrepo = False
+        self.badalias = None
+        self.unknowncmd = False
 
         try:
             aliases, entry = cmdutil.findcmd(self.name, cmdtable)
@@ -251,12 +396,7 @@ class cmdalias(object):
             self.shadows = False
 
         if not self.definition:
-            def fn(ui, *args):
-                ui.warn(_("no definition for alias '%s'\n") % self.name)
-                return 1
-            self.fn = fn
-            self.badalias = True
-
+            self.badalias = _("no definition for alias '%s'") % self.name
             return
 
         if self.definition.startswith('!'):
@@ -274,28 +414,25 @@ class cmdalias(object):
                                  % (int(m.groups()[0]), self.name))
                         return ''
                 cmd = re.sub(r'\$(\d+|\$)', _checkvar, self.definition[1:])
-                replace = dict((str(i + 1), arg) for i, arg in enumerate(args))
-                replace['0'] = self.name
-                replace['@'] = ' '.join(args)
-                cmd = util.interpolate(r'\$', replace, cmd, escape_prefix=True)
-                return util.system(cmd, environ=env, out=ui.fout)
+                cmd = aliasinterpolate(self.name, args, cmd)
+                return ui.system(cmd, environ=env)
             self.fn = fn
             return
 
-        args = shlex.split(self.definition)
+        try:
+            args = shlex.split(self.definition)
+        except ValueError, inst:
+            self.badalias = (_("error in definition for alias '%s': %s")
+                             % (self.name, inst))
+            return
         self.cmdname = cmd = args.pop(0)
         args = map(util.expandpath, args)
 
-        for invalidarg in ("--cwd", "-R", "--repository", "--repo"):
+        for invalidarg in ("--cwd", "-R", "--repository", "--repo", "--config"):
             if _earlygetopt([invalidarg], args):
-                def fn(ui, *args):
-                    ui.warn(_("error in definition for alias '%s': %s may only "
-                              "be given on the command line\n")
-                            % (self.name, invalidarg))
-                    return 1
-
-                self.fn = fn
-                self.badalias = True
+                self.badalias = (_("error in definition for alias '%s': %s may "
+                                   "only be given on the command line")
+                                 % (self.name, invalidarg))
                 return
 
         try:
@@ -308,41 +445,41 @@ class cmdalias(object):
             self.args = aliasargs(self.fn, args)
             if cmd not in commands.norepo.split(' '):
                 self.norepo = False
+            if cmd in commands.optionalrepo.split(' '):
+                self.optionalrepo = True
             if self.help.startswith("hg " + cmd):
                 # drop prefix in old-style help lines so hg shows the alias
                 self.help = self.help[4 + len(cmd):]
             self.__doc__ = self.fn.__doc__
 
         except error.UnknownCommand:
-            def fn(ui, *args):
-                ui.warn(_("alias '%s' resolves to unknown command '%s'\n") \
-                            % (self.name, cmd))
-                try:
-                    # check if the command is in a disabled extension
-                    commands.help_(ui, cmd, unknowncmd=True)
-                except error.UnknownCommand:
-                    pass
-                return 1
-            self.fn = fn
-            self.badalias = True
+            self.badalias = (_("alias '%s' resolves to unknown command '%s'")
+                             % (self.name, cmd))
+            self.unknowncmd = True
         except error.AmbiguousCommand:
-            def fn(ui, *args):
-                ui.warn(_("alias '%s' resolves to ambiguous command '%s'\n") \
-                            % (self.name, cmd))
-                return 1
-            self.fn = fn
-            self.badalias = True
+            self.badalias = (_("alias '%s' resolves to ambiguous command '%s'")
+                             % (self.name, cmd))
 
     def __call__(self, ui, *args, **opts):
+        if self.badalias:
+            hint = None
+            if self.unknowncmd:
+                try:
+                    # check if the command is in a disabled extension
+                    cmd, ext = extensions.disabledcmd(ui, self.cmdname)[:2]
+                    hint = _("'%s' is provided by '%s' extension") % (cmd, ext)
+                except error.UnknownCommand:
+                    pass
+            raise util.Abort(self.badalias, hint=hint)
         if self.shadows:
             ui.debug("alias '%s' shadows command '%s'\n" %
                      (self.name, self.cmdname))
 
-        if hasattr(self, 'shell'):
+        if util.safehasattr(self, 'shell'):
             return self.fn(ui, *args, **opts)
         else:
             try:
-                util.checksignature(self.fn)(ui, *args, **opts)
+                return util.checksignature(self.fn)(ui, *args, **opts)
             except error.SignatureError:
                 args = ' '.join([self.cmdname] + self.args)
                 ui.debug("alias '%s' expands to '%s'\n" % (self.name, args))
@@ -354,9 +491,20 @@ def addaliases(ui, cmdtable):
     # but only if they have been defined prior to the current definition.
     for alias, definition in ui.configitems('alias'):
         aliasdef = cmdalias(alias, definition, cmdtable)
-        cmdtable[aliasdef.cmd] = (aliasdef, aliasdef.opts, aliasdef.help)
+
+        try:
+            olddef = cmdtable[aliasdef.cmd][0]
+            if olddef.definition == aliasdef.definition:
+                continue
+        except (KeyError, AttributeError):
+            # definition might not exist or it might not be a cmdalias
+            pass
+
+        cmdtable[aliasdef.name] = (aliasdef, aliasdef.opts, aliasdef.help)
         if aliasdef.norepo:
             commands.norepo += ' %s' % alias
+        if aliasdef.optionalrepo:
+            commands.optionalrepo += ' %s' % alias
 
 def _parse(ui, args):
     options = {}
@@ -370,7 +518,7 @@ def _parse(ui, args):
     if args:
         cmd, args = args[0], args[1:]
         aliases, entry = cmdutil.findcmd(cmd, commands.table,
-                                     ui.config("ui", "strict"))
+                                         ui.configbool("ui", "strict"))
         cmd = aliases[0]
         args = aliasargs(entry[0], args)
         defaults = ui.config("defaults", cmd)
@@ -408,7 +556,7 @@ def _parseconfig(ui, config):
             section, name = name.split('.', 1)
             if not section or not name:
                 raise IndexError
-            ui.setconfig(section, name, value)
+            ui.setconfig(section, name, value, '--config')
             configs.append((section, name, value))
         except (IndexError, ValueError):
             raise util.Abort(_('malformed --config option: %r '
@@ -421,6 +569,22 @@ def _earlygetopt(aliases, args):
 
     The values are listed in the order they appear in args.
     The options and values are removed from args.
+
+    >>> args = ['x', '--cwd', 'foo', 'y']
+    >>> _earlygetopt(['--cwd'], args), args
+    (['foo'], ['x', 'y'])
+
+    >>> args = ['x', '--cwd=bar', 'y']
+    >>> _earlygetopt(['--cwd'], args), args
+    (['bar'], ['x', 'y'])
+
+    >>> args = ['x', '-R', 'foo', 'y']
+    >>> _earlygetopt(['-R'], args), args
+    (['foo'], ['x', 'y'])
+
+    >>> args = ['x', '-Rbar', 'y']
+    >>> _earlygetopt(['-R'], args), args
+    (['bar'], ['x', 'y'])
     """
     try:
         argcount = args.index("--")
@@ -430,14 +594,22 @@ def _earlygetopt(aliases, args):
     values = []
     pos = 0
     while pos < argcount:
-        if args[pos] in aliases:
-            if pos + 1 >= argcount:
-                # ignore and let getopt report an error if there is no value
-                break
+        fullarg = arg = args[pos]
+        equals = arg.find('=')
+        if equals > -1:
+            arg = arg[:equals]
+        if arg in aliases:
             del args[pos]
-            values.append(args.pop(pos))
-            argcount -= 2
-        elif args[pos][:2] in shortopts:
+            if equals > -1:
+                values.append(fullarg[equals + 1:])
+                argcount -= 1
+            else:
+                if pos + 1 >= argcount:
+                    # ignore and let getopt report an error if there is no value
+                    break
+                values.append(args.pop(pos))
+                argcount -= 2
+        elif arg[:2] in shortopts:
             # short option can have no following space, e.g. hg log -Rfoo
             values.append(args.pop(pos)[2:])
             argcount -= 1
@@ -447,10 +619,8 @@ def _earlygetopt(aliases, args):
 
 def runcommand(lui, repo, cmd, fullargs, ui, options, d, cmdpats, cmdoptions):
     # run pre-hook, and abort if it fails
-    ret = hook.hook(lui, repo, "pre-%s" % cmd, False, args=" ".join(fullargs),
-                    pats=cmdpats, opts=cmdoptions)
-    if ret:
-        return ret
+    hook.hook(lui, repo, "pre-%s" % cmd, True, args=" ".join(fullargs),
+              pats=cmdpats, opts=cmdoptions)
     ret = _runcommand(ui, options, cmd, d)
     # run post-hook, passing command result
     hook.hook(lui, repo, "post-%s" % cmd, False, args=" ".join(fullargs),
@@ -474,16 +644,19 @@ def _getlocal(ui, rpath):
         lui = ui.copy()
         lui.readconfig(os.path.join(path, ".hg", "hgrc"), path)
 
-    if rpath:
+    if rpath and rpath[-1]:
         path = lui.expandpath(rpath[-1])
         lui = ui.copy()
         lui.readconfig(os.path.join(path, ".hg", "hgrc"), path)
 
     return path, lui
 
-def _checkshellalias(ui, args):
-    cwd = os.getcwd()
-    norepo = commands.norepo
+def _checkshellalias(lui, ui, args, precheck=True):
+    """Return the function to run the shell alias, if it is required
+
+    'precheck' is whether this function is invoked before adding
+    aliases or not.
+    """
     options = {}
 
     try:
@@ -494,45 +667,42 @@ def _checkshellalias(ui, args):
     if not args:
         return
 
-    _parseconfig(ui, options['config'])
-    if options['cwd']:
-        os.chdir(options['cwd'])
-
-    path, lui = _getlocal(ui, [options['repository']])
-
-    cmdtable = commands.table.copy()
-    addaliases(lui, cmdtable)
+    if precheck:
+        strict = True
+        norepo = commands.norepo
+        optionalrepo = commands.optionalrepo
+        def restorecommands():
+            commands.norepo = norepo
+            commands.optionalrepo = optionalrepo
+        cmdtable = commands.table.copy()
+        addaliases(lui, cmdtable)
+    else:
+        strict = False
+        def restorecommands():
+            pass
+        cmdtable = commands.table
 
     cmd = args[0]
     try:
-        aliases, entry = cmdutil.findcmd(cmd, cmdtable, lui.config("ui", "strict"))
+        aliases, entry = cmdutil.findcmd(cmd, cmdtable, strict)
     except (error.AmbiguousCommand, error.UnknownCommand):
-        commands.norepo = norepo
-        os.chdir(cwd)
+        restorecommands()
         return
 
     cmd = aliases[0]
     fn = entry[0]
 
-    if cmd and hasattr(fn, 'shell'):
+    if cmd and util.safehasattr(fn, 'shell'):
         d = lambda: fn(ui, *args[1:])
-        return lambda: runcommand(lui, None, cmd, args[:1], ui, options, d, [], {})
+        return lambda: runcommand(lui, None, cmd, args[:1], ui, options, d,
+                                  [], {})
 
-    commands.norepo = norepo
-    os.chdir(cwd)
+    restorecommands()
 
 _loaded = set()
 def _dispatch(req):
     args = req.args
     ui = req.ui
-
-    shellaliasfn = _checkshellalias(ui, args)
-    if shellaliasfn:
-        return shellaliasfn()
-
-    # read --config before doing anything else
-    # (e.g. to change trust settings for reading .hg/hgrc)
-    cfgs = _parseconfig(ui, _earlygetopt(['--config'], args))
 
     # check for cwd
     cwd = _earlygetopt(['--cwd'], args)
@@ -541,6 +711,12 @@ def _dispatch(req):
 
     rpath = _earlygetopt(["-R", "--repository", "--repo"], args)
     path, lui = _getlocal(ui, rpath)
+
+    # Now that we're operating in the right directory/repository with
+    # the right config settings, check for shell aliases
+    shellaliasfn = _checkshellalias(lui, ui, args)
+    if shellaliasfn:
+        return shellaliasfn()
 
     # Configure extensions in phases: uisetup, extsetup, cmdtable, and
     # reposetup. Programs like TortoiseHg will call _dispatch several
@@ -565,6 +741,14 @@ def _dispatch(req):
 
     addaliases(lui, commands.table)
 
+    if not lui.configbool("ui", "strict"):
+        # All aliases and commands are completely defined, now.
+        # Check abbreviation/ambiguity of shell alias again, because shell
+        # alias may cause failure of "_parse" (see issue4355)
+        shellaliasfn = _checkshellalias(lui, ui, args, precheck=False)
+        if shellaliasfn:
+            return shellaliasfn()
+
     # check for fallback encoding
     fallback = lui.config('ui', 'fallbackencoding')
     if fallback:
@@ -579,7 +763,7 @@ def _dispatch(req):
         raise util.Abort(_("option --cwd may not be abbreviated!"))
     if options["repository"]:
         raise util.Abort(_(
-            "Option -R has to be separated from other options (e.g. not -qR) "
+            "option -R has to be separated from other options (e.g. not -qR) "
             "and --repository may only be abbreviated as --repo!"))
 
     if options["encoding"]:
@@ -595,7 +779,7 @@ def _dispatch(req):
         s = get_times()
         def print_time():
             t = get_times()
-            ui.warn(_("Time: real %.3f secs (user %.3f+%.3f sys %.3f+%.3f)\n") %
+            ui.warn(_("time: real %.3f secs (user %.3f+%.3f sys %.3f+%.3f)\n") %
                 (t[4]-s[4], t[0]-s[0], t[2]-s[2], t[1]-s[1], t[3]-s[3]))
         atexit.register(print_time)
 
@@ -604,28 +788,28 @@ def _dispatch(req):
     if req.repo:
         uis.add(req.repo.ui)
 
-        # copy configs that were passed on the cmdline (--config) to the repo ui
-        for cfg in cfgs:
-            req.repo.ui.setconfig(*cfg)
-
-    for opt in ('verbose', 'debug', 'quiet', 'traceback'):
-        val = bool(options[opt])
-        if val:
+    if options['verbose'] or options['debug'] or options['quiet']:
+        for opt in ('verbose', 'debug', 'quiet'):
+            val = str(bool(options[opt]))
             for ui_ in uis:
-                ui_.setconfig('ui', opt, str(val))
+                ui_.setconfig('ui', opt, val, '--' + opt)
+
+    if options['traceback']:
+        for ui_ in uis:
+            ui_.setconfig('ui', 'traceback', 'on', '--traceback')
 
     if options['noninteractive']:
         for ui_ in uis:
-            ui_.setconfig('ui', 'interactive', 'off')
+            ui_.setconfig('ui', 'interactive', 'off', '-y')
 
     if cmdoptions.get('insecure', False):
         for ui_ in uis:
-            ui_.setconfig('web', 'cacerts', '')
+            ui_.setconfig('web', 'cacerts', '', '--insecure')
 
-    if options['help']:
-        return commands.help_(ui, cmd, options['version'])
-    elif options['version']:
+    if options['version']:
         return commands.version_(ui)
+    if options['help']:
+        return commands.help_(ui, cmd, command=True)
     elif not cmd:
         return commands.help_(ui, 'shortlist')
 
@@ -633,7 +817,7 @@ def _dispatch(req):
     cmdpats = args[:]
     if cmd not in commands.norepo.split():
         # use the repo from the request only if we don't have -R
-        if not rpath:
+        if not rpath and not cwd:
             repo = req.repo
 
         if repo:
@@ -646,29 +830,33 @@ def _dispatch(req):
                 repo = hg.repository(ui, path=path)
                 if not repo.local():
                     raise util.Abort(_("repository '%s' is not local") % path)
-                repo.ui.setconfig("bundle", "mainreporoot", repo.root)
+                repo.ui.setconfig("bundle", "mainreporoot", repo.root, 'repo')
             except error.RequirementError:
                 raise
             except error.RepoError:
                 if cmd not in commands.optionalrepo.split():
-                    if args and not path: # try to infer -R from command args
+                    if (cmd in commands.inferrepo.split() and
+                        args and not path): # try to infer -R from command args
                         repos = map(cmdutil.findrepo, args)
                         guess = repos[0]
                         if guess and repos.count(guess) == len(repos):
                             req.args = ['--repository', guess] + fullargs
                             return _dispatch(req)
                     if not path:
-                        raise error.RepoError(_("no repository found in %r"
-                                                " (.hg not found)") % os.getcwd())
+                        raise error.RepoError(_("no repository found in '%s'"
+                                                " (.hg not found)")
+                                              % os.getcwd())
                     raise
         if repo:
             ui = repo.ui
+            if options['hidden']:
+                repo = repo.unfiltered()
         args.insert(0, repo)
     elif rpath:
         ui.warn(_("warning: --repository ignored\n"))
 
     msg = ' '.join(' ' in a and repr(a) or a for a in fullargs)
-    ui.log("command", msg + "\n")
+    ui.log("command", '%s\n', msg)
     d = lambda: util.checksignature(func)(ui, *args, **cmdoptions)
     try:
         return runcommand(lui, repo, cmd, fullargs, ui, options, d,
@@ -676,6 +864,60 @@ def _dispatch(req):
     finally:
         if repo and repo != req.repo:
             repo.close()
+
+def lsprofile(ui, func, fp):
+    format = ui.config('profiling', 'format', default='text')
+    field = ui.config('profiling', 'sort', default='inlinetime')
+    limit = ui.configint('profiling', 'limit', default=30)
+    climit = ui.configint('profiling', 'nested', default=5)
+
+    if format not in ['text', 'kcachegrind']:
+        ui.warn(_("unrecognized profiling format '%s'"
+                    " - Ignored\n") % format)
+        format = 'text'
+
+    try:
+        from mercurial import lsprof
+    except ImportError:
+        raise util.Abort(_(
+            'lsprof not available - install from '
+            'http://codespeak.net/svn/user/arigo/hack/misc/lsprof/'))
+    p = lsprof.Profiler()
+    p.enable(subcalls=True)
+    try:
+        return func()
+    finally:
+        p.disable()
+
+        if format == 'kcachegrind':
+            import lsprofcalltree
+            calltree = lsprofcalltree.KCacheGrind(p)
+            calltree.output(fp)
+        else:
+            # format == 'text'
+            stats = lsprof.Stats(p.getstats())
+            stats.sort(field)
+            stats.pprint(limit=limit, file=fp, climit=climit)
+
+def statprofile(ui, func, fp):
+    try:
+        import statprof
+    except ImportError:
+        raise util.Abort(_(
+            'statprof not available - install using "easy_install statprof"'))
+
+    freq = ui.configint('profiling', 'freq', default=1000)
+    if freq > 0:
+        statprof.reset(freq)
+    else:
+        ui.warn(_("invalid sampling frequency '%s' - ignoring\n") % freq)
+
+    statprof.start()
+    try:
+        return func()
+    finally:
+        statprof.stop()
+        statprof.display(fp)
 
 def _runcommand(ui, options, cmd, cmdfunc):
     def checkargs():
@@ -685,45 +927,28 @@ def _runcommand(ui, options, cmd, cmdfunc):
             raise error.CommandError(cmd, _("invalid arguments"))
 
     if options['profile']:
-        format = ui.config('profiling', 'format', default='text')
-
-        if not format in ['text', 'kcachegrind']:
-            ui.warn(_("unrecognized profiling format '%s'"
-                        " - Ignored\n") % format)
-            format = 'text'
+        profiler = os.getenv('HGPROF')
+        if profiler is None:
+            profiler = ui.config('profiling', 'type', default='ls')
+        if profiler not in ('ls', 'stat'):
+            ui.warn(_("unrecognized profiler '%s' - ignored\n") % profiler)
+            profiler = 'ls'
 
         output = ui.config('profiling', 'output')
 
         if output:
             path = ui.expandpath(output)
-            ostream = open(path, 'wb')
+            fp = open(path, 'wb')
         else:
-            ostream = sys.stderr
+            fp = sys.stderr
 
         try:
-            from mercurial import lsprof
-        except ImportError:
-            raise util.Abort(_(
-                'lsprof not available - install from '
-                'http://codespeak.net/svn/user/arigo/hack/misc/lsprof/'))
-        p = lsprof.Profiler()
-        p.enable(subcalls=True)
-        try:
-            return checkargs()
-        finally:
-            p.disable()
-
-            if format == 'kcachegrind':
-                import lsprofcalltree
-                calltree = lsprofcalltree.KCacheGrind(p)
-                calltree.output(ostream)
+            if profiler == 'ls':
+                return lsprofile(ui, checkargs, fp)
             else:
-                # format == 'text'
-                stats = lsprof.Stats(p.getstats())
-                stats.sort()
-                stats.pprint(top=10, file=ostream, climit=5)
-
+                return statprofile(ui, checkargs, fp)
+        finally:
             if output:
-                ostream.close()
+                fp.close()
     else:
         return checkargs()

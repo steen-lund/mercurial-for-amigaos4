@@ -1,3 +1,4 @@
+#require killdaemons
 
 Test wire protocol unbundle with hashed heads (capability: unbundlehash)
 
@@ -29,3 +30,8 @@ The hash here is always the same since the remote repository only has the null h
 
   $ cat access.log | grep unbundle
   * - - [*] "POST /?cmd=unbundle HTTP/1.1" 200 - x-hgarg-1:heads=686173686564+6768033e216468247bd031a0a2d9876d79818f8f (glob)
+
+Explicitly kill daemons to let the test exit on Windows
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
+

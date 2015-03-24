@@ -5,7 +5,7 @@
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2 or any later version.
 
-'''perform automatic newline conversion
+'''perform automatic newline conversion (DEPRECATED)
 
   Deprecation: The win32text extension requires each user to configure
   the extension again and again for each clone since the configuration
@@ -45,6 +45,8 @@ from mercurial.i18n import _
 from mercurial.node import short
 from mercurial import util
 import re
+
+testedwith = 'internal'
 
 # regexp for single LF without CR preceding.
 re_single_lf = re.compile('(^|[^\r])\n', re.MULTILINE)
@@ -119,7 +121,7 @@ def forbidnewline(ui, repo, hooktype, node, newline, **kwargs):
     # changegroup that contains an unacceptable commit followed later
     # by a commit that fixes the problem.
     tip = repo['tip']
-    for rev in xrange(len(repo)-1, repo[node].rev()-1, -1):
+    for rev in xrange(len(repo) - 1, repo[node].rev() - 1, -1):
         c = repo[rev]
         for f in c.files():
             if f in seen or f not in tip or f not in c:
@@ -128,7 +130,7 @@ def forbidnewline(ui, repo, hooktype, node, newline, **kwargs):
             data = c[f].data()
             if not util.binary(data) and newline in data:
                 if not halt:
-                    ui.warn(_('Attempt to commit or push text file(s) '
+                    ui.warn(_('attempt to commit or push text file(s) '
                               'using %s line endings\n') %
                               newlinestr[newline])
                 ui.warn(_('in %s: %s\n') % (short(c.node()), f))

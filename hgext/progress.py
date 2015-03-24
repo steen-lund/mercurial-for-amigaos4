@@ -2,19 +2,8 @@
 #
 # Copyright (C) 2010 Augie Fackler <durin42@gmail.com>
 #
-# This program is free software; you can redistribute it and/or modify it
-# under the terms of the GNU General Public License as published by the
-# Free Software Foundation; either version 2 of the License, or (at your
-# option) any later version.
-#
-# This program is distributed in the hope that it will be useful, but
-# WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
-# Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2 or any later version.
 
 """show progress bars for some actions
 
@@ -27,6 +16,9 @@ The following settings are available::
 
   [progress]
   delay = 3 # number of seconds (float) before showing the progress bar
+  changedelay = 1 # changedelay: minimum delay before showing a new topic.
+                  # If set to less than 3 * refresh, that value will
+                  # be used instead.
   refresh = 0.1 # time in seconds between refreshes of the progress bar
   format = topic bar number estimate # format of the progress bar
   width = <none> # if set, the maximum width of the progress information
@@ -45,15 +37,19 @@ characters.
 
 import sys
 import time
+import threading
 
-from mercurial import util
 from mercurial.i18n import _
+testedwith = 'internal'
+
+from mercurial import encoding
 
 def spacejoin(*args):
     return ' '.join(s for s in args if s)
 
 def shouldprint(ui):
-    return (util.isatty(sys.stderr) or ui.configbool('progress', 'assume-tty'))
+    return not ui.plain() and (ui._isatty(sys.stderr) or
+                               ui.configbool('progress', 'assume-tty'))
 
 def fmtremaining(seconds):
     if seconds < 60:
@@ -95,6 +91,7 @@ def fmtremaining(seconds):
 class progbar(object):
     def __init__(self, ui):
         self.ui = ui
+        self._refreshlock = threading.Lock()
         self.resetstate()
 
     def resetstate(self):
@@ -105,9 +102,14 @@ class progbar(object):
         self.printed = False
         self.lastprint = time.time() + float(self.ui.config(
             'progress', 'delay', default=3))
+        self.curtopic = None
+        self.lasttopic = None
         self.indetcount = 0
         self.refresh = float(self.ui.config(
             'progress', 'refresh', default=0.1))
+        self.changedelay = max(3 * self.refresh,
+                               float(self.ui.config(
+                                   'progress', 'changedelay', default=1)))
         self.order = self.ui.configlist(
             'progress', 'format',
             default=['topic', 'bar', 'number', 'estimate'])
@@ -140,10 +142,10 @@ class progbar(object):
                 else:
                     wid = 20
                 if slice == 'end':
-                    add = item[-wid:]
+                    add = encoding.trim(item, wid, leftside=True)
                 else:
-                    add = item[:wid]
-                add += (wid - len(add)) * ' '
+                    add = encoding.trim(item, wid)
+                add += (wid - encoding.colwidth(add)) * ' '
             elif indicator == 'bar':
                 add = ''
                 needprogress = True
@@ -160,9 +162,9 @@ class progbar(object):
         if needprogress:
             used = 0
             if head:
-                used += len(head) + 1
+                used += encoding.colwidth(head) + 1
             if tail:
-                used += len(tail) + 1
+                used += encoding.colwidth(tail) + 1
             progwidth = termwidth - used - 3
             if total and pos <= total:
                 amt = pos * progwidth // total
@@ -183,7 +185,8 @@ class progbar(object):
             out = spacejoin(head, prog, tail)
         else:
             out = spacejoin(head, tail)
-        sys.stderr.write('\r' + out[:termwidth])
+        sys.stderr.write('\r' + encoding.trim(out, termwidth))
+        self.lasttopic = topic
         sys.stderr.flush()
 
     def clear(self):
@@ -227,45 +230,76 @@ class progbar(object):
             return _('%d %s/sec') % (delta / elapsed, unit)
         return ''
 
+    def _oktoprint(self, now):
+        '''Check if conditions are met to print - e.g. changedelay elapsed'''
+        if (self.lasttopic is None # first time we printed
+            # not a topic change
+            or self.curtopic == self.lasttopic
+            # it's been long enough we should print anyway
+            or now - self.lastprint >= self.changedelay):
+            return True
+        else:
+            return False
+
     def progress(self, topic, pos, item='', unit='', total=None):
         now = time.time()
-        if pos is None:
-            self.starttimes.pop(topic, None)
-            self.startvals.pop(topic, None)
-            self.topicstates.pop(topic, None)
-            # reset the progress bar if this is the outermost topic
-            if self.topics and self.topics[0] == topic and self.printed:
-                self.complete()
-                self.resetstate()
-            # truncate the list of topics assuming all topics within
-            # this one are also closed
-            if topic in self.topics:
-              self.topics = self.topics[:self.topics.index(topic)]
-        else:
-            if topic not in self.topics:
-                self.starttimes[topic] = now
-                self.startvals[topic] = pos
-                self.topics.append(topic)
-            self.topicstates[topic] = pos, item, unit, total
-            if now - self.lastprint >= self.refresh and self.topics:
-                self.lastprint = now
-                self.show(now, topic, *self.topicstates[topic])
+        self._refreshlock.acquire()
+        try:
+            if pos is None:
+                self.starttimes.pop(topic, None)
+                self.startvals.pop(topic, None)
+                self.topicstates.pop(topic, None)
+                # reset the progress bar if this is the outermost topic
+                if self.topics and self.topics[0] == topic and self.printed:
+                    self.complete()
+                    self.resetstate()
+                # truncate the list of topics assuming all topics within
+                # this one are also closed
+                if topic in self.topics:
+                    self.topics = self.topics[:self.topics.index(topic)]
+                    # reset the last topic to the one we just unwound to,
+                    # so that higher-level topics will be stickier than
+                    # lower-level topics
+                    if self.topics:
+                        self.lasttopic = self.topics[-1]
+                    else:
+                        self.lasttopic = None
+            else:
+                if topic not in self.topics:
+                    self.starttimes[topic] = now
+                    self.startvals[topic] = pos
+                    self.topics.append(topic)
+                self.topicstates[topic] = pos, item, unit, total
+                self.curtopic = topic
+                if now - self.lastprint >= self.refresh and self.topics:
+                    if self._oktoprint(now):
+                        self.lastprint = now
+                        self.show(now, topic, *self.topicstates[topic])
+        finally:
+            self._refreshlock.release()
+
+_singleton = None
 
 def uisetup(ui):
+    global _singleton
     class progressui(ui.__class__):
         _progbar = None
 
+        def _quiet(self):
+            return self.debugflag or self.quiet
+
         def progress(self, *args, **opts):
-            self._progbar.progress(*args, **opts)
+            if not self._quiet():
+                self._progbar.progress(*args, **opts)
             return super(progressui, self).progress(*args, **opts)
 
         def write(self, *args, **opts):
-            if self._progbar.printed:
+            if not self._quiet() and self._progbar.printed:
                 self._progbar.clear()
             return super(progressui, self).write(*args, **opts)
 
         def write_err(self, *args, **opts):
-            if self._progbar.printed:
+            if not self._quiet() and self._progbar.printed:
                 self._progbar.clear()
             return super(progressui, self).write_err(*args, **opts)
 
@@ -278,7 +312,9 @@ def uisetup(ui):
         # we instantiate one globally shared progress bar to avoid
         # competing progress bars when multiple UI objects get created
         if not progressui._progbar:
-            progressui._progbar = progbar(ui)
+            if _singleton is None:
+                _singleton = progbar(ui)
+            progressui._progbar = _singleton
 
 def reposetup(ui, repo):
     uisetup(repo.ui)

@@ -1,9 +1,9 @@
+#require cvs112
+
 This feature requires use of builtin cvsps!
 
-  $ "$TESTDIR/hghave" cvs || exit 80
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "convert = " >> $HGRCPATH
-  $ echo "graphlog = " >> $HGRCPATH
 
 create cvs repository with one project
 
@@ -14,6 +14,7 @@ create cvs repository with one project
   $ CVS_OPTIONS=-f
   $ export CVS_OPTIONS
   $ cd ..
+  $ rmdir cvsrepo
   $ cvscall()
   > {
   >     cvs -f "$@"
@@ -140,32 +141,35 @@ convert to hg (#1)
   collecting CVS rlog
   15 log entries
   creating changesets
-  8 changeset entries
+  9 changeset entries
   sorting...
   converting...
-  7 add file1 on trunk
-  6 add file2
-  5 add file3, file4 on branch v1_1
-  4 MERGE from v1_0: add file2
+  8 add file1 on trunk
+  7 add file2
+  6 MERGE from v1_0: add file2
+  5 file file3 was initially added on branch v1_1.
+  4 add file3, file4 on branch v1_1
   3 add file5 on v1_2
   2 add file6 on trunk post-v1_2
-  1 MERGE from v1_2: add file5
-  0 MERGE from HEAD: add file6
+  1 MERGE from HEAD: add file6
+  0 MERGE from v1_2: add file5
 
-hg glog output (#1)
+hg log -G output (#1)
 
-  $ hg -R proj.hg glog --template "{rev} {desc}\n"
-  o  7 MERGE from HEAD: add file6
+  $ hg -R proj.hg log -G --template "{rev} {desc}\n"
+  o  8 MERGE from v1_2: add file5
   |
-  | o  6 MERGE from v1_2: add file5
+  | o  7 MERGE from HEAD: add file6
   | |
-  | o  5 add file6 on trunk post-v1_2
+  o |  6 add file6 on trunk post-v1_2
   | |
-  o |  4 add file5 on v1_2
-  |/
-  | o  3 MERGE from v1_0: add file2
+  | o  5 add file5 on v1_2
   | |
-  | o  2 add file3, file4 on branch v1_1
+  | | o  4 add file3, file4 on branch v1_1
+  | | |
+  o | |  3 file file3 was initially added on branch v1_1.
+  |/ /
+  | o  2 MERGE from v1_0: add file2
   |/
   | o  1 add file2
   |/
@@ -184,32 +188,35 @@ convert to hg (#2: with merge detection)
   collecting CVS rlog
   15 log entries
   creating changesets
-  8 changeset entries
+  9 changeset entries
   sorting...
   converting...
-  7 add file1 on trunk
-  6 add file2
-  5 add file3, file4 on branch v1_1
-  4 MERGE from v1_0: add file2
+  8 add file1 on trunk
+  7 add file2
+  6 MERGE from v1_0: add file2
+  5 file file3 was initially added on branch v1_1.
+  4 add file3, file4 on branch v1_1
   3 add file5 on v1_2
   2 add file6 on trunk post-v1_2
-  1 MERGE from v1_2: add file5
-  0 MERGE from HEAD: add file6
+  1 MERGE from HEAD: add file6
+  0 MERGE from v1_2: add file5
 
-hg glog output (#2)
+hg log -G output (#2)
 
-  $ hg -R proj.hg2 glog --template "{rev} {desc}\n"
-  o  7 MERGE from HEAD: add file6
+  $ hg -R proj.hg2 log -G --template "{rev} {desc}\n"
+  o  8 MERGE from v1_2: add file5
   |
-  | o  6 MERGE from v1_2: add file5
+  | o  7 MERGE from HEAD: add file6
   | |
-  | o  5 add file6 on trunk post-v1_2
+  o |  6 add file6 on trunk post-v1_2
   | |
-  o |  4 add file5 on v1_2
-  |/
-  | o  3 MERGE from v1_0: add file2
+  | o  5 add file5 on v1_2
   | |
-  | o  2 add file3, file4 on branch v1_1
+  | | o  4 add file3, file4 on branch v1_1
+  | | |
+  o | |  3 file file3 was initially added on branch v1_1.
+  |/ /
+  | o  2 MERGE from v1_0: add file2
   |/
   | o  1 add file2
   |/

@@ -7,24 +7,16 @@
 
 '''commands to interactively select changes for commit/qrefresh'''
 
-from mercurial.i18n import gettext, _
-from mercurial import cmdutil, commands, extensions, hg, mdiff, patch
+from mercurial.i18n import _
+from mercurial import cmdutil, commands, extensions, hg, patch
 from mercurial import util
 import copy, cStringIO, errno, os, re, shutil, tempfile
 
 cmdtable = {}
 command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 lines_re = re.compile(r'@@ -(\d+),(\d+) \+(\d+),(\d+) @@\s*(.*)')
-
-diffopts = [
-    ('w', 'ignore-all-space', False,
-     _('ignore white space when comparing lines')),
-    ('b', 'ignore-space-change', None,
-     _('ignore changes in the amount of white space')),
-    ('B', 'ignore-blank-lines', None,
-     _('ignore changes whose lines are all blank')),
-]
 
 def scanpatch(fp):
     """like patch.iterhunks, but yield different events
@@ -32,7 +24,7 @@ def scanpatch(fp):
     - ('file',    [header_lines + fromfile + tofile])
     - ('context', [context_lines])
     - ('hunk',    [hunk_lines])
-    - ('range',   (-start,len, +start,len, diffp))
+    - ('range',   (-start,len, +start,len, proc))
     """
     lr = patch.linereader(fp)
 
@@ -75,12 +67,12 @@ def scanpatch(fp):
             if m:
                 yield 'range', m.groups()
             else:
-                raise patch.PatchError('unknown patch content: %r' % line)
+                yield 'other', line
 
 class header(object):
     """patch header
 
-    XXX shoudn't we move this to mercurial/patch.py ?
+    XXX shouldn't we move this to mercurial/patch.py ?
     """
     diffgit_re = re.compile('diff --git a/(.*) b/(.*)$')
     diff_re = re.compile('diff -r .* (.*)$')
@@ -227,6 +219,9 @@ def parsepatch(fp):
             self.headers.append(h)
             self.header = h
 
+        def addother(self, line):
+            pass # 'other' lines are ignored
+
         def finished(self):
             self.addcontext([])
             return self.headers
@@ -238,12 +233,14 @@ def parsepatch(fp):
                      'range': addrange},
             'context': {'file': newfile,
                         'hunk': addhunk,
-                        'range': addrange},
+                        'range': addrange,
+                        'other': addother},
             'hunk': {'context': addcontext,
                      'file': newfile,
                      'range': addrange},
             'range': {'context': addcontext,
                       'hunk': addhunk},
+            'other': {'other': addother},
             }
 
     p = parser()
@@ -261,7 +258,7 @@ def parsepatch(fp):
 def filterpatch(ui, headers):
     """Interactively filter patch chunks into applied-only chunks"""
 
-    def prompt(skipfile, skipall, query):
+    def prompt(skipfile, skipall, query, chunk):
         """prompt query, and process base inputs
 
         - y/n for the rest of file
@@ -271,44 +268,95 @@ def filterpatch(ui, headers):
 
         Return True/False and possibly updated skipfile and skipall.
         """
+        newpatches = None
         if skipall is not None:
-            return skipall, skipfile, skipall
+            return skipall, skipfile, skipall, newpatches
         if skipfile is not None:
-            return skipfile, skipfile, skipall
+            return skipfile, skipfile, skipall, newpatches
         while True:
-            resps = _('[Ynsfdaq?]')
-            choices = (_('&Yes, record this change'),
-                    _('&No, skip this change'),
-                    _('&Skip remaining changes to this file'),
-                    _('Record remaining changes to this &file'),
-                    _('&Done, skip remaining changes and files'),
-                    _('Record &all changes to all remaining files'),
-                    _('&Quit, recording no changes'),
-                    _('&?'))
-            r = ui.promptchoice("%s %s" % (query, resps), choices)
+            resps = _('[Ynesfdaq?]'
+                      '$$ &Yes, record this change'
+                      '$$ &No, skip this change'
+                      '$$ &Edit this change manually'
+                      '$$ &Skip remaining changes to this file'
+                      '$$ Record remaining changes to this &file'
+                      '$$ &Done, skip remaining changes and files'
+                      '$$ Record &all changes to all remaining files'
+                      '$$ &Quit, recording no changes'
+                      '$$ &? (display help)')
+            r = ui.promptchoice("%s %s" % (query, resps))
             ui.write("\n")
-            if r == 7: # ?
-                doc = gettext(record.__doc__)
-                c = doc.find('::') + 2
-                for l in doc[c:].splitlines():
-                    if l.startswith('      '):
-                        ui.write(l.strip(), '\n')
+            if r == 8: # ?
+                for c, t in ui.extractchoices(resps)[1]:
+                    ui.write('%s - %s\n' % (c, t.lower()))
                 continue
             elif r == 0: # yes
                 ret = True
             elif r == 1: # no
                 ret = False
-            elif r == 2: # Skip
+            elif r == 2: # Edit patch
+                if chunk is None:
+                    ui.write(_('cannot edit patch for whole file'))
+                    ui.write("\n")
+                    continue
+                if chunk.header.binary():
+                    ui.write(_('cannot edit patch for binary file'))
+                    ui.write("\n")
+                    continue
+                # Patch comment based on the Git one (based on comment at end of
+                # http://mercurial.selenic.com/wiki/RecordExtension)
+                phelp = '---' + _("""
+To remove '-' lines, make them ' ' lines (context).
+To remove '+' lines, delete them.
+Lines starting with # will be removed from the patch.
+
+If the patch applies cleanly, the edited hunk will immediately be
+added to the record list. If it does not apply cleanly, a rejects
+file will be generated: you can use that when you try again. If
+all lines of the hunk are removed, then the edit is aborted and
+the hunk is left unchanged.
+""")
+                (patchfd, patchfn) = tempfile.mkstemp(prefix="hg-editor-",
+                        suffix=".diff", text=True)
+                ncpatchfp = None
+                try:
+                    # Write the initial patch
+                    f = os.fdopen(patchfd, "w")
+                    chunk.header.write(f)
+                    chunk.write(f)
+                    f.write('\n'.join(['# ' + i for i in phelp.splitlines()]))
+                    f.close()
+                    # Start the editor and wait for it to complete
+                    editor = ui.geteditor()
+                    ui.system("%s \"%s\"" % (editor, patchfn),
+                              environ={'HGUSER': ui.username()},
+                              onerr=util.Abort, errprefix=_("edit failed"))
+                    # Remove comment lines
+                    patchfp = open(patchfn)
+                    ncpatchfp = cStringIO.StringIO()
+                    for line in patchfp:
+                        if not line.startswith('#'):
+                            ncpatchfp.write(line)
+                    patchfp.close()
+                    ncpatchfp.seek(0)
+                    newpatches = parsepatch(ncpatchfp)
+                finally:
+                    os.unlink(patchfn)
+                    del ncpatchfp
+                # Signal that the chunk shouldn't be applied as-is, but
+                # provide the new patch to be used instead.
+                ret = False
+            elif r == 3: # Skip
                 ret = skipfile = False
-            elif r == 3: # file (Record remaining)
+            elif r == 4: # file (Record remaining)
                 ret = skipfile = True
-            elif r == 4: # done, skip remaining
+            elif r == 5: # done, skip remaining
                 ret = skipall = False
-            elif r == 5: # all
+            elif r == 6: # all
                 ret = skipall = True
-            elif r == 6: # quit
+            elif r == 7: # quit
                 raise util.Abort(_('user quit'))
-            return ret, skipfile, skipall
+            return ret, skipfile, skipall, newpatches
 
     seen = set()
     applied = {}        # 'filename' -> [] of chunks
@@ -325,8 +373,8 @@ def filterpatch(ui, headers):
         if skipall is None:
             h.pretty(ui)
         msg = (_('examine changes to %s?') %
-               _(' and ').join(map(repr, h.files())))
-        r, skipfile, skipall = prompt(skipfile, skipall, msg)
+               _(' and ').join("'%s'" % f for f in h.files()))
+        r, skipfile, skipall, np = prompt(skipfile, skipall, msg, None)
         if not r:
             continue
         applied[h.filename()] = [h]
@@ -337,17 +385,24 @@ def filterpatch(ui, headers):
             if skipfile is None and skipall is None:
                 chunk.pretty(ui)
             if total == 1:
-                msg = _('record this change to %r?') % chunk.filename()
+                msg = _("record this change to '%s'?") % chunk.filename()
             else:
                 idx = pos - len(h.hunks) + i
-                msg = _('record change %d/%d to %r?') % (idx, total,
-                                                         chunk.filename())
-            r, skipfile, skipall = prompt(skipfile, skipall, msg)
+                msg = _("record change %d/%d to '%s'?") % (idx, total,
+                                                           chunk.filename())
+            r, skipfile, skipall, newpatches = prompt(skipfile,
+                    skipall, msg, chunk)
             if r:
                 if fixoffset:
                     chunk = copy.copy(chunk)
                     chunk.toline += fixoffset
                 applied[chunk.filename()].append(chunk)
+            elif newpatches is not None:
+                for newpatch in newpatches:
+                    for newhunk in newpatch.hunks:
+                        if fixoffset:
+                            newhunk.toline += fixoffset
+                        applied[newhunk.filename()].append(newhunk)
             else:
                 fixoffset += chunk.removed - chunk.added
     return sum([h for h in applied.itervalues()
@@ -355,7 +410,7 @@ def filterpatch(ui, headers):
 
 @command("record",
          # same options as commit + white space diff options
-         commands.table['^commit|ci'][1][:] + diffopts,
+         commands.table['^commit|ci'][1][:] + commands.diffwsopts,
           _('hg record [OPTION]... [FILE]...'))
 def record(ui, repo, *pats, **opts):
     '''interactively select changes to commit
@@ -372,6 +427,7 @@ def record(ui, repo, *pats, **opts):
 
       y - record this change
       n - skip this change
+      e - edit this change manually
 
       s - skip remaining changes to this file
       f - record remaining changes to this file
@@ -386,7 +442,10 @@ def record(ui, repo, *pats, **opts):
 
     dorecord(ui, repo, commands.commit, 'commit', False, *pats, **opts)
 
-def qrefresh(ui, repo, *pats, **opts):
+def qrefresh(origfn, ui, repo, *pats, **opts):
+    if not opts['interactive']:
+        return origfn(ui, repo, *pats, **opts)
+
     mq = extensions.find('mq')
 
     def committomq(ui, repo, *pats, **opts):
@@ -399,6 +458,11 @@ def qrefresh(ui, repo, *pats, **opts):
     # backup all changed files
     dorecord(ui, repo, committomq, 'qrefresh', True, *pats, **opts)
 
+# This command registration is replaced during uisetup().
+@command('qrecord',
+    [],
+    _('hg qrecord [OPTION]... PATCH [FILE]...'),
+    inferrepo=True)
 def qrecord(ui, repo, patch, *pats, **opts):
     '''interactively record a new patch
 
@@ -419,10 +483,19 @@ def qrecord(ui, repo, patch, *pats, **opts):
 
     dorecord(ui, repo, committomq, 'qnew', False, *pats, **opts)
 
+def qnew(origfn, ui, repo, patch, *args, **opts):
+    if opts['interactive']:
+        return qrecord(ui, repo, patch, *args, **opts)
+    return origfn(ui, repo, patch, *args, **opts)
+
 def dorecord(ui, repo, commitfunc, cmdsuggest, backupall, *pats, **opts):
     if not ui.interactive():
         raise util.Abort(_('running non-interactively, use %s instead') %
                          cmdsuggest)
+
+    # make sure username is set before going interactive
+    if not opts.get('user'):
+        ui.username() # raise exception, username not provided
 
     def recordfunc(ui, repo, message, match, opts):
         """This is generic record driver.
@@ -439,23 +512,27 @@ def dorecord(ui, repo, commitfunc, cmdsuggest, backupall, *pats, **opts):
         will be left in place, so the user can continue working.
         """
 
+        cmdutil.checkunfinished(repo, commit=True)
         merge = len(repo[None].parents()) > 1
         if merge:
             raise util.Abort(_('cannot partially commit a merge '
                                '(use "hg commit" instead)'))
 
-        changes = repo.status(match=match)[:3]
-        diffopts = mdiff.diffopts(git=True, nodates=True,
-                                  ignorews=opts.get('ignore_all_space'),
-                                  ignorewsamount=opts.get('ignore_space_change'),
-                                  ignoreblanklines=opts.get('ignore_blank_lines'))
-        chunks = patch.diff(repo, changes=changes, opts=diffopts)
+        status = repo.status(match=match)
+        diffopts = patch.difffeatureopts(ui, opts=opts, whitespace=True)
+        diffopts.nodates = True
+        diffopts.git = True
+        chunks = patch.diff(repo, changes=status, opts=diffopts)
         fp = cStringIO.StringIO()
         fp.write(''.join(chunks))
         fp.seek(0)
 
         # 1. filter patch, so we have intending-to apply subset of it
-        chunks = filterpatch(ui, parsepatch(fp))
+        try:
+            chunks = filterpatch(ui, parsepatch(fp))
+        except patch.PatchError, err:
+            raise util.Abort(_('error parsing patch: %s') % err)
+
         del fp
 
         contenders = set()
@@ -465,13 +542,13 @@ def dorecord(ui, repo, commitfunc, cmdsuggest, backupall, *pats, **opts):
             except AttributeError:
                 pass
 
-        changed = changes[0] + changes[1] + changes[2]
+        changed = status.modified + status.added + status.removed
         newfiles = [f for f in changed if f in contenders]
         if not newfiles:
             ui.status(_('no changes to record\n'))
             return 0
 
-        modified = set(changes[0])
+        modified = set(status.modified)
 
         # 2. backup changed files, so we can restore them in the end
         if backupall:
@@ -524,15 +601,9 @@ def dorecord(ui, repo, commitfunc, cmdsuggest, backupall, *pats, **opts):
             #    patch. Now is the time to delegate the job to
             #    commit/qrefresh or the like!
 
-            # it is important to first chdir to repo root -- we'll call
-            # a highlevel command with list of pathnames relative to
-            # repo root
-            cwd = os.getcwd()
-            os.chdir(repo.root)
-            try:
-                commitfunc(ui, repo, *newfiles, **opts)
-            finally:
-                os.chdir(cwd)
+            # Make all of the pathnames absolute.
+            newfiles = [repo.wjoin(nf) for nf in newfiles]
+            commitfunc(ui, repo, *newfiles, **opts)
 
             return 0
         finally:
@@ -567,10 +638,6 @@ def dorecord(ui, repo, commitfunc, cmdsuggest, backupall, *pats, **opts):
     finally:
         ui.write = oldwrite
 
-cmdtable["qrecord"] = \
-    (qrecord, [], # placeholder until mq is available
-     _('hg qrecord [OPTION]... PATCH [FILE]...'))
-
 def uisetup(ui):
     try:
         mq = extensions.find('mq')
@@ -581,18 +648,13 @@ def uisetup(ui):
         (qrecord,
          # same options as qnew, but copy them so we don't get
          # -i/--interactive for qrecord and add white space diff options
-         mq.cmdtable['^qnew'][1][:] + diffopts,
+         mq.cmdtable['^qnew'][1][:] + commands.diffwsopts,
          _('hg qrecord [OPTION]... PATCH [FILE]...'))
 
-    _wrapcmd('qnew', mq.cmdtable, qrecord, _("interactively record a new patch"))
+    _wrapcmd('qnew', mq.cmdtable, qnew, _("interactively record a new patch"))
     _wrapcmd('qrefresh', mq.cmdtable, qrefresh,
              _("interactively select changes to refresh"))
 
 def _wrapcmd(cmd, table, wrapfn, msg):
-    '''wrap the command'''
-    def wrapper(orig, *args, **kwargs):
-        if kwargs['interactive']:
-            return wrapfn(*args, **kwargs)
-        return orig(*args, **kwargs)
-    entry = extensions.wrapcommand(table, cmd, wrapper)
+    entry = extensions.wrapcommand(table, cmd, wrapfn)
     entry[1].append(('i', 'interactive', None, msg))

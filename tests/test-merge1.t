@@ -23,6 +23,37 @@
 
   $ hg update 0
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
+
+Test interrupted updates by exploiting our non-handling of directory collisions
+
+  $ mkdir b
+  $ hg up
+  abort: *: '$TESTTMP/t/b' (glob)
+  [255]
+  $ hg ci
+  abort: last update was interrupted
+  (use 'hg update' to get a consistent checkout)
+  [255]
+  $ hg sum
+  parent: 0:538afb845929 
+   commit #0
+  branch: default
+  commit: (interrupted update)
+  update: 1 new changesets (update)
+  $ rmdir b
+  $ hg up
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg sum
+  parent: 1:b8bb4a988f25 tip
+   commit #1
+  branch: default
+  commit: (clean)
+  update: (current)
+
+Prepare a basic merge
+
+  $ hg up 0
+  0 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ echo This is file c1 > c
   $ hg add c
   $ hg commit -m "commit #2"
@@ -66,7 +97,8 @@ no merges expected
   $ echo This is file b2 > b
 merge should fail
   $ hg merge 1
-  abort: untracked file in working directory differs from file in requested revision: 'b'
+  b: untracked file differs
+  abort: untracked files in working directory differ from files in requested revision
   [255]
 merge of b expected
   $ hg merge -f 1
@@ -108,10 +140,10 @@ Contents of b should be "this is file b1"
   $ echo This is file b22 > b
 merge fails
   $ hg merge 2
-  abort: outstanding uncommitted changes (use 'hg status' to list changes)
+  abort: uncommitted changes
+  (use 'hg status' to list changes)
   [255]
-  $ echo %% merge expected!
-  %% merge expected!
+merge expected!
   $ hg merge -f 2
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
   (branch merge, don't forget to commit)
@@ -145,7 +177,8 @@ merge fails
   $ echo This is file b33 > b
 merge of b should fail
   $ hg merge 2
-  abort: outstanding uncommitted changes (use 'hg status' to list changes)
+  abort: uncommitted changes
+  (use 'hg status' to list changes)
   [255]
 merge of b expected
   $ hg merge -f 2
@@ -170,3 +203,5 @@ Test for issue2364
   $ hg ci -md
   $ hg revert -r -2 b
   $ hg up -q -- -2
+
+  $ cd ..

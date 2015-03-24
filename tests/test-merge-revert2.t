@@ -45,7 +45,7 @@
   $ hg update
   merging file1
   warning: conflicts during merge.
-  merging file1 failed!
+  merging file1 incomplete! (edit conflicts, then use 'hg resolve --mark')
   0 files updated, 0 files merged, 0 files removed, 1 files unresolved
   use 'hg resolve' to retry unresolved file merges
   [1]
@@ -57,11 +57,11 @@
   @@ -1,3 +1,7 @@
    added file1
    another line of text
-  +<<<<<<< local
+  +<<<<<<< working copy: c3fa057dd86f  - test: added file1 and file2
   +changed file1 different
   +=======
    changed file1
-  +>>>>>>> other
+  +>>>>>>> destination:  dfab7f3c2efb - test: changed file1
 
   $ hg status
   M file1

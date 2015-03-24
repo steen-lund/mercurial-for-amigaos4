@@ -1,11 +1,16 @@
+#require git
 
-  $ "$TESTDIR/hghave" git || exit 80
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "convert=" >> $HGRCPATH
-  $ echo 'hgext.graphlog =' >> $HGRCPATH
-  $ echo '[convert]' >> $HGRCPATH
-  $ echo 'hg.usebranchnames = True' >> $HGRCPATH
-  $ echo 'hg.tagsbranch = tags-update' >> $HGRCPATH
+  $ echo "[core]" >> $HOME/.gitconfig
+  $ echo "autocrlf = false" >> $HOME/.gitconfig
+  $ echo "[core]" >> $HOME/.gitconfig
+  $ echo "autocrlf = false" >> $HOME/.gitconfig
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > convert =
+  > [convert]
+  > hg.usebranchnames = True
+  > hg.tagsbranch = tags-update
+  > EOF
   $ GIT_AUTHOR_NAME='test'; export GIT_AUTHOR_NAME
   $ GIT_AUTHOR_EMAIL='test@example.org'; export GIT_AUTHOR_EMAIL
   $ GIT_AUTHOR_DATE="2007-01-01 00:00:00 +0000"; export GIT_AUTHOR_DATE
@@ -22,7 +27,7 @@
   > }
   $ glog()
   > {
-  >     hg glog --template '{rev} "{desc|firstline}" files: {files}\n' "$@"
+  >     hg log -G --template '{rev} "{desc|firstline}" files: {files}\n' "$@"
   > }
   $ convertrepo()
   > {
@@ -82,3 +87,5 @@ Print the log
    /
   o  0 "rev1" files: a
   
+
+  $ cd ..

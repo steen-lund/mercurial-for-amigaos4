@@ -1,6 +1,3 @@
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "graphlog=" >> $HGRCPATH
-
   $ hg init a
   $ cd a
   $ echo foo > t1
@@ -25,8 +22,9 @@
   $ hg push ../a
   pushing to ../a
   searching for changes
+  remote has heads on branch 'default' that are not known locally: 1c9246a22a0a
   abort: push creates new remote head 1e108cc5548c!
-  (you should pull and merge or use push -f to force)
+  (pull and merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg push --debug ../a
@@ -37,10 +35,15 @@
   searching: 2 queries
   query 2; still undecided: 1, sample size is: 1
   2 total queries
-  new remote heads on branch 'default'
-  new remote head 1e108cc5548c
+  listing keys for "phases"
+  checking for updated bookmarks
+  listing keys for "bookmarks"
+  listing keys for "bookmarks"
+  remote has heads on branch 'default' that are not known locally: 1c9246a22a0a
+  new remote heads on branch 'default':
+   1e108cc5548c
   abort: push creates new remote head 1e108cc5548c!
-  (you should pull and merge or use push -f to force)
+  (pull and merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg pull ../a
@@ -56,7 +59,7 @@
   pushing to ../a
   searching for changes
   abort: push creates new remote head 1e108cc5548c!
-  (did you forget to merge? use push -f to force)
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg merge
@@ -109,37 +112,40 @@
   pushing to ../c
   searching for changes
   abort: push creates new remote head 6346d66eb9f5!
-  (did you forget to merge? use push -f to force)
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg push -r 2 ../c
   pushing to ../c
   searching for changes
   no changes found
+  [1]
 
   $ hg push -r 3 ../c
   pushing to ../c
   searching for changes
   abort: push creates new remote head a5dda829a167!
-  (did you forget to merge? use push -f to force)
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg push -v -r 3 -r 4 ../c
   pushing to ../c
   searching for changes
-  all remote heads known locally
-  new remote heads on branch 'default'
-  new remote head a5dda829a167
-  new remote head ee8fbc7a0295
+  new remote heads on branch 'default':
+   a5dda829a167
+   ee8fbc7a0295
   abort: push creates new remote head a5dda829a167!
-  (did you forget to merge? use push -f to force)
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg push -v -f -r 3 -r 4 ../c
   pushing to ../c
   searching for changes
-  all remote heads known locally
   2 changesets found
+  uncompressed size of bundle content:
+       308 (changelog)
+       286 (manifests)
+       213  foo
   adding changesets
   adding manifests
   adding file changes
@@ -263,7 +269,7 @@ Fail on multiple head push:
   pushing to ../f
   searching for changes
   abort: push creates new remote head 0b715ef6ff8f on branch 'a'!
-  (did you forget to merge? use push -f to force)
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
 Push replacement head on existing branches:
@@ -354,9 +360,32 @@ Using --new-branch to push new named branch:
   adding file changes
   added 1 changesets with 1 changes to 1 files
 
+Pushing multi headed new branch:
+
+  $ echo 14 > foo
+  $ hg -q branch f
+  $ hg -q ci -m 14
+  $ echo 15 > foo
+  $ hg -q ci -m 15
+  $ hg -q up 14
+  $ echo 16 > foo
+  $ hg -q ci -m 16
+  $ hg push --branch f --new-branch ../f
+  pushing to ../f
+  searching for changes
+  abort: push creates new branch 'f' with multiple heads
+  (merge or see "hg help push" for details about pushing new heads)
+  [255]
+  $ hg push --branch f --new-branch --force ../f
+  pushing to ../f
+  searching for changes
+  adding changesets
+  adding manifests
+  adding file changes
+  added 3 changesets with 3 changes to 1 files (+1 heads)
 
 Checking prepush logic does not allow silently pushing
-multiple new heads:
+multiple new heads but also doesn't report too many heads:
 
   $ cd ..
   $ hg init h
@@ -382,11 +411,31 @@ multiple new heads:
   adding c
   created new head
 
+  $ for i in `seq 3`; do hg -R h up -q 0; echo $i > h/b; hg -R h ci -qAm$i; done
+
   $ hg -R i push h
   pushing to h
   searching for changes
+  remote has heads on branch 'default' that are not known locally: 534543e22c29 764f8ec07b96 afe7cc7679f5 ce4212fc8847
   abort: push creates new remote head 97bd0c84d346!
-  (you should pull and merge or use push -f to force)
+  (pull and merge or see "hg help push" for details about pushing new heads)
+  [255]
+  $ hg -R h up -q 0; echo x > h/b; hg -R h ci -qAmx
+  $ hg -R i push h
+  pushing to h
+  searching for changes
+  remote has heads on branch 'default' that are not known locally: 18ddb72c4590 534543e22c29 764f8ec07b96 afe7cc7679f5 and 1 others
+  abort: push creates new remote head 97bd0c84d346!
+  (pull and merge or see "hg help push" for details about pushing new heads)
+  [255]
+  $ hg -R i push h -v
+  pushing to h
+  searching for changes
+  remote has heads on branch 'default' that are not known locally: 18ddb72c4590 534543e22c29 764f8ec07b96 afe7cc7679f5 ce4212fc8847
+  new remote heads on branch 'default':
+   97bd0c84d346
+  abort: push creates new remote head 97bd0c84d346!
+  (pull and merge or see "hg help push" for details about pushing new heads)
   [255]
 
 
@@ -395,6 +444,7 @@ Check prepush logic with merged branches:
   $ hg init j
   $ hg -R j branch a
   marked working directory as branch a
+  (branches are permanent and global, did you want a bookmark?)
   $ echo init > j/foo
   $ hg -R j ci -Am init
   adding foo
@@ -405,6 +455,7 @@ Check prepush logic with merged branches:
   $ hg -R j ci -m a1
   $ hg -R k branch b
   marked working directory as branch b
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b > k/foo
   $ hg -R k ci -m b
   $ hg -R k up 0
@@ -455,8 +506,8 @@ Prepush -r should not allow you to sneak in new heads:
   $ hg push ../l -b b
   pushing to ../l
   searching for changes
-  abort: push creates new remote head e7e31d71180f on branch 'a'!
-  (did you forget to merge? use push -f to force)
+  abort: push creates new remote head 451211cc22b0 on branch 'a'!
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ cd ..
@@ -468,11 +519,13 @@ Check prepush with new branch head on former topo non-head:
   $ cd n
   $ hg branch A
   marked working directory as branch A
+  (branches are permanent and global, did you want a bookmark?)
   $ echo a >a
   $ hg ci -Ama
   adding a
   $ hg branch B
   marked working directory as branch B
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b >b
   $ hg ci -Amb
   adding b
@@ -505,7 +558,7 @@ A, not B
 
 glog of local:
 
-  $ hg glog --template "{rev}: {branches} {desc}\n"
+  $ hg log -G --template "{rev}: {branches} {desc}\n"
   @  2: A a2
   |
   | o  1: B b
@@ -514,7 +567,7 @@ glog of local:
   
 glog of remote:
 
-  $ hg glog -R inner --template "{rev}: {branches} {desc}\n"
+  $ hg log -G -R inner --template "{rev}: {branches} {desc}\n"
   @  2: B b1
   |
   o  1: B b
@@ -545,11 +598,13 @@ Check prepush with new branch head on former topo head:
   $ cd o
   $ hg branch A
   marked working directory as branch A
+  (branches are permanent and global, did you want a bookmark?)
   $ echo a >a
   $ hg ci -Ama
   adding a
   $ hg branch B
   marked working directory as branch B
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b >b
   $ hg ci -Amb
   adding b
@@ -586,7 +641,7 @@ it replaces a former topological and branch head, so this should not warn
 
 glog of local:
 
-  $ hg glog --template "{rev}: {branches} {desc}\n"
+  $ hg log -G --template "{rev}: {branches} {desc}\n"
   @  3: A a2
   |
   o  2: A a1
@@ -597,7 +652,7 @@ glog of local:
   
 glog of remote:
 
-  $ hg glog -R inner --template "{rev}: {branches} {desc}\n"
+  $ hg log -G -R inner --template "{rev}: {branches} {desc}\n"
   @  3: B b1
   |
   | o  2: A a1
@@ -631,6 +686,7 @@ but child is on different branch:
   $ cd p
   $ hg branch A
   marked working directory as branch A
+  (branches are permanent and global, did you want a bookmark?)
   $ echo a0 >a
   $ hg ci -Ama0
   adding a
@@ -640,6 +696,7 @@ but child is on different branch:
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ hg branch B
   marked working directory as branch B
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b0 >b
   $ hg ci -Amb0
   adding b
@@ -654,6 +711,7 @@ but child is on different branch:
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ hg branch -f B
   marked working directory as branch B
+  (branches are permanent and global, did you want a bookmark?)
   $ echo a3 >a
   $ hg ci -ma3
   created new head
@@ -661,13 +719,14 @@ but child is on different branch:
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ hg branch -f A
   marked working directory as branch A
+  (branches are permanent and global, did you want a bookmark?)
   $ echo b3 >b
   $ hg ci -mb3
   created new head
 
 glog of local:
 
-  $ hg glog --template "{rev}: {branches} {desc}\n"
+  $ hg log -G --template "{rev}: {branches} {desc}\n"
   @  5: A b3
   |
   | o  4: B a3
@@ -682,7 +741,7 @@ glog of local:
   
 glog of remote:
 
-  $ hg glog -R inner --template "{rev}: {branches} {desc}\n"
+  $ hg log -G -R inner --template "{rev}: {branches} {desc}\n"
   @  3: B b1
   |
   o  2: B b0
@@ -703,14 +762,14 @@ outgoing:
   pushing to inner
   searching for changes
   abort: push creates new remote head 7d0f4fb6cf04 on branch 'A'!
-  (did you forget to merge? use push -f to force)
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg push inner -r4 -r5
   pushing to inner
   searching for changes
   abort: push creates new remote head 7d0f4fb6cf04 on branch 'A'!
-  (did you forget to merge? use push -f to force)
+  (merge or see "hg help push" for details about pushing new heads)
   [255]
 
   $ hg in inner
@@ -718,3 +777,5 @@ outgoing:
   searching for changes
   no changes found
   [1]
+
+  $ cd ..

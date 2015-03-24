@@ -18,6 +18,15 @@ HTTP_METHOD_NOT_ALLOWED = 405
 HTTP_SERVER_ERROR = 500
 
 
+def ismember(ui, username, userlist):
+    """Check if username is a member of userlist.
+
+    If userlist has a single '*' member, all users are considered members.
+    Can be overridden by extensions to provide more complex authorization
+    schemes.
+    """
+    return userlist == ['*'] or username in userlist
+
 def checkauthz(hgweb, req, op):
     '''Check permission for operation based on request data (including
     authentication info). Return if op allowed, else raise an ErrorResponse
@@ -26,12 +35,11 @@ def checkauthz(hgweb, req, op):
     user = req.env.get('REMOTE_USER')
 
     deny_read = hgweb.configlist('web', 'deny_read')
-    if deny_read and (not user or deny_read == ['*'] or user in deny_read):
+    if deny_read and (not user or ismember(hgweb.repo.ui, user, deny_read)):
         raise ErrorResponse(HTTP_UNAUTHORIZED, 'read not authorized')
 
     allow_read = hgweb.configlist('web', 'allow_read')
-    result = (not allow_read) or (allow_read == ['*'])
-    if not (result or user in allow_read):
+    if allow_read and (not ismember(hgweb.repo.ui, user, allow_read)):
         raise ErrorResponse(HTTP_UNAUTHORIZED, 'read not authorized')
 
     if op == 'pull' and not hgweb.allowpull:
@@ -48,15 +56,14 @@ def checkauthz(hgweb, req, op):
     # and replayed
     scheme = req.env.get('wsgi.url_scheme')
     if hgweb.configbool('web', 'push_ssl', True) and scheme != 'https':
-        raise ErrorResponse(HTTP_OK, 'ssl required')
+        raise ErrorResponse(HTTP_FORBIDDEN, 'ssl required')
 
     deny = hgweb.configlist('web', 'deny_push')
-    if deny and (not user or deny == ['*'] or user in deny):
+    if deny and (not user or ismember(hgweb.repo.ui, user, deny)):
         raise ErrorResponse(HTTP_UNAUTHORIZED, 'push not authorized')
 
     allow = hgweb.configlist('web', 'allow_push')
-    result = allow and (allow == ['*'] or user in allow)
-    if not result:
+    if not (allow and ismember(hgweb.repo.ui, user, allow)):
         raise ErrorResponse(HTTP_UNAUTHORIZED, 'push not authorized')
 
 # Hooks for hgweb permission checks; extensions can add hooks here.
@@ -95,7 +102,7 @@ class continuereader(object):
     def __getattr__(self, attr):
         if attr in ('close', 'readline', 'readlines', '__iter__'):
             return getattr(self.f, attr)
-        raise AttributeError()
+        raise AttributeError
 
 def _statusmessage(code):
     from BaseHTTPServer import BaseHTTPRequestHandler
@@ -105,9 +112,9 @@ def _statusmessage(code):
 def statusmessage(code, message=None):
     return '%d %s' % (code, message or _statusmessage(code))
 
-def get_stat(spath):
-    """stat changelog if it exists, spath otherwise"""
-    cl_path = os.path.join(spath, "00changelog.i")
+def get_stat(spath, fn="00changelog.i"):
+    """stat fn (00changelog.i by default) if it exists, spath otherwise"""
+    cl_path = os.path.join(spath, fn)
     if os.path.exists(cl_path):
         return os.stat(cl_path)
     else:
@@ -129,7 +136,7 @@ def staticfile(directory, fname, req):
     for part in parts:
         if (part in ('', os.curdir, os.pardir) or
             os.sep in part or os.altsep is not None and os.altsep in part):
-            return ""
+            return
     fpath = os.path.join(*parts)
     if isinstance(directory, str):
         directory = [directory]
@@ -140,11 +147,10 @@ def staticfile(directory, fname, req):
     try:
         os.stat(path)
         ct = mimetypes.guess_type(path)[0] or "text/plain"
-        req.respond(HTTP_OK, ct, length = os.path.getsize(path))
         fp = open(path, 'rb')
         data = fp.read()
         fp.close()
-        return data
+        req.respond(HTTP_OK, ct, body=data)
     except TypeError:
         raise ErrorResponse(HTTP_SERVER_ERROR, 'illegal filename')
     except OSError, err:

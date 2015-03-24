@@ -1,15 +1,24 @@
+hide outer repo
+  $ hg init
+
 Use hgrc within $TESTTMP
 
   $ HGRCPATH=`pwd`/hgrc
   $ export HGRCPATH
 
+Use an alternate var for scribbling on hgrc to keep check-code from
+complaining about the important settings we may be overwriting:
+
+  $ HGRC=`pwd`/hgrc
+  $ export HGRC
+
 Basic syntax error
 
-  $ echo "invalid" > $HGRCPATH
+  $ echo "invalid" > $HGRC
   $ hg version
   hg: parse error at $TESTTMP/hgrc:1: invalid
   [255]
-  $ echo "" > $HGRCPATH
+  $ echo "" > $HGRC
 
 Issue1199: Can't use '%' in hgrc (eg url encoded username)
 
@@ -19,46 +28,68 @@ Issue1199: Can't use '%' in hgrc (eg url encoded username)
   0 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ cd foobar
   $ cat .hg/hgrc
+  # example repository config (see "hg help config" for more info)
   [paths]
-  default = $TESTTMP/foo%bar
+  default = $TESTTMP/foo%bar (glob)
+  
+  # path aliases to other clones of this repo in URLs or filesystem paths
+  # (see "hg help config.paths" for more info)
+  #
+  # default-push = ssh://jdoe@example.net/hg/jdoes-fork
+  # my-fork      = ssh://jdoe@example.net/hg/jdoes-fork
+  # my-clone     = /home/jdoe/jdoes-clone
+  
+  [ui]
+  # name and email (local to this repository, optional), e.g.
+  # username = Jane Doe <jdoe@example.com>
   $ hg paths
-  default = $TESTTMP/foo%bar
+  default = $TESTTMP/foo%bar (glob)
   $ hg showconfig
-  bundle.mainreporoot=$TESTTMP/foobar
-  paths.default=$TESTTMP/foo%bar
+  bundle.mainreporoot=$TESTTMP/foobar (glob)
+  paths.default=$TESTTMP/foo%bar (glob)
   $ cd ..
 
 issue1829: wrong indentation
 
-  $ echo '[foo]' > $HGRCPATH
-  $ echo '  x = y' >> $HGRCPATH
+  $ echo '[foo]' > $HGRC
+  $ echo '  x = y' >> $HGRC
   $ hg version
   hg: parse error at $TESTTMP/hgrc:2:   x = y
+  unexpected leading whitespace
   [255]
 
-  $ python -c "print '[foo]\nbar = a\n b\n c \n  de\n fg \nbaz = bif cb \n'" \
-  > > $HGRCPATH
+  $ $PYTHON -c "print '[foo]\nbar = a\n b\n c \n  de\n fg \nbaz = bif cb \n'" \
+  > > $HGRC
   $ hg showconfig foo
   foo.bar=a\nb\nc\nde\nfg
   foo.baz=bif cb
 
   $ FAKEPATH=/path/to/nowhere
   $ export FAKEPATH
-  $ echo '%include $FAKEPATH/no-such-file' > $HGRCPATH
+  $ echo '%include $FAKEPATH/no-such-file' > $HGRC
   $ hg version
   Mercurial Distributed SCM (version *) (glob)
   (see http://mercurial.selenic.com for more information)
   
-  Copyright (C) 2005-2011 Matt Mackall and others
+  Copyright (C) 2005-2014 Matt Mackall and others
   This is free software; see the source for copying conditions. There is NO
   warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   $ unset FAKEPATH
 
-make sure unspecified global ui options don't override old values
+make sure global options given on the cmdline take precedence
 
   $ hg showconfig --config ui.verbose=True --quiet
-  ui.verbose=True
+  bundle.mainreporoot=$TESTTMP
+  ui.verbose=False
+  ui.debug=False
   ui.quiet=True
+
+  $ touch foobar/untracked
+  $ cat >> foobar/.hg/hgrc <<EOF
+  > [ui]
+  > verbose=True
+  > EOF
+  $ hg -R foobar st -q
 
 username expansion
 
@@ -67,8 +98,8 @@ username expansion
 
   $ FAKEUSER='John Doe'
   $ export FAKEUSER
-  $ echo '[ui]' > $HGRCPATH
-  $ echo 'username = $FAKEUSER' >> $HGRCPATH
+  $ echo '[ui]' > $HGRC
+  $ echo 'username = $FAKEUSER' >> $HGRC
 
   $ hg init usertest
   $ cd usertest
@@ -79,6 +110,7 @@ username expansion
   $ cd ..
 
   $ hg showconfig
+  bundle.mainreporoot=$TESTTMP
   ui.username=$FAKEUSER
 
   $ unset FAKEUSER
@@ -87,10 +119,10 @@ username expansion
 
 showconfig with multiple arguments
 
-  $ echo "[alias]" > $HGRCPATH
-  $ echo "log = log -g" >> $HGRCPATH
-  $ echo "[defaults]" >> $HGRCPATH
-  $ echo "identify = -n" >> $HGRCPATH
+  $ echo "[alias]" > $HGRC
+  $ echo "log = log -g" >> $HGRC
+  $ echo "[defaults]" >> $HGRC
+  $ echo "identify = -n" >> $HGRC
   $ hg showconfig alias defaults
   alias.log=log -g
   defaults.identify=-n
@@ -103,27 +135,26 @@ showconfig with multiple arguments
 
 HGPLAIN
 
-  $ cd ..
-  $ p=`pwd`
-  $ echo "[ui]" > $HGRCPATH
-  $ echo "debug=true" >> $HGRCPATH
-  $ echo "fallbackencoding=ASCII" >> $HGRCPATH
-  $ echo "quiet=true" >> $HGRCPATH
-  $ echo "slash=true" >> $HGRCPATH
-  $ echo "traceback=true" >> $HGRCPATH
-  $ echo "verbose=true" >> $HGRCPATH
-  $ echo "style=~/.hgstyle" >> $HGRCPATH
-  $ echo "logtemplate={node}" >> $HGRCPATH
-  $ echo "[defaults]" >> $HGRCPATH
-  $ echo "identify=-n" >> $HGRCPATH
-  $ echo "[alias]" >> $HGRCPATH
-  $ echo "log=log -g" >> $HGRCPATH
+  $ echo "[ui]" > $HGRC
+  $ echo "debug=true" >> $HGRC
+  $ echo "fallbackencoding=ASCII" >> $HGRC
+  $ echo "quiet=true" >> $HGRC
+  $ echo "slash=true" >> $HGRC
+  $ echo "traceback=true" >> $HGRC
+  $ echo "verbose=true" >> $HGRC
+  $ echo "style=~/.hgstyle" >> $HGRC
+  $ echo "logtemplate={node}" >> $HGRC
+  $ echo "[defaults]" >> $HGRC
+  $ echo "identify=-n" >> $HGRC
+  $ echo "[alias]" >> $HGRC
+  $ echo "log=log -g" >> $HGRC
 
 customized hgrc
 
   $ hg showconfig
   read config from: $TESTTMP/hgrc
   $TESTTMP/hgrc:13: alias.log=log -g
+  repo: bundle.mainreporoot=$TESTTMP
   $TESTTMP/hgrc:11: defaults.identify=-n
   $TESTTMP/hgrc:2: ui.debug=true
   $TESTTMP/hgrc:3: ui.fallbackencoding=ASCII
@@ -139,8 +170,11 @@ plain hgrc
   $ HGPLAIN=; export HGPLAIN
   $ hg showconfig --config ui.traceback=True --debug
   read config from: $TESTTMP/hgrc
-  none: ui.traceback=True
-  none: ui.debug=True
+  repo: bundle.mainreporoot=$TESTTMP
+  --config: ui.traceback=True
+  --verbose: ui.verbose=False
+  --debug: ui.debug=True
+  --quiet: ui.quiet=False
 
 plain mode with exceptions
 
@@ -148,26 +182,46 @@ plain mode with exceptions
   > def uisetup(ui):
   >     ui.write('plain: %r\n' % ui.plain())
   > EOF
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "plain=./plain.py" >> $HGRCPATH
+  $ echo "[extensions]" >> $HGRC
+  $ echo "plain=./plain.py" >> $HGRC
   $ HGPLAINEXCEPT=; export HGPLAINEXCEPT
   $ hg showconfig --config ui.traceback=True --debug
   plain: True
   read config from: $TESTTMP/hgrc
+  repo: bundle.mainreporoot=$TESTTMP
   $TESTTMP/hgrc:15: extensions.plain=./plain.py
-  none: ui.traceback=True
-  none: ui.debug=True
+  --config: ui.traceback=True
+  --verbose: ui.verbose=False
+  --debug: ui.debug=True
+  --quiet: ui.quiet=False
   $ unset HGPLAIN
   $ hg showconfig --config ui.traceback=True --debug
   plain: True
   read config from: $TESTTMP/hgrc
+  repo: bundle.mainreporoot=$TESTTMP
   $TESTTMP/hgrc:15: extensions.plain=./plain.py
-  none: ui.traceback=True
-  none: ui.debug=True
+  --config: ui.traceback=True
+  --verbose: ui.verbose=False
+  --debug: ui.debug=True
+  --quiet: ui.quiet=False
   $ HGPLAINEXCEPT=i18n; export HGPLAINEXCEPT
   $ hg showconfig --config ui.traceback=True --debug
   plain: True
   read config from: $TESTTMP/hgrc
+  repo: bundle.mainreporoot=$TESTTMP
   $TESTTMP/hgrc:15: extensions.plain=./plain.py
-  none: ui.traceback=True
-  none: ui.debug=True
+  --config: ui.traceback=True
+  --verbose: ui.verbose=False
+  --debug: ui.debug=True
+  --quiet: ui.quiet=False
+
+source of paths is not mangled
+
+  $ cat >> $HGRCPATH <<EOF
+  > [paths]
+  > foo = bar
+  > EOF
+  $ hg showconfig --debug paths
+  plain: True
+  read config from: $TESTTMP/hgrc
+  $TESTTMP/hgrc:17: paths.foo=$TESTTMP/bar (glob)

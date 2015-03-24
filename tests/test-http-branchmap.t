@@ -1,16 +1,20 @@
+#require killdaemons
 
   $ hgserve() {
-  >     hg serve -a localhost -p $HGPORT1 -d --pid-file=hg.pid -E errors.log -v $@
+  >     hg serve -a localhost -p $HGPORT1 -d --pid-file=hg.pid \
+  >       -E errors.log -v $@ > startup.log
+  >     # Grepping hg serve stdout would hang on Windows
+  >     grep -v 'listening at' startup.log
   >     cat hg.pid >> "$DAEMON_PIDS"
   > }
   $ hg init a
   $ hg --encoding utf-8 -R a branch æ
   marked working directory as branch \xc3\xa6 (esc)
+  (branches are permanent and global, did you want a bookmark?)
   $ echo foo > a/foo
   $ hg -R a ci -Am foo
   adding foo
   $ hgserve -R a --config web.push_ssl=False --config web.allow_push=* --encoding latin1
-  listening at http://*:$HGPORT1/ (bound to 127.0.0.1:$HGPORT1) (glob)
   $ hg --encoding utf-8 clone http://localhost:$HGPORT1 b
   requesting all changes
   adding changesets
@@ -50,7 +54,7 @@
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     foo
   
-  $ kill `cat hg.pid`
+  $ "$TESTDIR/killdaemons.py" hg.pid
 
 verify 7e7d56fe4833 (encoding fallback in branchmap to maintain compatibility with 1.3.x)
 

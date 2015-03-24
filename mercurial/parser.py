@@ -13,7 +13,7 @@
 # tokenizer is an iterator that returns type, value pairs
 # elements is a mapping of types to binding strength, prefix and infix actions
 # an action is a tree node name, a tree label, and an optional match
-# __call__(program) parses program into a labelled tree
+# __call__(program) parses program into a labeled tree
 
 import error
 from i18n import _
@@ -75,9 +75,12 @@ class parser(object):
                     if len(infix) == 3:
                         self._match(infix[2], pos)
         return expr
-    def parse(self, message):
+    def parse(self, message, lookup=None):
         'generate a parse tree from a message'
-        self._iter = self._tokenizer(message)
+        if lookup:
+            self._iter = self._tokenizer(message, lookup)
+        else:
+            self._iter = self._tokenizer(message)
         self._advance()
         res = self._parse()
         token, value, pos = self.current

@@ -1,10 +1,12 @@
+#require serve
+
 Some tests for hgweb in an empty repository
 
   $ hg init test
   $ cd test
   $ hg serve -n test -p $HGPORT -d --pid-file=hg.pid -A access.log -E errors.log
   $ cat hg.pid >> $DAEMON_PIDS
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/shortlog')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'shortlog')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -46,23 +48,29 @@ Some tests for hgweb in an empty repository
   <ul>
    <li><a href="/help">help</a></li>
   </ul>
+  <p></p>
+  <div class="atom-logo">
+  <a href="/atom-log" title="subscribe to atom feed">
+  <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
+  </a>
+  </div>
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>log</h3>
   
   <form class="search" action="/log">
   
-  <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <p><input name="rev" id="search1" type="text" size="30" value="" /></p>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="navigate">
   <a href="/shortlog/-1?revcount=30">less</a>
   <a href="/shortlog/-1?revcount=120">more</a>
-  | rev -1: <a href="/shortlog/000000000000">(0)</a> <a href="/shortlog/tip">tip</a> 
+  | rev -1: 
   </div>
   
   <table class="bigtable">
@@ -71,14 +79,31 @@ Some tests for hgweb in an empty repository
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
+  <tbody class="stripes2">
   
+  </tbody>
   </table>
   
   <div class="navigate">
   <a href="/shortlog/-1?revcount=30">less</a>
   <a href="/shortlog/-1?revcount=120">more</a>
-  | rev -1: <a href="/shortlog/000000000000">(0)</a> <a href="/shortlog/tip">tip</a> 
+  | rev -1: 
   </div>
+  
+  <script type="text/javascript">
+      ajaxScrollInit(
+              '/shortlog/%next%',
+              '', <!-- NEXTHASH
+              function (htmlText, previousVal) {
+                  var m = htmlText.match(/'(\w+)', <!-- NEXTHASH/);
+                  return m ? m[1] : null;
+              },
+              '.bigtable > tbody:nth-of-type(2)',
+              '<tr class="%class%">\
+              <td colspan="3" style="text-align: center;">%text%</td>\
+              </tr>'
+      );
+  </script>
   
   </div>
   </div>
@@ -89,7 +114,9 @@ Some tests for hgweb in an empty repository
   </body>
   </html>
   
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/log')
+  $ echo babar
+  babar
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'log')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -131,23 +158,29 @@ Some tests for hgweb in an empty repository
   <ul>
    <li><a href="/help">help</a></li>
   </ul>
+  <p></p>
+  <div class="atom-logo">
+  <a href="/atom-log" title="subscribe to atom feed">
+  <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
+  </a>
+  </div>
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>log</h3>
   
   <form class="search" action="/log">
   
-  <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <p><input name="rev" id="search1" type="text" size="30" value="" /></p>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="navigate">
   <a href="/shortlog/-1?revcount=5">less</a>
   <a href="/shortlog/-1?revcount=20">more</a>
-  | rev -1: <a href="/shortlog/000000000000">(0)</a> <a href="/shortlog/tip">tip</a> 
+  | rev -1: 
   </div>
   
   <table class="bigtable">
@@ -156,14 +189,31 @@ Some tests for hgweb in an empty repository
     <th class="author">author</th>
     <th class="description">description</th>
    </tr>
+  <tbody class="stripes2">
   
+  </tbody>
   </table>
   
   <div class="navigate">
   <a href="/shortlog/-1?revcount=5">less</a>
   <a href="/shortlog/-1?revcount=20">more</a>
-  | rev -1: <a href="/shortlog/000000000000">(0)</a> <a href="/shortlog/tip">tip</a> 
+  | rev -1: 
   </div>
+  
+  <script type="text/javascript">
+      ajaxScrollInit(
+              '/shortlog/%next%',
+              '', <!-- NEXTHASH
+              function (htmlText, previousVal) {
+                  var m = htmlText.match(/'(\w+)', <!-- NEXTHASH/);
+                  return m ? m[1] : null;
+              },
+              '.bigtable > tbody:nth-of-type(2)',
+              '<tr class="%class%">\
+              <td colspan="3" style="text-align: center;">%text%</td>\
+              </tr>'
+      );
+  </script>
   
   </div>
   </div>
@@ -174,7 +224,7 @@ Some tests for hgweb in an empty repository
   </body>
   </html>
   
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/graph')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'graph')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -214,29 +264,35 @@ Some tests for hgweb in an empty repository
   <ul>
    <li><a href="/help">help</a></li>
   </ul>
+  <p></p>
+  <div class="atom-logo">
+  <a href="/atom-log" title="subscribe to atom feed">
+  <img class="atom-logo" src="/static/feed-icon-14x14.png" alt="atom feed" />
+  </a>
+  </div>
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>graph</h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <div class="navigate">
   <a href="/graph/-1?revcount=30">less</a>
   <a href="/graph/-1?revcount=120">more</a>
-  | rev -1: <a href="/graph/000000000000">(0)</a> <a href="/graph/tip">tip</a> 
+  | rev -1: 
   </div>
   
   <noscript><p>The revision graph only works with JavaScript-enabled browsers.</p></noscript>
   
   <div id="wrapper">
-  <ul id="nodebgs"></ul>
+  <ul id="nodebgs" class="stripes2"></ul>
   <canvas id="graph" width="480" height="12"></canvas>
   <ul id="graphnodes"></ul>
   </div>
@@ -248,20 +304,6 @@ Some tests for hgweb in an empty repository
   var graph = new Graph();
   graph.scale(39);
   
-  graph.edge = function(x0, y0, x1, y1, color) {
-  	
-  	this.setColor(color, 0.0, 0.65);
-  	this.ctx.beginPath();
-  	this.ctx.moveTo(x0, y0);
-  	this.ctx.lineTo(x1, y1);
-  	this.ctx.stroke();
-  	
-  }
-  
-  var revlink = '<li style="_STYLE"><span class="desc">';
-  revlink += '<a href="/rev/_NODEID" title="_NODEID">_DESC</a>';
-  revlink += '</span>_TAGS<span class="info">_DATE, by _USER</span></li>';
-  
   graph.vertex = function(x, y, color, parity, cur) {
   	
   	this.ctx.beginPath();
@@ -269,19 +311,12 @@ Some tests for hgweb in an empty repository
   	this.ctx.arc(x, y, radius, 0, Math.PI * 2, true);
   	this.ctx.fill();
   	
-  	var bg = '<li class="bg parity' + parity + '"></li>';
-  	var left = (this.columns + 1) * this.bg_height;
+  	var bg = '<li class="bg"></li>';
+  	var left = (this.bg_height - this.box_size) + (this.columns + 1) * this.box_size;
   	var nstyle = 'padding-left: ' + left + 'px;';
-  	var item = revlink.replace(/_STYLE/, nstyle);
-  	item = item.replace(/_PARITY/, 'parity' + parity);
-  	item = item.replace(/_NODEID/, cur[0]);
-  	item = item.replace(/_NODEID/, cur[0]);
-  	item = item.replace(/_DESC/, cur[3]);
-  	item = item.replace(/_USER/, cur[4]);
-  	item = item.replace(/_DATE/, cur[5]);
   
   	var tagspan = '';
-  	if (cur[7].length || (cur[6][0] != 'default' || cur[6][1])) {
+  	if (cur[7].length || cur[8].length || (cur[6][0] != 'default' || cur[6][1])) {
   		tagspan = '<span class="logtags">';
   		if (cur[6][1]) {
   			tagspan += '<span class="branchhead" title="' + cur[6][0] + '">';
@@ -304,8 +339,11 @@ Some tests for hgweb in an empty repository
   		}
   		tagspan += '</span>';
   	}
+  
+  	var item = '<li style="' + nstyle + '"><span class="desc">';
+  	item += '<a href="/rev/' + cur[0] + '" title="' + cur[0] + '">' + cur[3] + '</a>';
+  	item += '</span>' + tagspan + '<span class="info">' + cur[5] + ', by ' + cur[4] + '</span></li>';
   	
-  	item = item.replace(/_TAGS/, tagspan);
   	return [bg, item];
   	
   }
@@ -318,8 +356,19 @@ Some tests for hgweb in an empty repository
   <div class="navigate">
   <a href="/graph/-1?revcount=30">less</a>
   <a href="/graph/-1?revcount=120">more</a>
-  | rev -1: <a href="/graph/000000000000">(0)</a> <a href="/graph/tip">tip</a> 
+  | rev -1: 
   </div>
+  
+  <script type="text/javascript">
+      ajaxScrollInit(
+              '/graph/-1?revcount=%next%&style=paper',
+              60+60,
+              function (htmlText, previousVal) { return previousVal + 60; },
+              '#wrapper',
+              '<div class="%class%" style="text-align: center;">%text%</div>',
+              'graph'
+      );
+  </script>
   
   </div>
   </div>
@@ -330,7 +379,7 @@ Some tests for hgweb in an empty repository
   </body>
   </html>
   
-  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT '/file')
+  $ ("$TESTDIR/get-with-headers.py" localhost:$HGPORT 'file')
   200 Script output follows
   
   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -371,14 +420,14 @@ Some tests for hgweb in an empty repository
   </div>
   
   <div class="main">
-  <h2><a href="/">test</a></h2>
+  <h2 class="breadcrumb"><a href="/">Mercurial</a> </h2>
   <h3>directory / @ -1:000000000000 <span class="tag">tip</span> </h3>
   
   <form class="search" action="/log">
   
   <p><input name="rev" id="search1" type="text" size="30" /></p>
-  <div id="hint">find changesets by author, revision,
-  files, or words in the commit message</div>
+  <div id="hint">Find changesets by keywords (author, files, the commit message), revision
+  number or hash, or <a href="/help/revsets">revset expression</a>.</div>
   </form>
   
   <table class="bigtable">
@@ -387,13 +436,15 @@ Some tests for hgweb in an empty repository
     <th class="size">size</th>
     <th class="permissions">permissions</th>
   </tr>
-  <tr class="fileline parity0">
+  <tbody class="stripes2">
+  <tr class="fileline">
     <td class="name"><a href="/file/000000000000/">[up]</a></td>
     <td class="size"></td>
     <td class="permissions">drwxr-xr-x</td>
   </tr>
   
   
+  </tbody>
   </table>
   </div>
   </div>
@@ -403,3 +454,5 @@ Some tests for hgweb in an empty repository
   </body>
   </html>
   
+
+  $ cd ..

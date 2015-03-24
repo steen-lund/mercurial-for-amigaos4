@@ -1,10 +1,10 @@
+#require killdaemons
+
 Tests discovery against servers without getbundle support:
 
   $ cat >> $HGRCPATH <<EOF
   > [ui]
   > logtemplate="{rev} {node|short}: {desc} {branches}\n"
-  > [extensions]
-  > graphlog=
   > EOF
   $ cp $HGRCPATH $HGRCPATH-withcap
 
@@ -13,11 +13,18 @@ Tests discovery against servers without getbundle support:
   $ cp $HGRCPATH $HGRCPATH-nocap
   $ cp $HGRCPATH-withcap $HGRCPATH
 
+Prep for test server without branchmap support
+
+  $ CAP="branchmap"
+  $ . "$TESTDIR/notcapable"
+  $ cp $HGRCPATH $HGRCPATH-nocap-branchmap
+  $ cp $HGRCPATH-withcap $HGRCPATH
+
 Setup HTTP server control:
 
   $ remote=http://localhost:$HGPORT/
   $ export remote
-  $ start() {
+  $ tstart() {
   >   echo '[web]' > $1/.hg/hgrc
   >   echo 'push_ssl = false' >> $1/.hg/hgrc
   >   echo 'allow_push = *' >> $1/.hg/hgrc
@@ -25,8 +32,8 @@ Setup HTTP server control:
   >   hg serve -R $1 -p $HGPORT -d --pid-file=hg.pid -E errors.log
   >   cat hg.pid >> $DAEMON_PIDS
   > }
-  $ stop() {
-  >   "$TESTDIR/killdaemons.py"
+  $ tstop() {
+  >   "$TESTDIR/killdaemons.py" $DAEMON_PIDS
   >   cp $HGRCPATH-withcap $HGRCPATH
   > }
 
@@ -34,7 +41,7 @@ Both are empty:
 
   $ hg init empty1
   $ hg init empty2
-  $ start empty2
+  $ tstart empty2
   $ hg incoming -R empty1 $remote
   comparing with http://localhost:$HGPORT/
   no changes found
@@ -49,14 +56,15 @@ Both are empty:
   $ hg push -R empty1 $remote
   pushing to http://localhost:$HGPORT/
   no changes found
-  $ stop
+  [1]
+  $ tstop
 
 Base repo:
 
   $ hg init main
   $ cd main
   $ hg debugbuilddag -mo '+2:tbase @name1 +3:thead1 <tbase @name2 +4:thead2 @both /thead1 +2:tmaintip'
-  $ hg glog
+  $ hg log -G
   o  11 a19bfa7e7328: r11 both
   |
   o  10 8b6bad1512e1: r10 both
@@ -82,7 +90,7 @@ Base repo:
   o  0 d57206cc072a: r0
   
   $ cd ..
-  $ start main
+  $ tstart main
 
 Full clone:
 
@@ -108,6 +116,7 @@ Full clone:
   pushing to http://localhost:$HGPORT/
   searching for changes
   no changes found
+  [1]
   $ cd ..
 
 Local is empty:
@@ -138,6 +147,7 @@ Local is empty:
   $ hg push $remote
   pushing to http://localhost:$HGPORT/
   no changes found
+  [1]
   $ hg pull $remote
   pulling from http://localhost:$HGPORT/
   requesting all changes
@@ -182,6 +192,7 @@ Local is subset:
   pushing to http://localhost:$HGPORT/
   searching for changes
   no changes found
+  [1]
   $ hg pull $remote
   pulling from http://localhost:$HGPORT/
   searching for changes
@@ -199,7 +210,7 @@ Local is subset:
 
 Remote is empty:
 
-  $ stop ; start empty2
+  $ tstop ; tstart empty2
   $ cd main
   $ hg incoming $remote
   comparing with http://localhost:$HGPORT/
@@ -241,7 +252,7 @@ Remote is empty:
 
 Local is superset:
 
-  $ stop
+  $ tstop
   $ hg clone main subset2 --rev name2
   adding changesets
   adding manifests
@@ -249,7 +260,7 @@ Local is superset:
   added 6 changesets with 12 changes to 2 files
   updating to branch name2
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  $ start subset2
+  $ tstart subset2
   $ cd main
   $ hg incoming $remote
   comparing with http://localhost:$HGPORT/
@@ -291,7 +302,7 @@ Local is superset:
 
 Partial pull:
 
-  $ stop ; start main
+  $ tstop ; tstart main
   $ hg clone $remote partial --rev name2
   abort: partial pull cannot be done because other repository doesn't support changegroupsubset.
   [255]
@@ -306,5 +317,53 @@ Partial pull:
   [255]
   $ cd ..
 
-  $ stop
+  $ tstop
 
+Exercise pushing to server without branchmap capability
+
+  $ cp $HGRCPATH-nocap-branchmap $HGRCPATH-nocap
+  $ hg init rlocal
+  $ cd rlocal
+  $ echo A > A
+  $ hg ci -Am A
+  adding A
+  $ cd ..
+  $ hg clone rlocal rremote
+  updating to branch default
+  1 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ cd rlocal
+  $ echo B > B
+  $ hg ci -Am B
+  adding B
+  $ cd ..
+  $ tstart rremote
+
+  $ cd rlocal
+  $ hg incoming $remote
+  comparing with http://localhost:$HGPORT/
+  searching for changes
+  no changes found
+  [1]
+  $ hg outgoing $remote
+  comparing with http://localhost:$HGPORT/
+  searching for changes
+  1 27547f69f254: B 
+  $ hg pull $remote
+  pulling from http://localhost:$HGPORT/
+  searching for changes
+  no changes found
+  $ hg push $remote
+  pushing to http://localhost:$HGPORT/
+  searching for changes
+  remote: adding changesets
+  remote: adding manifests
+  remote: adding file changes
+  remote: added 1 changesets with 1 changes to 1 files
+  $ hg outgoing $remote
+  comparing with http://localhost:$HGPORT/
+  searching for changes
+  no changes found
+  [1]
+  $ cd ..
+
+  $ tstop

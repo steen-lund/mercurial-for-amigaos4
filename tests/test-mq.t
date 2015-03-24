@@ -5,11 +5,12 @@
   >     fi
   > }
 
-  $ echo "[extensions]" >> $HGRCPATH
-  $ echo "mq=" >> $HGRCPATH
-
-  $ echo "[mq]" >> $HGRCPATH
-  $ echo "plain=true" >> $HGRCPATH
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > mq =
+  > [mq]
+  > plain = true
+  > EOF
 
 
 help
@@ -48,36 +49,54 @@ help
   will override the [diff] section and always generate git or regular patches,
   possibly losing data in the second case.
   
+  It may be desirable for mq changesets to be kept in the secret phase (see "hg
+  help phases"), which can be enabled with the following setting:
+  
+    [mq]
+    secret = True
+  
   You will by default be managing a patch queue named "patches". You can create
   other, independent patch queues with the "hg qqueue" command.
   
+  If the working directory contains uncommitted files, qpush, qpop and qgoto
+  abort immediately. If -f/--force is used, the changes are discarded. Setting:
+  
+    [mq]
+    keepchanges = True
+  
+  make them behave as if --keep-changes were passed, and non-conflicting local
+  changes will be tolerated and preserved. If incompatible options such as
+  -f/--force or --exact are passed, this setting is ignored.
+  
+  This extension used to provide a strip command. This command now lives in the
+  strip extension.
+  
   list of commands:
   
-   qapplied     print the patches already applied
-   qclone       clone main and patch repository at same time
-   qdelete      remove patches from queue
-   qdiff        diff of the current patch and subsequent modifications
-   qfinish      move applied patches into repository history
-   qfold        fold the named patches into the current patch
-   qgoto        push or pop patches until named patch is at top of stack
-   qguard       set or print guards for a patch
-   qheader      print the header of the topmost or specified patch
-   qimport      import a patch
-   qnew         create a new patch
-   qnext        print the name of the next patch
-   qpop         pop the current patch off the stack
-   qprev        print the name of the previous patch
-   qpush        push the next patch onto the stack
-   qqueue       manage multiple patch queues
-   qrefresh     update the current patch
-   qrename      rename a patch
-   qselect      set or print guarded patches to push
-   qseries      print the entire series file
-   qtop         print the name of the current patch
-   qunapplied   print the patches not yet applied
-   strip        strip changesets and all their descendants from the repository
+   qapplied      print the patches already applied
+   qclone        clone main and patch repository at same time
+   qdelete       remove patches from queue
+   qdiff         diff of the current patch and subsequent modifications
+   qfinish       move applied patches into repository history
+   qfold         fold the named patches into the current patch
+   qgoto         push or pop patches until named patch is at top of stack
+   qguard        set or print guards for a patch
+   qheader       print the header of the topmost or specified patch
+   qimport       import a patch or existing changeset
+   qnew          create a new patch
+   qnext         print the name of the next pushable patch
+   qpop          pop the current patch off the stack
+   qprev         print the name of the preceding applied patch
+   qpush         push the next patch onto the stack
+   qqueue        manage multiple patch queues
+   qrefresh      update the current patch
+   qrename       rename a patch
+   qselect       set or print guarded patches to push
+   qseries       print the entire series file
+   qtop          print the name of the current patch
+   qunapplied    print the patches not yet applied
   
-  use "hg -v help mq" to show builtin aliases and global options
+  (use "hg help -v mq" to show built-in aliases and global options)
 
   $ hg init a
   $ cd a
@@ -135,7 +154,7 @@ qinit -c should create both files if they don't exist
   guards
   $ cat .hg/patches/series
   $ hg qinit -c
-  abort: repository $TESTTMP/d/.hg/patches already exists!
+  abort: repository $TESTTMP/d/.hg/patches already exists! (glob)
   [255]
   $ cd ..
 
@@ -146,16 +165,20 @@ qinit -c should create both files if they don't exist
   $ hg qnew A
   $ checkundo qnew
   $ echo foo > foo
+  $ hg phase -r qbase
+  0: draft
   $ hg add foo
   $ hg qrefresh
+  $ hg phase -r qbase
+  0: draft
   $ hg qnew B
   $ echo >> foo
   $ hg qrefresh
   $ echo status >> .hg/patches/.hgignore
   $ echo bleh >> .hg/patches/.hgignore
   $ hg qinit -c
-  adding .hg/patches/A
-  adding .hg/patches/B
+  adding .hg/patches/A (glob)
+  adding .hg/patches/B (glob)
   $ hg -R .hg/patches status
   A .hgignore
   A A
@@ -178,18 +201,20 @@ add an untracked file
 status --mq with color (issue2096)
 
   $ hg status --mq --config extensions.color= --config color.mode=ansi --color=always
-  \x1b[0;32;1mA .hgignore\x1b[0m (esc)
-  \x1b[0;32;1mA A\x1b[0m (esc)
-  \x1b[0;32;1mA B\x1b[0m (esc)
-  \x1b[0;32;1mA series\x1b[0m (esc)
-  \x1b[0;35;1;4m? flaf\x1b[0m (esc)
+  \x1b[0;32;1mA \x1b[0m\x1b[0;32;1m.hgignore\x1b[0m (esc)
+  \x1b[0;32;1mA \x1b[0m\x1b[0;32;1mA\x1b[0m (esc)
+  \x1b[0;32;1mA \x1b[0m\x1b[0;32;1mB\x1b[0m (esc)
+  \x1b[0;32;1mA \x1b[0m\x1b[0;32;1mseries\x1b[0m (esc)
+  \x1b[0;35;1;4m? \x1b[0m\x1b[0;35;1;4mflaf\x1b[0m (esc)
 
 try the --mq option on a command provided by an extension
 
   $ hg purge --mq --verbose --config extensions.purge=
-  Removing file flaf
+  removing file flaf
 
   $ cd ..
+
+#if no-outer-repo
 
 init --mq without repo
 
@@ -199,6 +224,8 @@ init --mq without repo
   abort: there is no Mercurial repository here (.hg not found)
   [255]
   $ cd ..
+
+#endif
 
 init --mq with repo path
 
@@ -295,6 +322,8 @@ Dump the tag cache to ensure that it has exactly one head after qpush.
   $ hg qpush
   applying test.patch
   now at: test.patch
+  $ hg phase -r qbase
+  2: draft
   $ hg tags > /dev/null
 
 .hg/cache/tags (post qpush):
@@ -385,7 +414,7 @@ commit should fail
   abort: cannot commit over an applied mq patch
   [255]
 
-push should fail
+push should fail if draft
 
   $ hg push ../../k
   pushing to ../../k
@@ -505,7 +534,18 @@ cleaning up
   $ hg qpush --move test.patch # already applied
   abort: cannot push to a previous patch: test.patch
   [255]
-  $ hg qpush
+  $ sed '2i\
+  > # make qtip index different in series and fullseries
+  > ' `hg root`/.hg/patches/series > $TESTTMP/sedtmp
+  $ cp $TESTTMP/sedtmp `hg root`/.hg/patches/series
+  $ cat `hg root`/.hg/patches/series
+  # comment
+  # make qtip index different in series and fullseries
+  
+  test.patch
+  test1b.patch
+  test2.patch
+  $ hg qpush --move test2.patch
   applying test2.patch
   now at: test2.patch
 
@@ -513,11 +553,12 @@ cleaning up
 series after move
 
   $ cat `hg root`/.hg/patches/series
+  # comment
+  # make qtip index different in series and fullseries
+  
   test.patch
   test1b.patch
   test2.patch
-  # comment
-  
 
 
 pop, qapplied, qunapplied
@@ -760,7 +801,8 @@ strip with local changes, should complain
 
   $ hg strip -f tip
   0 files updated, 0 files merged, 1 files removed, 0 files unresolved
-  saved backup bundle to $TESTTMP/b/.hg/strip-backup/*-backup.hg (glob)
+  saved backup bundle to $TESTTMP/b/.hg/strip-backup/770eb8fce608-0ddcae0f-backup.hg (glob)
+  $ cd ..
 
 
 cd b; hg qrefresh
@@ -871,20 +913,27 @@ bad node in status
   no patches applied
   [1]
 
+  $ cd ..
+
+
+git patches
+
   $ cat >>$HGRCPATH <<EOF
   > [diff]
   > git = True
   > EOF
-  $ cd ..
   $ hg init git
   $ cd git
   $ hg qinit
 
   $ hg qnew -m'new file' new
   $ echo foo > new
+#if execbit
   $ chmod +x new
+#endif
   $ hg add new
   $ hg qrefresh
+#if execbit
   $ cat .hg/patches/new
   new file
   
@@ -894,6 +943,17 @@ bad node in status
   +++ b/new
   @@ -0,0 +1,1 @@
   +foo
+#else
+  $ cat .hg/patches/new
+  new file
+  
+  diff --git a/new b/new
+  new file mode 100644
+  --- /dev/null
+  +++ b/new
+  @@ -0,0 +1,1 @@
+  +foo
+#endif
 
   $ hg qnew -m'copy file' copy
   $ hg cp new copy
@@ -1053,8 +1113,14 @@ refresh omitting an added file
   $ hg qpop
   popping baz
   now at: bar
-  $ hg qdel baz
 
+test qdel/qrm
+
+  $ hg qdel baz
+  $ echo p >> .hg/patches/series
+  $ hg qrm p
+  $ hg qser
+  bar
 
 create a git patch
 
@@ -1145,7 +1211,7 @@ strip again
   
   $ hg strip 1
   1 files updated, 0 files merged, 0 files removed, 0 files unresolved
-  saved backup bundle to $TESTTMP/b/strip/.hg/strip-backup/*-backup.hg (glob)
+  saved backup bundle to $TESTTMP/strip/.hg/strip-backup/*-backup.hg (glob)
   $ checkundo strip
   $ hg log
   changeset:   1:20cbbe65cff7
@@ -1191,7 +1257,7 @@ repo with unversioned patch dir
 
   $ cd qclonesource
   $ hg qinit -c
-  adding .hg/patches/patch1
+  adding .hg/patches/patch1 (glob)
   $ hg qci -m checkpoint
   $ qlog
   main repo:
@@ -1330,11 +1396,18 @@ qpush should fail, local changes
 
 apply force, should discard changes in hello, but not bye
 
-  $ hg qpush -f
+  $ hg qpush -f --verbose
   applying empty
+  saving current version of hello.txt as hello.txt.orig
+  patching file hello.txt
+  committing files:
+  hello.txt
+  committing manifest
+  committing changelog
   now at: empty
   $ hg st
   M bye.txt
+  ? hello.txt.orig
   $ hg diff --config diff.nodates=True
   diff -r ba252371dbc1 bye.txt
   --- a/bye.txt
@@ -1392,3 +1465,146 @@ test popping must remove files added in subdirectories first
   patch queue now empty
   $ cd ..
 
+
+test case preservation through patch pushing especially on case
+insensitive filesystem
+
+  $ hg init casepreserve
+  $ cd casepreserve
+
+  $ hg qnew add-file1
+  $ echo a > TeXtFiLe.TxT
+  $ hg add TeXtFiLe.TxT
+  $ hg qrefresh
+
+  $ hg qnew add-file2
+  $ echo b > AnOtHeRFiLe.TxT
+  $ hg add AnOtHeRFiLe.TxT
+  $ hg qrefresh
+
+  $ hg qnew modify-file
+  $ echo c >> AnOtHeRFiLe.TxT
+  $ hg qrefresh
+
+  $ hg qapplied
+  add-file1
+  add-file2
+  modify-file
+  $ hg qpop -a
+  popping modify-file
+  popping add-file2
+  popping add-file1
+  patch queue now empty
+
+this qpush causes problems below, if case preservation on case
+insensitive filesystem is not enough:
+(1) unexpected "adding ..." messages are shown
+(2) patching fails in modification of (1) files
+
+  $ hg qpush -a
+  applying add-file1
+  applying add-file2
+  applying modify-file
+  now at: modify-file
+
+Proper phase default with mq:
+
+1. mq.secret=false
+
+  $ rm .hg/store/phaseroots
+  $ hg phase 'qparent::'
+  -1: public
+  0: draft
+  1: draft
+  2: draft
+  $ echo '[mq]' >> $HGRCPATH
+  $ echo 'secret=true' >> $HGRCPATH
+  $ rm -f .hg/store/phaseroots
+  $ hg phase 'qparent::'
+  -1: public
+  0: secret
+  1: secret
+  2: secret
+
+Test that qfinish change phase when mq.secret=true
+
+  $ hg qfinish qbase
+  patch add-file1 finalized without changeset message
+  $ hg phase 'all()'
+  0: draft
+  1: secret
+  2: secret
+
+Test that qfinish respect phases.new-commit setting
+
+  $ echo '[phases]' >> $HGRCPATH
+  $ echo 'new-commit=secret' >> $HGRCPATH
+  $ hg qfinish qbase
+  patch add-file2 finalized without changeset message
+  $ hg phase 'all()'
+  0: draft
+  1: secret
+  2: secret
+
+(restore env for next test)
+
+  $ sed -e 's/new-commit=secret//' $HGRCPATH > $TESTTMP/sedtmp
+  $ cp $TESTTMP/sedtmp $HGRCPATH
+  $ hg qimport -r 1 --name  add-file2
+
+Test that qfinish preserve phase when mq.secret=false
+
+  $ sed -e 's/secret=true/secret=false/' $HGRCPATH > $TESTTMP/sedtmp
+  $ cp $TESTTMP/sedtmp $HGRCPATH
+  $ hg qfinish qbase
+  patch add-file2 finalized without changeset message
+  $ hg phase 'all()'
+  0: draft
+  1: secret
+  2: secret
+
+Test that secret mq patch does not break hgweb
+
+  $ cat > hgweb.cgi <<HGWEB
+  > from mercurial import demandimport; demandimport.enable()
+  > from mercurial.hgweb import hgweb
+  > from mercurial.hgweb import wsgicgi
+  > import cgitb
+  > cgitb.enable()
+  > app = hgweb('.', 'test')
+  > wsgicgi.launch(app)
+  > HGWEB
+  $ . "$TESTDIR/cgienv"
+#if msys
+  $ PATH_INFO=//tags; export PATH_INFO
+#else
+  $ PATH_INFO=/tags; export PATH_INFO
+#endif
+  $ QUERY_STRING='style=raw'
+  $ python hgweb.cgi | grep '^tip'
+  tip	[0-9a-f]{40} (re)
+
+  $ cd ..
+
+Test interaction with revset (issue4426)
+
+  $ hg init issue4426
+  $ cd issue4426
+
+  $ echo a > a
+  $ hg ci -Am a
+  adding a
+  $ echo a >> a
+  $ hg ci -m a
+  $ echo a >> a
+  $ hg ci -m a
+  $ hg qimport -r 0::
+
+reimport things
+
+  $ hg qimport -r 1::
+  abort: revision 2 is already managed
+  [255]
+
+
+  $ cd ..

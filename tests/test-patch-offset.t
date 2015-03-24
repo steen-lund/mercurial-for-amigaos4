@@ -68,9 +68,15 @@ import patch
   Hunk #1 succeeded at 43 (offset 34 lines).
   Hunk #2 succeeded at 87 (offset 34 lines).
   Hunk #3 succeeded at 109 (offset 34 lines).
+  committing files:
   a
+  committing manifest
+  committing changelog
+  created 189885cecb41
 
 compare imported changes against reference file
 
   $ python ../writepatterns.py aref 34X 10A 1B 1a 9A 1C 10A 1B 10A 1D 10A 1B 1a 9A 1E 10A 1B 1a 9A
   $ diff aref a
+
+  $ cd ..

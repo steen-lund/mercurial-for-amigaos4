@@ -1,43 +1,50 @@
 Subrepositories let you nest external repositories or projects into a
 parent Mercurial repository, and make commands operate on them as a
-group. External Mercurial and Subversion projects are currently
-supported.
+group.
+
+Mercurial currently supports Mercurial, Git, and Subversion
+subrepositories.
 
 Subrepositories are made of three components:
 
 1. Nested repository checkouts. They can appear anywhere in the
-   parent working directory, and are Mercurial clones or Subversion
-   checkouts.
+   parent working directory.
 
-2. Nested repository references. They are defined in ``.hgsub`` and
+2. Nested repository references. They are defined in ``.hgsub``, which
+   should be placed in the root of working directory, and
    tell where the subrepository checkouts come from. Mercurial
-   subrepositories are referenced like:
+   subrepositories are referenced like::
 
      path/to/nested = https://example.com/nested/repo/path
+
+   Git and Subversion subrepos are also supported::
+
+     path/to/nested = [git]git://example.com/nested/repo/path
+     path/to/nested = [svn]https://example.com/nested/trunk/path
 
    where ``path/to/nested`` is the checkout location relatively to the
    parent Mercurial root, and ``https://example.com/nested/repo/path``
    is the source repository path. The source can also reference a
-   filesystem path. Subversion repositories are defined with:
-
-     path/to/nested = [svn]https://example.com/nested/trunk/path
+   filesystem path.
 
    Note that ``.hgsub`` does not exist by default in Mercurial
    repositories, you have to create and add it to the parent
    repository before using subrepositories.
 
-3. Nested repository states. They are defined in ``.hgsubstate`` and
+3. Nested repository states. They are defined in ``.hgsubstate``, which
+   is placed in the root of working directory, and
    capture whatever information is required to restore the
    subrepositories to the state they were committed in a parent
    repository changeset. Mercurial automatically record the nested
    repositories states when committing in the parent repository.
 
    .. note::
+
       The ``.hgsubstate`` file should not be edited manually.
 
 
 Adding a Subrepository
-----------------------
+======================
 
 If ``.hgsub`` does not exist, create it and add it to the parent
 repository. Clone or checkout the external projects where you want it
@@ -47,7 +54,7 @@ subrepository is tracked and the next commit will record its state in
 ``.hgsubstate`` and bind it to the committed changeset.
 
 Synchronizing a Subrepository
------------------------------
+=============================
 
 Subrepos do not automatically track the latest changeset of their
 sources. Instead, they are updated to the changeset that corresponds
@@ -60,41 +67,58 @@ subrepo at the desired revision, test in the top-level repo, then
 commit in the parent repository to record the new combination.
 
 Deleting a Subrepository
-------------------------
+========================
 
 To remove a subrepository from the parent repository, delete its
 reference from ``.hgsub``, then remove its files.
 
 Interaction with Mercurial Commands
------------------------------------
+===================================
 
 :add: add does not recurse in subrepos unless -S/--subrepos is
-    specified. Subversion subrepositories are currently silently
+    specified.  However, if you specify the full path of a file in a
+    subrepo, it will be added even without -S/--subrepos specified.
+    Git and Subversion subrepositories are currently silently
     ignored.
+
+:addremove: addremove does not recurse into subrepos unless
+    -S/--subrepos is specified.  However, if you specify the full
+    path of a directory in a subrepo, addremove will be performed on
+    it even without -S/--subrepos being specified.  Git and
+    Subversion subrepositories will print a warning and continue.
 
 :archive: archive does not recurse in subrepositories unless
     -S/--subrepos is specified.
 
+:cat: cat currently only handles exact file matches in subrepos.
+    Git and Subversion subrepositories are currently ignored.
+
 :commit: commit creates a consistent snapshot of the state of the
-    entire project and its subrepositories. It does this by first
-    attempting to commit all modified subrepositories, then recording
-    their state and finally committing it in the parent
-    repository. Mercurial can be made to abort if any subrepository
-    content is modified by setting "ui.commitsubrepos=no" in a
-    configuration file (see :hg:`help config`).
+    entire project and its subrepositories. If any subrepositories
+    have been modified, Mercurial will abort.  Mercurial can be made
+    to instead commit all modified subrepositories by specifying
+    -S/--subrepos, or setting "ui.commitsubrepos=True" in a
+    configuration file (see :hg:`help config`).  After there are no
+    longer any modified subrepositories, it records their state and
+    finally commits it in the parent repository.  The --addremove
+    option also honors the -S/--subrepos option.  However, Git and
+    Subversion subrepositories will print a warning and abort.
 
 :diff: diff does not recurse in subrepos unless -S/--subrepos is
     specified. Changes are displayed as usual, on the subrepositories
-    elements. Subversion subrepositories are currently silently
-    ignored.
+    elements. Git subrepositories do not support --include/--exclude.
+    Subversion subrepositories are currently silently ignored.
+
+:forget: forget currently only handles exact file matches in subrepos.
+    Git and Subversion subrepositories are currently silently ignored.
 
 :incoming: incoming does not recurse in subrepos unless -S/--subrepos
-    is specified. Subversion subrepositories are currently silently
-    ignored.
+    is specified. Git and Subversion subrepositories are currently
+    silently ignored.
 
 :outgoing: outgoing does not recurse in subrepos unless -S/--subrepos
-    is specified. Subversion subrepositories are currently silently
-    ignored.
+    is specified. Git and Subversion subrepositories are currently
+    silently ignored.
 
 :pull: pull is not recursive since it is not clear what to pull prior
     to running :hg:`update`. Listing and retrieving all
@@ -105,13 +129,19 @@ Interaction with Mercurial Commands
 :push: Mercurial will automatically push all subrepositories first
     when the parent repository is being pushed. This ensures new
     subrepository changes are available when referenced by top-level
-    repositories.
+    repositories.  Push is a no-op for Subversion subrepositories.
 
 :status: status does not recurse into subrepositories unless
     -S/--subrepos is specified. Subrepository changes are displayed as
     regular Mercurial changes on the subrepository
     elements. Subversion subrepositories are currently silently
     ignored.
+
+:remove: remove does not recurse into subrepositories unless
+    -S/--subrepos is specified.  However, if you specify a file or
+    directory path in a subrepo, it will be removed even without
+    -S/--subrepos.  Git and Subversion subrepositories are currently
+    silently ignored.
 
 :update: update restores the subrepos in the state they were
     originally committed in target changeset. If the recorded
@@ -120,7 +150,7 @@ Interaction with Mercurial Commands
     can require network access when using subrepositories.
 
 Remapping Subrepositories Sources
----------------------------------
+=================================
 
 A subrepository source location may change during a project life,
 invalidating references stored in the parent repository history. To

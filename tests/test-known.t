@@ -1,3 +1,4 @@
+#require killdaemons
 
 = Test the known() protocol function =
 
@@ -34,4 +35,5 @@ Test via HTTP:
   $ hg debugknown http://localhost:$HGPORT/
   
   $ cat error.log
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
 

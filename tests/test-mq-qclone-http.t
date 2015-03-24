@@ -1,3 +1,7 @@
+#require killdaemons
+
+hide outer repo
+  $ hg init
 
   $ echo "[extensions]" >> $HGRCPATH
   $ echo "mq=" >> $HGRCPATH
@@ -30,7 +34,7 @@ test with recursive collection
   $ hg serve -p $HGPORT -d --pid-file=hg.pid --webdir-conf collections.conf \
   >     -A access-paths.log -E error-paths-1.log
   $ cat hg.pid >> $DAEMON_PIDS
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT '?style=raw'
   200 Script output follows
   
   
@@ -69,7 +73,7 @@ test with normal collection
   $ hg serve -p $HGPORT1 -d --pid-file=hg.pid --webdir-conf collections1.conf \
   >     -A access-paths.log -E error-paths-1.log
   $ cat hg.pid >> $DAEMON_PIDS
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT1 '/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT1 '?style=raw'
   200 Script output follows
   
   
@@ -108,7 +112,7 @@ test with old-style collection
   $ hg serve -p $HGPORT2 -d --pid-file=hg.pid --webdir-conf collections2.conf \
   >     -A access-paths.log -E error-paths-1.log
   $ cat hg.pid >> $DAEMON_PIDS
-  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT2 '/?style=raw'
+  $ "$TESTDIR/get-with-headers.py" localhost:$HGPORT2 '?style=raw'
   200 Script output follows
   
   
@@ -147,3 +151,6 @@ test --mq works and uses correct repository config
   [1]
   $ hg --cwd d log --mq --template '{rev} {desc|firstline}\n'
   0 b.patch
+
+  $ "$TESTDIR/killdaemons.py" $DAEMON_PIDS
+

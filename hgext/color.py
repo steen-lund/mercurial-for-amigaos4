@@ -1,28 +1,20 @@
-# color.py color output for the status and qseries commands
+# color.py color output for Mercurial commands
 #
 # Copyright (C) 2007 Kevin Christen <kevin.christen@gmail.com>
 #
-# This program is free software; you can redistribute it and/or modify it
-# under the terms of the GNU General Public License as published by the
-# Free Software Foundation; either version 2 of the License, or (at your
-# option) any later version.
-#
-# This program is distributed in the hope that it will be useful, but
-# WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
-# Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+# This software may be used and distributed according to the terms of the
+# GNU General Public License version 2 or any later version.
 
 '''colorize output from some commands
 
-This extension modifies the status and resolve commands to add color
-to their output to reflect file status, the qseries command to add
-color to reflect patch status (applied, unapplied, missing), and to
-diff-related commands to highlight additions, removals, diff headers,
-and trailing whitespace.
+The color extension colorizes output from several Mercurial commands.
+For example, the diff command shows additions in green and deletions
+in red, while the status command shows modified files in magenta. Many
+other commands have analogous colors. It is possible to customize
+these colors.
+
+Effects
+-------
 
 Other effects in addition to color, like bold and underlined text, are
 also available. By default, the terminfo database is used to find the
@@ -30,7 +22,32 @@ terminal codes used to change color and effect.  If terminfo is not
 available, then effects are rendered with the ECMA-48 SGR control
 function (aka ANSI escape codes).
 
-Default effects may be overridden from your configuration file::
+The available effects in terminfo mode are 'blink', 'bold', 'dim',
+'inverse', 'invisible', 'italic', 'standout', and 'underline'; in
+ECMA-48 mode, the options are 'bold', 'inverse', 'italic', and
+'underline'.  How each is rendered depends on the terminal emulator.
+Some may not be available for a given terminal type, and will be
+silently ignored.
+
+Labels
+------
+
+Text receives color effects depending on the labels that it has. Many
+default Mercurial commands emit labelled text. You can also define
+your own labels in templates using the label function, see :hg:`help
+templates`. A single portion of text may have more than one label. In
+that case, effects given to the last label will override any other
+effects. This includes the special "none" effect, which nullifies
+other effects.
+
+Labels are normally invisible. In order to see these labels and their
+position in the text, use the global --color=debug option. The same
+anchor text may be associated to multiple labels, e.g.
+
+  [log.changeset changeset.secret|changeset:   22611:6f0a53c8f587]
+
+The following are the default effects for some default labels. Default
+effects may be overridden from your configuration file::
 
   [color]
   status.modified = blue bold underline red_background
@@ -56,7 +73,13 @@ Default effects may be overridden from your configuration file::
   diff.deleted = red
   diff.inserted = green
   diff.changed = white
+  diff.tab =
   diff.trailingwhitespace = bold red_background
+
+  # Blank so it inherits the style of the surrounding label
+  changeset.public =
+  changeset.draft =
+  changeset.secret =
 
   resolve.unresolved = red bold
   resolve.resolved = green bold
@@ -68,20 +91,20 @@ Default effects may be overridden from your configuration file::
   branches.current = green
   branches.inactive = none
 
-The available effects in terminfo mode are 'blink', 'bold', 'dim',
-'inverse', 'invisible', 'italic', 'standout', and 'underline'; in
-ECMA-48 mode, the options are 'bold', 'inverse', 'italic', and
-'underline'.  How each is rendered depends on the terminal emulator.
-Some may not be available for a given terminal type, and will be
-silently ignored.
+  tags.normal = green
+  tags.local = black bold
 
-Note that on some systems, terminfo mode may cause problems when using
-color with the pager extension and less -R. less with the -R option
-will only display ECMA-48 color codes, and terminfo mode may sometimes
-emit codes that less doesn't understand. You can work around this by
-either using ansi mode (or auto mode), or by using less -r (which will
-pass through all terminal control codes, not just color control
-codes).
+  rebase.rebased = blue
+  rebase.remaining = red bold
+
+  shelve.age = cyan
+  shelve.newest = green bold
+  shelve.name = blue bold
+
+  histedit.remaining = red bold
+
+Custom colors
+-------------
 
 Because there are only eight standard colors, this module allows you
 to define color names for other color slots which might be available
@@ -97,6 +120,9 @@ that have brighter colors defined in the upper eight) and, 'pink' and
 defined colors may then be used as any of the pre-defined eight,
 including appending '_background' to set the background to that color.
 
+Modes
+-----
+
 By default, the color extension will use ANSI mode (or win32 mode on
 Windows) if it detects a terminal. To override auto mode (to enable
 terminfo mode, for example), set the following configuration option::
@@ -106,17 +132,31 @@ terminfo mode, for example), set the following configuration option::
 
 Any value other than 'ansi', 'win32', 'terminfo', or 'auto' will
 disable color.
+
+Note that on some systems, terminfo mode may cause problems when using
+color with the pager extension and less -R. less with the -R option
+will only display ECMA-48 color codes, and terminfo mode may sometimes
+emit codes that less doesn't understand. You can work around this by
+either using ansi mode (or auto mode), or by using less -r (which will
+pass through all terminal control codes, not just color control
+codes).
 '''
 
 import os
 
-from mercurial import commands, dispatch, extensions, ui as uimod, util
+from mercurial import cmdutil, commands, dispatch, extensions, subrepo, util
+from mercurial import ui as uimod
+from mercurial import templater, error
 from mercurial.i18n import _
+
+cmdtable = {}
+command = cmdutil.command(cmdtable)
+testedwith = 'internal'
 
 # start and stop parameters for effects
 _effects = {'none': 0, 'black': 30, 'red': 31, 'green': 32, 'yellow': 33,
             'blue': 34, 'magenta': 35, 'cyan': 36, 'white': 37, 'bold': 1,
-            'italic': 3, 'underline': 4, 'inverse': 7,
+            'italic': 3, 'underline': 4, 'inverse': 7, 'dim': 2,
             'black_background': 40, 'red_background': 41,
             'green_background': 42, 'yellow_background': 43,
             'blue_background': 44, 'purple_background': 45,
@@ -159,11 +199,13 @@ def _terminfosetup(ui, mode):
               "ECMA-48 color\n"))
         _terminfo_params = {}
 
-def _modesetup(ui, opts):
+def _modesetup(ui, coloropt):
     global _terminfo_params
 
-    coloropt = opts['color']
-    auto = coloropt == 'auto'
+    if coloropt == 'debug':
+        return 'debug'
+
+    auto = (coloropt == 'auto')
     always = not auto and util.parsebool(coloropt)
     if not always and not auto:
         return None
@@ -180,6 +222,7 @@ def _modesetup(ui, opts):
             realmode = 'ansi'
 
     if realmode == 'win32':
+        _terminfo_params = {}
         if not w32effects:
             if mode == 'win32':
                 # only warn if color.mode is explicitly set to win32
@@ -226,9 +269,16 @@ try:
                         'cyan': (False, curses.COLOR_CYAN),
                         'white': (False, curses.COLOR_WHITE)}
 except ImportError:
-    _terminfo_params = False
+    _terminfo_params = {}
 
 _styles = {'grep.match': 'red bold',
+           'grep.linenumber': 'green',
+           'grep.rev': 'green',
+           'grep.change': 'green',
+           'grep.sep': 'cyan',
+           'grep.filename': 'magenta',
+           'grep.user': 'magenta',
+           'grep.date': 'magenta',
            'bookmarks.current': 'green',
            'branches.active': 'none',
            'branches.closed': 'black bold',
@@ -242,13 +292,28 @@ _styles = {'grep.match': 'red bold',
            'diff.file_b': 'green bold',
            'diff.hunk': 'magenta',
            'diff.inserted': 'green',
+           'diff.tab': '',
            'diff.trailingwhitespace': 'bold red_background',
+           'changeset.public' : '',
+           'changeset.draft' : '',
+           'changeset.secret' : '',
            'diffstat.deleted': 'red',
            'diffstat.inserted': 'green',
+           'histedit.remaining': 'red bold',
            'ui.prompt': 'yellow',
            'log.changeset': 'yellow',
+           'patchbomb.finalsummary': '',
+           'patchbomb.from': 'magenta',
+           'patchbomb.to': 'cyan',
+           'patchbomb.subject': 'green',
+           'patchbomb.diffstats': '',
+           'rebase.rebased': 'blue',
+           'rebase.remaining': 'red bold',
            'resolve.resolved': 'green bold',
            'resolve.unresolved': 'red bold',
+           'shelve.age': 'cyan',
+           'shelve.newest': 'green bold',
+           'shelve.name': 'blue bold',
            'status.added': 'green bold',
            'status.clean': 'none',
            'status.copied': 'none',
@@ -256,7 +321,9 @@ _styles = {'grep.match': 'red bold',
            'status.ignored': 'black bold',
            'status.modified': 'blue bold',
            'status.removed': 'red bold',
-           'status.unknown': 'magenta bold underline'}
+           'status.unknown': 'magenta bold underline',
+           'tags.normal': 'green',
+           'tags.local': 'black bold'}
 
 
 def _effect_str(effect):
@@ -292,6 +359,15 @@ def extstyles():
     for name, ext in extensions.extensions():
         _styles.update(getattr(ext, 'colortable', {}))
 
+def valideffect(effect):
+    'Determine if the effect is valid or not.'
+    good = False
+    if not _terminfo_params and effect in _effects:
+        good = True
+    elif effect in _terminfo_params or effect[:-11] in _terminfo_params:
+        good = True
+    return good
+
 def configstyles(ui):
     for status, cfgeffects in ui.configitems('color'):
         if '.' not in status or status.startswith('color.'):
@@ -300,9 +376,7 @@ def configstyles(ui):
         if cfgeffects:
             good = []
             for e in cfgeffects:
-                if not _terminfo_params and e in _effects:
-                    good.append(e)
-                elif e in _terminfo_params or e[:-11] in _terminfo_params:
+                if valideffect(e):
                     good.append(e)
                 else:
                     ui.warn(_("ignoring unknown color/effect %r "
@@ -312,6 +386,10 @@ def configstyles(ui):
 
 class colorui(uimod.ui):
     def popbuffer(self, labeled=False):
+        if self._colormode is None:
+            return super(colorui, self).popbuffer(labeled)
+
+        self._bufferstates.pop()
         if labeled:
             return ''.join(self.label(a, label) for a, label
                            in self._buffers.pop())
@@ -319,6 +397,9 @@ class colorui(uimod.ui):
 
     _colormode = 'ansi'
     def write(self, *args, **opts):
+        if self._colormode is None:
+            return super(colorui, self).write(*args, **opts)
+
         label = opts.get('label', '')
         if self._buffers:
             self._buffers[-1].extend([(str(a), label) for a in args])
@@ -330,7 +411,12 @@ class colorui(uimod.ui):
                 *[self.label(str(a), label) for a in args], **opts)
 
     def write_err(self, *args, **opts):
+        if self._colormode is None:
+            return super(colorui, self).write_err(*args, **opts)
+
         label = opts.get('label', '')
+        if self._bufferstates and self._bufferstates[-1]:
+            return self.write(*args, **opts)
         if self._colormode == 'win32':
             for a in args:
                 win32print(a, super(colorui, self).write_err, **opts)
@@ -338,42 +424,99 @@ class colorui(uimod.ui):
             return super(colorui, self).write_err(
                 *[self.label(str(a), label) for a in args], **opts)
 
+    def showlabel(self, msg, label):
+        if label and msg:
+            if msg[-1] == '\n':
+                return "[%s|%s]\n" % (label, msg[:-1])
+            else:
+                return "[%s|%s]" % (label, msg)
+        else:
+            return msg
+
     def label(self, msg, label):
+        if self._colormode is None:
+            return super(colorui, self).label(msg, label)
+
+        if self._colormode == 'debug':
+            return self.showlabel(msg, label)
+
         effects = []
         for l in label.split():
             s = _styles.get(l, '')
             if s:
                 effects.append(s)
+            elif valideffect(l):
+                effects.append(l)
         effects = ' '.join(effects)
         if effects:
             return '\n'.join([render_effects(s, effects)
                               for s in msg.split('\n')])
         return msg
 
+def templatelabel(context, mapping, args):
+    if len(args) != 2:
+        # i18n: "label" is a keyword
+        raise error.ParseError(_("label expects two arguments"))
+
+    # add known effects to the mapping so symbols like 'red', 'bold',
+    # etc. don't need to be quoted
+    mapping.update(dict([(k, k) for k in _effects]))
+
+    thing = templater._evalifliteral(args[1], context, mapping)
+
+    # apparently, repo could be a string that is the favicon?
+    repo = mapping.get('repo', '')
+    if isinstance(repo, str):
+        return thing
+
+    label = templater._evalifliteral(args[0], context, mapping)
+
+    thing = templater.stringify(thing)
+    label = templater.stringify(label)
+
+    return repo.ui.label(thing, label)
 
 def uisetup(ui):
-    global _terminfo_params
     if ui.plain():
         return
+    if not isinstance(ui, colorui):
+        colorui.__bases__ = (ui.__class__,)
+        ui.__class__ = colorui
     def colorcmd(orig, ui_, opts, cmd, cmdfunc):
-        mode = _modesetup(ui_, opts)
-        if mode:
-            colorui._colormode = mode
-            if not issubclass(ui_.__class__, colorui):
-                colorui.__bases__ = (ui_.__class__,)
-                ui_.__class__ = colorui
+        mode = _modesetup(ui_, opts['color'])
+        colorui._colormode = mode
+        if mode and mode != 'debug':
             extstyles()
             configstyles(ui_)
         return orig(ui_, opts, cmd, cmdfunc)
+    def colorgit(orig, gitsub, commands, env=None, stream=False, cwd=None):
+        if gitsub.ui._colormode and len(commands) and commands[0] == "diff":
+                # insert the argument in the front,
+                # the end of git diff arguments is used for paths
+                commands.insert(1, '--color')
+        return orig(gitsub, commands, env, stream, cwd)
     extensions.wrapfunction(dispatch, '_runcommand', colorcmd)
+    extensions.wrapfunction(subrepo.gitsubrepo, '_gitnodir', colorgit)
+    templater.funcs['label'] = templatelabel
 
 def extsetup(ui):
     commands.globalopts.append(
         ('', 'color', 'auto',
-         # i18n: 'always', 'auto', and 'never' are keywords and should
-         # not be translated
-         _("when to colorize (boolean, always, auto, or never)"),
+         # i18n: 'always', 'auto', 'never', and 'debug' are keywords
+         # and should not be translated
+         _("when to colorize (boolean, always, auto, never, or debug)"),
          _('TYPE')))
+
+@command('debugcolor', [], 'hg debugcolor')
+def debugcolor(ui, repo, **opts):
+    global _styles
+    _styles = {}
+    for effect in _effects.keys():
+        _styles[effect] = effect
+    ui.write(('color mode: %s\n') % ui._colormode)
+    ui.write(_('available colors:\n'))
+    for label, colors in _styles.items():
+        ui.write(('%s\n') % colors, label=label)
 
 if os.name != 'nt':
     w32effects = None
@@ -484,8 +627,12 @@ else:
         for l in label.split():
             style = _styles.get(l, '')
             for effect in style.split():
-                attr = mapcolor(w32effects[effect], attr)
-
+                try:
+                    attr = mapcolor(w32effects[effect], attr)
+                except KeyError:
+                    # w32effects could not have certain attributes so we skip
+                    # them if not found
+                    pass
         # hack to ensure regexp finds data
         if not text.startswith('\033['):
             text = '\033[m' + text
@@ -502,5 +649,5 @@ else:
                 orig(m.group(2), **opts)
                 m = re.match(ansire, m.group(3))
         finally:
-            # Explicity reset original attributes
+            # Explicitly reset original attributes
             _kernel32.SetConsoleTextAttribute(stdout, origattr)

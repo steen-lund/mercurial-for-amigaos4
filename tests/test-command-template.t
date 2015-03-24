@@ -43,11 +43,53 @@ Second branch starting at nullrev:
   $ hg mv second fourth
   $ hg commit -m third -d "2020-01-01 10:01"
 
+  $ hg log --template '{join(file_copies, ",\n")}\n' -r .
+  fourth (second)
+  $ hg log -T '{file_copies % "{source} -> {name}\n"}' -r .
+  second -> fourth
+
+Quoting for ui.logtemplate
+
+  $ hg tip --config "ui.logtemplate={rev}\n"
+  8
+  $ hg tip --config "ui.logtemplate='{rev}\n'"
+  8
+  $ hg tip --config 'ui.logtemplate="{rev}\n"'
+  8
+
 Make sure user/global hgrc does not affect tests
 
   $ echo '[ui]' > .hg/hgrc
   $ echo 'logtemplate =' >> .hg/hgrc
   $ echo 'style =' >> .hg/hgrc
+
+Add some simple styles to settings
+
+  $ echo '[templates]' >> .hg/hgrc
+  $ printf 'simple = "{rev}\\n"\n' >> .hg/hgrc
+  $ printf 'simple2 = {rev}\\n\n' >> .hg/hgrc
+
+  $ hg log -l1 -Tsimple
+  8
+  $ hg log -l1 -Tsimple2
+  8
+
+Test templates and style maps in files:
+
+  $ echo "{rev}" > tmpl
+  $ hg log -l1 -T./tmpl
+  8
+  $ hg log -l1 -Tblah/blah
+  blah/blah (no-eol)
+
+  $ printf 'changeset = "{rev}\\n"\n' > map-simple
+  $ hg log -l1 -T./map-simple
+  8
+
+Template should precede style option
+
+  $ hg log -l1 --style default -T '{rev}\n'
+  8
 
 Default style is like normal output:
 
@@ -63,6 +105,26 @@ Default style is like normal output:
   $ hg log --debug --style default > style.out
   $ cmp log.out style.out || diff -u log.out style.out
 
+Default style should also preserve color information (issue2866):
+
+  $ cp $HGRCPATH $HGRCPATH-bak
+  $ cat <<EOF >> $HGRCPATH
+  > [extensions]
+  > color=
+  > EOF
+
+  $ hg --color=debug log > log.out
+  $ hg --color=debug log --style default > style.out
+  $ cmp log.out style.out || diff -u log.out style.out
+  $ hg --color=debug -v log > log.out
+  $ hg --color=debug -v log --style default > style.out
+  $ cmp log.out style.out || diff -u log.out style.out
+  $ hg --color=debug --debug log > log.out
+  $ hg --color=debug --debug log --style default > style.out
+  $ cmp log.out style.out || diff -u log.out style.out
+
+  $ mv $HGRCPATH-bak $HGRCPATH
+
 Revision with no copies (used to print a traceback):
 
   $ hg tip -v --template '\n'
@@ -70,7 +132,7 @@ Revision with no copies (used to print a traceback):
 
 Compact style works:
 
-  $ hg log --style compact
+  $ hg log -Tcompact
   8[tip]   95c24699272e   2020-01-01 10:01 +0000   test
     third
   
@@ -431,18 +493,389 @@ Test xml styles:
   </log>
 
 
+Test JSON style:
+
+  $ hg log -k nosuch -Tjson
+  []
+
+  $ hg log -qr . -Tjson
+  [
+   {
+    "rev": 8,
+    "node": "95c24699272ef57d062b8bccc32c878bf841784a"
+   }
+  ]
+
+  $ hg log -vpr . -Tjson --stat
+  [
+   {
+    "rev": 8,
+    "node": "95c24699272ef57d062b8bccc32c878bf841784a",
+    "branch": "default",
+    "phase": "draft",
+    "user": "test",
+    "date": [1577872860, 0],
+    "desc": "third",
+    "bookmarks": [],
+    "tags": ["tip"],
+    "parents": ["29114dbae42b9f078cf2714dbe3a86bba8ec7453"],
+    "files": ["fourth", "second", "third"],
+    "diffstat": " fourth |  1 +\n second |  1 -\n third  |  1 +\n 3 files changed, 2 insertions(+), 1 deletions(-)\n",
+    "diff": "diff -r 29114dbae42b -r 95c24699272e fourth\n--- /dev/null\tThu Jan 01 00:00:00 1970 +0000\n+++ b/fourth\tWed Jan 01 10:01:00 2020 +0000\n@@ -0,0 +1,1 @@\n+second\ndiff -r 29114dbae42b -r 95c24699272e second\n--- a/second\tMon Jan 12 13:46:40 1970 +0000\n+++ /dev/null\tThu Jan 01 00:00:00 1970 +0000\n@@ -1,1 +0,0 @@\n-second\ndiff -r 29114dbae42b -r 95c24699272e third\n--- /dev/null\tThu Jan 01 00:00:00 1970 +0000\n+++ b/third\tWed Jan 01 10:01:00 2020 +0000\n@@ -0,0 +1,1 @@\n+third\n"
+   }
+  ]
+
+honor --git but not format-breaking diffopts
+  $ hg --config diff.noprefix=True log --git -vpr . -Tjson
+  [
+   {
+    "rev": 8,
+    "node": "95c24699272ef57d062b8bccc32c878bf841784a",
+    "branch": "default",
+    "phase": "draft",
+    "user": "test",
+    "date": [1577872860, 0],
+    "desc": "third",
+    "bookmarks": [],
+    "tags": ["tip"],
+    "parents": ["29114dbae42b9f078cf2714dbe3a86bba8ec7453"],
+    "files": ["fourth", "second", "third"],
+    "diff": "diff --git a/second b/fourth\nrename from second\nrename to fourth\ndiff --git a/third b/third\nnew file mode 100644\n--- /dev/null\n+++ b/third\n@@ -0,0 +1,1 @@\n+third\n"
+   }
+  ]
+
+  $ hg log -T json
+  [
+   {
+    "rev": 8,
+    "node": "95c24699272ef57d062b8bccc32c878bf841784a",
+    "branch": "default",
+    "phase": "draft",
+    "user": "test",
+    "date": [1577872860, 0],
+    "desc": "third",
+    "bookmarks": [],
+    "tags": ["tip"],
+    "parents": ["29114dbae42b9f078cf2714dbe3a86bba8ec7453"]
+   },
+   {
+    "rev": 7,
+    "node": "29114dbae42b9f078cf2714dbe3a86bba8ec7453",
+    "branch": "default",
+    "phase": "draft",
+    "user": "User Name <user@hostname>",
+    "date": [1000000, 0],
+    "desc": "second",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["0000000000000000000000000000000000000000"]
+   },
+   {
+    "rev": 6,
+    "node": "d41e714fe50d9e4a5f11b4d595d543481b5f980b",
+    "branch": "default",
+    "phase": "draft",
+    "user": "person",
+    "date": [1500001, 0],
+    "desc": "merge",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["13207e5a10d9fd28ec424934298e176197f2c67f", "bbe44766e73d5f11ed2177f1838de10c53ef3e74"]
+   },
+   {
+    "rev": 5,
+    "node": "13207e5a10d9fd28ec424934298e176197f2c67f",
+    "branch": "default",
+    "phase": "draft",
+    "user": "person",
+    "date": [1500000, 0],
+    "desc": "new head",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["10e46f2dcbf4823578cf180f33ecf0b957964c47"]
+   },
+   {
+    "rev": 4,
+    "node": "bbe44766e73d5f11ed2177f1838de10c53ef3e74",
+    "branch": "foo",
+    "phase": "draft",
+    "user": "person",
+    "date": [1400000, 0],
+    "desc": "new branch",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["10e46f2dcbf4823578cf180f33ecf0b957964c47"]
+   },
+   {
+    "rev": 3,
+    "node": "10e46f2dcbf4823578cf180f33ecf0b957964c47",
+    "branch": "default",
+    "phase": "draft",
+    "user": "person",
+    "date": [1300000, 0],
+    "desc": "no user, no domain",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["97054abb4ab824450e9164180baf491ae0078465"]
+   },
+   {
+    "rev": 2,
+    "node": "97054abb4ab824450e9164180baf491ae0078465",
+    "branch": "default",
+    "phase": "draft",
+    "user": "other@place",
+    "date": [1200000, 0],
+    "desc": "no person",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["b608e9d1a3f0273ccf70fb85fd6866b3482bf965"]
+   },
+   {
+    "rev": 1,
+    "node": "b608e9d1a3f0273ccf70fb85fd6866b3482bf965",
+    "branch": "default",
+    "phase": "draft",
+    "user": "A. N. Other <other@place>",
+    "date": [1100000, 0],
+    "desc": "other 1\nother 2\n\nother 3",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["1e4e1b8f71e05681d422154f5421e385fec3454f"]
+   },
+   {
+    "rev": 0,
+    "node": "1e4e1b8f71e05681d422154f5421e385fec3454f",
+    "branch": "default",
+    "phase": "draft",
+    "user": "User Name <user@hostname>",
+    "date": [1000000, 0],
+    "desc": "line 1\nline 2",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["0000000000000000000000000000000000000000"]
+   }
+  ]
+
+  $ hg heads -v -Tjson
+  [
+   {
+    "rev": 8,
+    "node": "95c24699272ef57d062b8bccc32c878bf841784a",
+    "branch": "default",
+    "phase": "draft",
+    "user": "test",
+    "date": [1577872860, 0],
+    "desc": "third",
+    "bookmarks": [],
+    "tags": ["tip"],
+    "parents": ["29114dbae42b9f078cf2714dbe3a86bba8ec7453"],
+    "files": ["fourth", "second", "third"]
+   },
+   {
+    "rev": 6,
+    "node": "d41e714fe50d9e4a5f11b4d595d543481b5f980b",
+    "branch": "default",
+    "phase": "draft",
+    "user": "person",
+    "date": [1500001, 0],
+    "desc": "merge",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["13207e5a10d9fd28ec424934298e176197f2c67f", "bbe44766e73d5f11ed2177f1838de10c53ef3e74"],
+    "files": []
+   },
+   {
+    "rev": 4,
+    "node": "bbe44766e73d5f11ed2177f1838de10c53ef3e74",
+    "branch": "foo",
+    "phase": "draft",
+    "user": "person",
+    "date": [1400000, 0],
+    "desc": "new branch",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["10e46f2dcbf4823578cf180f33ecf0b957964c47"],
+    "files": []
+   }
+  ]
+
+  $ hg log --debug -Tjson
+  [
+   {
+    "rev": 8,
+    "node": "95c24699272ef57d062b8bccc32c878bf841784a",
+    "branch": "default",
+    "phase": "draft",
+    "user": "test",
+    "date": [1577872860, 0],
+    "desc": "third",
+    "bookmarks": [],
+    "tags": ["tip"],
+    "parents": ["29114dbae42b9f078cf2714dbe3a86bba8ec7453"],
+    "manifest": "94961b75a2da554b4df6fb599e5bfc7d48de0c64",
+    "extra": {"branch": "default"},
+    "modified": [],
+    "added": ["fourth", "third"],
+    "removed": ["second"]
+   },
+   {
+    "rev": 7,
+    "node": "29114dbae42b9f078cf2714dbe3a86bba8ec7453",
+    "branch": "default",
+    "phase": "draft",
+    "user": "User Name <user@hostname>",
+    "date": [1000000, 0],
+    "desc": "second",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["0000000000000000000000000000000000000000"],
+    "manifest": "f2dbc354b94e5ec0b4f10680ee0cee816101d0bf",
+    "extra": {"branch": "default"},
+    "modified": [],
+    "added": ["second"],
+    "removed": []
+   },
+   {
+    "rev": 6,
+    "node": "d41e714fe50d9e4a5f11b4d595d543481b5f980b",
+    "branch": "default",
+    "phase": "draft",
+    "user": "person",
+    "date": [1500001, 0],
+    "desc": "merge",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["13207e5a10d9fd28ec424934298e176197f2c67f", "bbe44766e73d5f11ed2177f1838de10c53ef3e74"],
+    "manifest": "4dc3def4f9b4c6e8de820f6ee74737f91e96a216",
+    "extra": {"branch": "default"},
+    "modified": [],
+    "added": [],
+    "removed": []
+   },
+   {
+    "rev": 5,
+    "node": "13207e5a10d9fd28ec424934298e176197f2c67f",
+    "branch": "default",
+    "phase": "draft",
+    "user": "person",
+    "date": [1500000, 0],
+    "desc": "new head",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["10e46f2dcbf4823578cf180f33ecf0b957964c47"],
+    "manifest": "4dc3def4f9b4c6e8de820f6ee74737f91e96a216",
+    "extra": {"branch": "default"},
+    "modified": [],
+    "added": ["d"],
+    "removed": []
+   },
+   {
+    "rev": 4,
+    "node": "bbe44766e73d5f11ed2177f1838de10c53ef3e74",
+    "branch": "foo",
+    "phase": "draft",
+    "user": "person",
+    "date": [1400000, 0],
+    "desc": "new branch",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["10e46f2dcbf4823578cf180f33ecf0b957964c47"],
+    "manifest": "cb5a1327723bada42f117e4c55a303246eaf9ccc",
+    "extra": {"branch": "foo"},
+    "modified": [],
+    "added": [],
+    "removed": []
+   },
+   {
+    "rev": 3,
+    "node": "10e46f2dcbf4823578cf180f33ecf0b957964c47",
+    "branch": "default",
+    "phase": "draft",
+    "user": "person",
+    "date": [1300000, 0],
+    "desc": "no user, no domain",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["97054abb4ab824450e9164180baf491ae0078465"],
+    "manifest": "cb5a1327723bada42f117e4c55a303246eaf9ccc",
+    "extra": {"branch": "default"},
+    "modified": ["c"],
+    "added": [],
+    "removed": []
+   },
+   {
+    "rev": 2,
+    "node": "97054abb4ab824450e9164180baf491ae0078465",
+    "branch": "default",
+    "phase": "draft",
+    "user": "other@place",
+    "date": [1200000, 0],
+    "desc": "no person",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["b608e9d1a3f0273ccf70fb85fd6866b3482bf965"],
+    "manifest": "6e0e82995c35d0d57a52aca8da4e56139e06b4b1",
+    "extra": {"branch": "default"},
+    "modified": [],
+    "added": ["c"],
+    "removed": []
+   },
+   {
+    "rev": 1,
+    "node": "b608e9d1a3f0273ccf70fb85fd6866b3482bf965",
+    "branch": "default",
+    "phase": "draft",
+    "user": "A. N. Other <other@place>",
+    "date": [1100000, 0],
+    "desc": "other 1\nother 2\n\nother 3",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["1e4e1b8f71e05681d422154f5421e385fec3454f"],
+    "manifest": "4e8d705b1e53e3f9375e0e60dc7b525d8211fe55",
+    "extra": {"branch": "default"},
+    "modified": [],
+    "added": ["b"],
+    "removed": []
+   },
+   {
+    "rev": 0,
+    "node": "1e4e1b8f71e05681d422154f5421e385fec3454f",
+    "branch": "default",
+    "phase": "draft",
+    "user": "User Name <user@hostname>",
+    "date": [1000000, 0],
+    "desc": "line 1\nline 2",
+    "bookmarks": [],
+    "tags": [],
+    "parents": ["0000000000000000000000000000000000000000"],
+    "manifest": "a0c8bcbbb45c63b90b70ad007bf38961f64f2af0",
+    "extra": {"branch": "default"},
+    "modified": [],
+    "added": ["a"],
+    "removed": []
+   }
+  ]
+
 Error if style not readable:
 
+#if unix-permissions no-root
   $ touch q
   $ chmod 0 q
   $ hg log --style ./q
   abort: Permission denied: ./q
   [255]
+#endif
 
 Error if no style:
 
   $ hg log --style notexist
-  abort: style not found: notexist
+  abort: style 'notexist' not found
+  (available styles: bisect, changelog, compact, default, phases, xml)
+  [255]
+
+  $ hg log -T list
+  available styles: bisect, changelog, compact, default, phases, xml
+  abort: specify a template
   [255]
 
 Error if style missing key:
@@ -452,17 +885,76 @@ Error if style missing key:
   abort: "changeset" not in template map
   [255]
 
+Error if style missing value:
+
+  $ echo 'changeset =' > t
+  $ hg log --style t
+  abort: t:1: missing value
+  [255]
+
 Error if include fails:
 
   $ echo 'changeset = q' >> t
+#if unix-permissions no-root
   $ hg log --style ./t
   abort: template file ./q: Permission denied
   [255]
+  $ rm q
+#endif
 
 Include works:
 
-  $ rm q
   $ echo '{rev}' > q
+  $ hg log --style ./t
+  8
+  7
+  6
+  5
+  4
+  3
+  2
+  1
+  0
+
+Check that {phase} works correctly on parents:
+
+  $ cat << EOF > parentphase
+  > changeset_debug = '{rev} ({phase}):{parents}\n'
+  > parent = ' {rev} ({phase})'
+  > EOF
+  $ hg phase -r 5 --public
+  $ hg phase -r 7 --secret --force
+  $ hg log --debug -G --style ./parentphase
+  @  8 (secret): 7 (secret) -1 (public)
+  |
+  o  7 (secret): -1 (public) -1 (public)
+  
+  o    6 (draft): 5 (public) 4 (draft)
+  |\
+  | o  5 (public): 3 (public) -1 (public)
+  | |
+  o |  4 (draft): 3 (public) -1 (public)
+  |/
+  o  3 (public): 2 (public) -1 (public)
+  |
+  o  2 (public): 1 (public) -1 (public)
+  |
+  o  1 (public): 0 (public) -1 (public)
+  |
+  o  0 (public): -1 (public) -1 (public)
+  
+
+Missing non-standard names give no error (backward compatibility):
+
+  $ echo "changeset = '{c}'" > t
+  $ hg log --style ./t
+
+Defining non-standard name works:
+
+  $ cat <<EOF > t
+  > changeset = '{c}'
+  > c = q
+  > EOF
   $ hg log --style ./t
   8
   7
@@ -572,7 +1064,8 @@ Keys work:
 
   $ for key in author branch branches date desc file_adds file_dels file_mods \
   >         file_copies file_copies_switch files \
-  >         manifest node parents rev tags diffstat extras; do
+  >         manifest node parents rev tags diffstat extras \
+  >         p1rev p2rev p1node p2node; do
   >     for mode in '' --verbose --debug; do
   >         hg log $mode --template "$key$mode: {$key}\n"
   >     done
@@ -1075,7 +1568,114 @@ Keys work:
   extras--debug: branch=default
   extras--debug: branch=default
   extras--debug: branch=default
-
+  p1rev: 7
+  p1rev: -1
+  p1rev: 5
+  p1rev: 3
+  p1rev: 3
+  p1rev: 2
+  p1rev: 1
+  p1rev: 0
+  p1rev: -1
+  p1rev--verbose: 7
+  p1rev--verbose: -1
+  p1rev--verbose: 5
+  p1rev--verbose: 3
+  p1rev--verbose: 3
+  p1rev--verbose: 2
+  p1rev--verbose: 1
+  p1rev--verbose: 0
+  p1rev--verbose: -1
+  p1rev--debug: 7
+  p1rev--debug: -1
+  p1rev--debug: 5
+  p1rev--debug: 3
+  p1rev--debug: 3
+  p1rev--debug: 2
+  p1rev--debug: 1
+  p1rev--debug: 0
+  p1rev--debug: -1
+  p2rev: -1
+  p2rev: -1
+  p2rev: 4
+  p2rev: -1
+  p2rev: -1
+  p2rev: -1
+  p2rev: -1
+  p2rev: -1
+  p2rev: -1
+  p2rev--verbose: -1
+  p2rev--verbose: -1
+  p2rev--verbose: 4
+  p2rev--verbose: -1
+  p2rev--verbose: -1
+  p2rev--verbose: -1
+  p2rev--verbose: -1
+  p2rev--verbose: -1
+  p2rev--verbose: -1
+  p2rev--debug: -1
+  p2rev--debug: -1
+  p2rev--debug: 4
+  p2rev--debug: -1
+  p2rev--debug: -1
+  p2rev--debug: -1
+  p2rev--debug: -1
+  p2rev--debug: -1
+  p2rev--debug: -1
+  p1node: 29114dbae42b9f078cf2714dbe3a86bba8ec7453
+  p1node: 0000000000000000000000000000000000000000
+  p1node: 13207e5a10d9fd28ec424934298e176197f2c67f
+  p1node: 10e46f2dcbf4823578cf180f33ecf0b957964c47
+  p1node: 10e46f2dcbf4823578cf180f33ecf0b957964c47
+  p1node: 97054abb4ab824450e9164180baf491ae0078465
+  p1node: b608e9d1a3f0273ccf70fb85fd6866b3482bf965
+  p1node: 1e4e1b8f71e05681d422154f5421e385fec3454f
+  p1node: 0000000000000000000000000000000000000000
+  p1node--verbose: 29114dbae42b9f078cf2714dbe3a86bba8ec7453
+  p1node--verbose: 0000000000000000000000000000000000000000
+  p1node--verbose: 13207e5a10d9fd28ec424934298e176197f2c67f
+  p1node--verbose: 10e46f2dcbf4823578cf180f33ecf0b957964c47
+  p1node--verbose: 10e46f2dcbf4823578cf180f33ecf0b957964c47
+  p1node--verbose: 97054abb4ab824450e9164180baf491ae0078465
+  p1node--verbose: b608e9d1a3f0273ccf70fb85fd6866b3482bf965
+  p1node--verbose: 1e4e1b8f71e05681d422154f5421e385fec3454f
+  p1node--verbose: 0000000000000000000000000000000000000000
+  p1node--debug: 29114dbae42b9f078cf2714dbe3a86bba8ec7453
+  p1node--debug: 0000000000000000000000000000000000000000
+  p1node--debug: 13207e5a10d9fd28ec424934298e176197f2c67f
+  p1node--debug: 10e46f2dcbf4823578cf180f33ecf0b957964c47
+  p1node--debug: 10e46f2dcbf4823578cf180f33ecf0b957964c47
+  p1node--debug: 97054abb4ab824450e9164180baf491ae0078465
+  p1node--debug: b608e9d1a3f0273ccf70fb85fd6866b3482bf965
+  p1node--debug: 1e4e1b8f71e05681d422154f5421e385fec3454f
+  p1node--debug: 0000000000000000000000000000000000000000
+  p2node: 0000000000000000000000000000000000000000
+  p2node: 0000000000000000000000000000000000000000
+  p2node: bbe44766e73d5f11ed2177f1838de10c53ef3e74
+  p2node: 0000000000000000000000000000000000000000
+  p2node: 0000000000000000000000000000000000000000
+  p2node: 0000000000000000000000000000000000000000
+  p2node: 0000000000000000000000000000000000000000
+  p2node: 0000000000000000000000000000000000000000
+  p2node: 0000000000000000000000000000000000000000
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--verbose: bbe44766e73d5f11ed2177f1838de10c53ef3e74
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--verbose: 0000000000000000000000000000000000000000
+  p2node--debug: 0000000000000000000000000000000000000000
+  p2node--debug: 0000000000000000000000000000000000000000
+  p2node--debug: bbe44766e73d5f11ed2177f1838de10c53ef3e74
+  p2node--debug: 0000000000000000000000000000000000000000
+  p2node--debug: 0000000000000000000000000000000000000000
+  p2node--debug: 0000000000000000000000000000000000000000
+  p2node--debug: 0000000000000000000000000000000000000000
+  p2node--debug: 0000000000000000000000000000000000000000
+  p2node--debug: 0000000000000000000000000000000000000000
 
 Filters work:
 
@@ -1112,10 +1712,6 @@ Filters work:
   other
   user
 
-  $ hg log --template '{date|age}\n' > /dev/null || exit 1
-
-  $ hg log -l1 --template '{date|age}\n' 
-  8 years from now
   $ hg log --template '{date|date}\n'
   Wed Jan 01 10:01:00 2020 +0000
   Mon Jan 12 13:46:40 1970 +0000
@@ -1218,12 +1814,144 @@ Formatnode filter works:
   $ hg --debug log -r 0 --template '{node|formatnode}\n'
   1e4e1b8f71e05681d422154f5421e385fec3454f
 
+Age filter:
+
+  $ hg log --template '{date|age}\n' > /dev/null || exit 1
+
+  >>> from datetime import datetime, timedelta
+  >>> fp = open('a', 'w')
+  >>> n = datetime.now() + timedelta(366 * 7)
+  >>> fp.write('%d-%d-%d 00:00' % (n.year, n.month, n.day))
+  >>> fp.close()
+  $ hg add a
+  $ hg commit -m future -d "`cat a`"
+
+  $ hg log -l1 --template '{date|age}\n'
+  7 years from now
+
+Count filter:
+
+  $ hg log -l1 --template '{node|count} {node|short|count}\n'
+  40 12
+
+  $ hg log -l1 --template '{revset("null^")|count} {revset(".")|count} {revset("0::3")|count}\n'
+  0 1 4
+
+  $ hg log -G --template '{rev}: children: {children|count}, \
+  > tags: {tags|count}, file_adds: {file_adds|count}, \
+  > ancestors: {revset("ancestors(%s)", rev)|count}'
+  @  9: children: 0, tags: 1, file_adds: 1, ancestors: 3
+  |
+  o  8: children: 1, tags: 0, file_adds: 2, ancestors: 2
+  |
+  o  7: children: 1, tags: 0, file_adds: 1, ancestors: 1
+  
+  o    6: children: 0, tags: 0, file_adds: 0, ancestors: 7
+  |\
+  | o  5: children: 1, tags: 0, file_adds: 1, ancestors: 5
+  | |
+  o |  4: children: 1, tags: 0, file_adds: 0, ancestors: 5
+  |/
+  o  3: children: 2, tags: 0, file_adds: 0, ancestors: 4
+  |
+  o  2: children: 1, tags: 0, file_adds: 1, ancestors: 3
+  |
+  o  1: children: 1, tags: 0, file_adds: 1, ancestors: 2
+  |
+  o  0: children: 1, tags: 0, file_adds: 1, ancestors: 1
+  
+
 Error on syntax:
 
   $ echo 'x = "f' >> t
   $ hg log
   abort: t:3: unmatched quotes
   [255]
+
+Behind the scenes, this will throw TypeError
+
+  $ hg log -l 3 --template '{date|obfuscate}\n'
+  abort: template filter 'obfuscate' is not compatible with keyword 'date'
+  [255]
+
+Behind the scenes, this will throw a ValueError
+
+  $ hg log -l 3 --template 'line: {desc|shortdate}\n'
+  abort: template filter 'shortdate' is not compatible with keyword 'desc'
+  [255]
+
+Behind the scenes, this will throw AttributeError
+
+  $ hg log -l 3 --template 'line: {date|escape}\n'
+  abort: template filter 'escape' is not compatible with keyword 'date'
+  [255]
+
+Behind the scenes, this will throw ValueError
+
+  $ hg tip --template '{author|email|date}\n'
+  abort: template filter 'datefilter' is not compatible with keyword 'author'
+  [255]
+
+Thrown an error if a template function doesn't exist
+
+  $ hg tip --template '{foo()}\n'
+  hg: parse error: unknown function 'foo'
+  [255]
+
+Test diff function:
+
+  $ hg diff -c 8
+  diff -r 29114dbae42b -r 95c24699272e fourth
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/fourth	Wed Jan 01 10:01:00 2020 +0000
+  @@ -0,0 +1,1 @@
+  +second
+  diff -r 29114dbae42b -r 95c24699272e second
+  --- a/second	Mon Jan 12 13:46:40 1970 +0000
+  +++ /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,1 +0,0 @@
+  -second
+  diff -r 29114dbae42b -r 95c24699272e third
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/third	Wed Jan 01 10:01:00 2020 +0000
+  @@ -0,0 +1,1 @@
+  +third
+
+  $ hg log -r 8 -T "{diff()}"
+  diff -r 29114dbae42b -r 95c24699272e fourth
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/fourth	Wed Jan 01 10:01:00 2020 +0000
+  @@ -0,0 +1,1 @@
+  +second
+  diff -r 29114dbae42b -r 95c24699272e second
+  --- a/second	Mon Jan 12 13:46:40 1970 +0000
+  +++ /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,1 +0,0 @@
+  -second
+  diff -r 29114dbae42b -r 95c24699272e third
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/third	Wed Jan 01 10:01:00 2020 +0000
+  @@ -0,0 +1,1 @@
+  +third
+
+  $ hg log -r 8 -T "{diff('glob:f*')}"
+  diff -r 29114dbae42b -r 95c24699272e fourth
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/fourth	Wed Jan 01 10:01:00 2020 +0000
+  @@ -0,0 +1,1 @@
+  +second
+
+  $ hg log -r 8 -T "{diff('', 'glob:f*')}"
+  diff -r 29114dbae42b -r 95c24699272e second
+  --- a/second	Mon Jan 12 13:46:40 1970 +0000
+  +++ /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  @@ -1,1 +0,0 @@
+  -second
+  diff -r 29114dbae42b -r 95c24699272e third
+  --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
+  +++ b/third	Wed Jan 01 10:01:00 2020 +0000
+  @@ -0,0 +1,1 @@
+  +third
 
   $ cd ..
 
@@ -1254,7 +1982,7 @@ latesttag:
   $ hg ci -m h2e -d '4 0'
 
   $ hg merge -q
-  $ hg ci -m merge -d '5 0'
+  $ hg ci -m merge -d '5 -3600'
 
 No tag set:
 
@@ -1266,7 +1994,7 @@ No tag set:
   1: null+2
   0: null+1
 
-One common tag: longuest path wins:
+One common tag: longest path wins:
 
   $ hg tag -r 1 -m t1 -d '6 0' t1
   $ hg log --template '{rev}: {latesttag}+{latesttagdistance}\n'
@@ -1342,7 +2070,7 @@ if it is a relative path
   > EOF
 
   $ hg -R latesttag tip
-  test 10:dee8f28249af
+  test 10:9b4a630e5f5f
 
 Test recursive showlist template (issue1989):
 
@@ -1358,3 +2086,428 @@ Test recursive showlist template (issue1989):
   10,test
   branch: test
 
+Test new-style inline templating:
+
+  $ hg log -R latesttag -r tip --template 'modified files: {file_mods % " {file}\n"}\n'
+  modified files:  .hgtags
+  
+Test the sub function of templating for expansion:
+
+  $ hg log -R latesttag -r 10 --template '{sub("[0-9]", "x", "{rev}")}\n'
+  xx
+
+Test the strip function with chars specified:
+
+  $ hg log -R latesttag --template '{desc}\n'
+  at3
+  t5
+  t3
+  t2
+  t1
+  merge
+  h2e
+  h2d
+  h1c
+  b
+  a
+
+  $ hg log -R latesttag --template '{strip(desc, "te")}\n'
+  at3
+  5
+  3
+  2
+  1
+  merg
+  h2
+  h2d
+  h1c
+  b
+  a
+
+Test date format:
+
+  $ hg log -R latesttag --template 'date: {date(date, "%y %m %d %S %z")}\n'
+  date: 70 01 01 10 +0000
+  date: 70 01 01 09 +0000
+  date: 70 01 01 08 +0000
+  date: 70 01 01 07 +0000
+  date: 70 01 01 06 +0000
+  date: 70 01 01 05 +0100
+  date: 70 01 01 04 +0000
+  date: 70 01 01 03 +0000
+  date: 70 01 01 02 +0000
+  date: 70 01 01 01 +0000
+  date: 70 01 01 00 +0000
+
+Test string escaping:
+
+  $ hg log -R latesttag -r 0 --template '>\n<>\\n<{if(rev, "[>\n<>\\n<]")}>\n<>\\n<\n'
+  >
+  <>\n<[>
+  <>\n<]>
+  <>\n<
+
+"string-escape"-ed "\x5c\x786e" becomes r"\x6e" (once) or r"n" (twice)
+
+  $ hg log -R a -r 0 --template '{if("1", "\x5c\x786e", "NG")}\n'
+  \x6e
+  $ hg log -R a -r 0 --template '{if("1", r"\x5c\x786e", "NG")}\n'
+  \x5c\x786e
+  $ hg log -R a -r 0 --template '{if("", "NG", "\x5c\x786e")}\n'
+  \x6e
+  $ hg log -R a -r 0 --template '{if("", "NG", r"\x5c\x786e")}\n'
+  \x5c\x786e
+
+  $ hg log -R a -r 2 --template '{ifeq("no perso\x6e", desc, "\x5c\x786e", "NG")}\n'
+  \x6e
+  $ hg log -R a -r 2 --template '{ifeq(r"no perso\x6e", desc, "NG", r"\x5c\x786e")}\n'
+  \x5c\x786e
+  $ hg log -R a -r 2 --template '{ifeq(desc, "no perso\x6e", "\x5c\x786e", "NG")}\n'
+  \x6e
+  $ hg log -R a -r 2 --template '{ifeq(desc, r"no perso\x6e", "NG", r"\x5c\x786e")}\n'
+  \x5c\x786e
+
+  $ hg log -R a -r 8 --template '{join(files, "\n")}\n'
+  fourth
+  second
+  third
+  $ hg log -R a -r 8 --template '{join(files, r"\n")}\n'
+  fourth\nsecond\nthird
+
+  $ hg log -R a -r 2 --template '{rstdoc("1st\n\n2nd", "htm\x6c")}'
+  <p>
+  1st
+  </p>
+  <p>
+  2nd
+  </p>
+  $ hg log -R a -r 2 --template '{rstdoc(r"1st\n\n2nd", "html")}'
+  <p>
+  1st\n\n2nd
+  </p>
+  $ hg log -R a -r 2 --template '{rstdoc("1st\n\n2nd", r"htm\x6c")}'
+  1st
+  
+  2nd
+
+  $ hg log -R a -r 2 --template '{strip(desc, "\x6e")}\n'
+  o perso
+  $ hg log -R a -r 2 --template '{strip(desc, r"\x6e")}\n'
+  no person
+  $ hg log -R a -r 2 --template '{strip("no perso\x6e", "\x6e")}\n'
+  o perso
+  $ hg log -R a -r 2 --template '{strip(r"no perso\x6e", r"\x6e")}\n'
+  no perso
+
+  $ hg log -R a -r 2 --template '{sub("\\x6e", "\x2d", desc)}\n'
+  -o perso-
+  $ hg log -R a -r 2 --template '{sub(r"\\x6e", "-", desc)}\n'
+  no person
+  $ hg log -R a -r 2 --template '{sub("n", r"\x2d", desc)}\n'
+  \x2do perso\x2d
+  $ hg log -R a -r 2 --template '{sub("n", "\x2d", "no perso\x6e")}\n'
+  -o perso-
+  $ hg log -R a -r 2 --template '{sub("n", r"\x2d", r"no perso\x6e")}\n'
+  \x2do perso\x6e
+
+  $ hg log -R a -r 8 --template '{files % "{file}\n"}'
+  fourth
+  second
+  third
+  $ hg log -R a -r 8 --template '{files % r"{file}\n"}\n'
+  fourth\nsecond\nthird\n
+
+Test string escaping in nested expression:
+
+  $ hg log -R a -r 8 --template '{ifeq(r"\x6e", if("1", "\x5c\x786e"), join(files, "\x5c\x786e"))}\n'
+  fourth\x6esecond\x6ethird
+  $ hg log -R a -r 8 --template '{ifeq(if("1", r"\x6e"), "\x5c\x786e", join(files, "\x5c\x786e"))}\n'
+  fourth\x6esecond\x6ethird
+
+  $ hg log -R a -r 8 --template '{join(files, ifeq(branch, "default", "\x5c\x786e"))}\n'
+  fourth\x6esecond\x6ethird
+  $ hg log -R a -r 8 --template '{join(files, ifeq(branch, "default", r"\x5c\x786e"))}\n'
+  fourth\x5c\x786esecond\x5c\x786ethird
+
+  $ hg log -R a -r 3:4 --template '{rev}:{sub(if("1", "\x6e"), ifeq(branch, "foo", r"\x5c\x786e", "\x5c\x786e"), desc)}\n'
+  3:\x6eo user, \x6eo domai\x6e
+  4:\x5c\x786eew bra\x5c\x786ech
+
+Test recursive evaluation:
+
+  $ hg init r
+  $ cd r
+  $ echo a > a
+  $ hg ci -Am '{rev}'
+  adding a
+  $ hg log -r 0 --template '{if(rev, desc)}\n'
+  {rev}
+  $ hg log -r 0 --template '{if(rev, "{author} {rev}")}\n'
+  test 0
+
+  $ hg branch -q 'text.{rev}'
+  $ echo aa >> aa
+  $ hg ci -u '{node|short}' -m 'desc to be wrapped desc to be wrapped'
+
+  $ hg log -l1 --template '{fill(desc, "20", author, branch)}'
+  {node|short}desc to
+  text.{rev}be wrapped
+  text.{rev}desc to be
+  text.{rev}wrapped (no-eol)
+  $ hg log -l1 --template '{fill(desc, "20", "{node|short}:", "text.{rev}:")}'
+  bcc7ff960b8e:desc to
+  text.1:be wrapped
+  text.1:desc to be
+  text.1:wrapped (no-eol)
+
+  $ hg log -l 1 --template '{sub(r"[0-9]", "-", author)}'
+  {node|short} (no-eol)
+  $ hg log -l 1 --template '{sub(r"[0-9]", "-", "{node|short}")}'
+  bcc-ff---b-e (no-eol)
+
+  $ cat >> .hg/hgrc <<EOF
+  > [extensions]
+  > color=
+  > [color]
+  > mode=ansi
+  > text.{rev} = red
+  > text.1 = green
+  > EOF
+  $ hg log --color=always -l 1 --template '{label(branch, "text\n")}'
+  \x1b[0;31mtext\x1b[0m (esc)
+  $ hg log --color=always -l 1 --template '{label("text.{rev}", "text\n")}'
+  \x1b[0;32mtext\x1b[0m (esc)
+
+Test branches inside if statement:
+
+  $ hg log -r 0 --template '{if(branches, "yes", "no")}\n'
+  no
+
+Test shortest(node) function:
+
+  $ echo b > b
+  $ hg ci -qAm b
+  $ hg log --template '{shortest(node)}\n'
+  e777
+  bcc7
+  f776
+  $ hg log --template '{shortest(node, 10)}\n'
+  e777603221
+  bcc7ff960b
+  f7769ec2ab
+
+Test pad function
+
+  $ hg log --template '{pad(rev, 20)} {author|user}\n'
+  2                    test
+  1                    {node|short}
+  0                    test
+
+  $ hg log --template '{pad(rev, 20, " ", True)} {author|user}\n'
+                     2 test
+                     1 {node|short}
+                     0 test
+
+  $ hg log --template '{pad(rev, 20, "-", False)} {author|user}\n'
+  2------------------- test
+  1------------------- {node|short}
+  0------------------- test
+
+Test ifcontains function
+
+  $ hg log --template '{rev} {ifcontains(rev, "2 two 0", "is in the string", "is not")}\n'
+  2 is in the string
+  1 is not
+  0 is in the string
+
+  $ hg log --template '{rev} {ifcontains("a", file_adds, "added a", "did not add a")}\n'
+  2 did not add a
+  1 did not add a
+  0 added a
+
+Test revset function
+
+  $ hg log --template '{rev} {ifcontains(rev, revset("."), "current rev", "not current rev")}\n'
+  2 current rev
+  1 not current rev
+  0 not current rev
+
+  $ hg log --template '{rev} {ifcontains(rev, revset(". + .^"), "match rev", "not match rev")}\n'
+  2 match rev
+  1 match rev
+  0 not match rev
+
+  $ hg log --template '{rev} Parents: {revset("parents(%s)", rev)}\n'
+  2 Parents: 1
+  1 Parents: 0
+  0 Parents: 
+
+  $ cat >> .hg/hgrc <<EOF
+  > [revsetalias]
+  > myparents(\$1) = parents(\$1)
+  > EOF
+  $ hg log --template '{rev} Parents: {revset("myparents(%s)", rev)}\n'
+  2 Parents: 1
+  1 Parents: 0
+  0 Parents: 
+
+  $ hg log --template 'Rev: {rev}\n{revset("::%s", rev) % "Ancestor: {revision}\n"}\n'
+  Rev: 2
+  Ancestor: 0
+  Ancestor: 1
+  Ancestor: 2
+  
+  Rev: 1
+  Ancestor: 0
+  Ancestor: 1
+  
+  Rev: 0
+  Ancestor: 0
+  
+Test current bookmark templating
+
+  $ hg book foo
+  $ hg book bar
+  $ hg log --template "{rev} {bookmarks % '{bookmark}{ifeq(bookmark, current, \"*\")} '}\n"
+  2 bar* foo 
+  1 
+  0 
+  $ hg log --template "{rev} {currentbookmark}\n"
+  2 bar
+  1 
+  0 
+  $ hg bookmarks --inactive bar
+  $ hg log --template "{rev} {currentbookmark}\n"
+  2 
+  1 
+  0 
+  $ hg book -r1 baz
+  $ hg log --template "{rev} {join(bookmarks, ' ')}\n"
+  2 bar foo
+  1 baz
+  0 
+
+Test stringify on sub expressions
+
+  $ cd ..
+  $ hg log -R a -r 8 --template '{join(files, if("1", if("1", ", ")))}\n'
+  fourth, second, third
+  $ hg log -R a -r 8 --template '{strip(if("1", if("1", "-abc-")), if("1", if("1", "-")))}\n'
+  abc
+
+Test splitlines
+
+  $ hg log -Gv -R a --template "{splitlines(desc) % 'foo {line}\n'}"
+  @  foo future
+  |
+  o  foo third
+  |
+  o  foo second
+  
+  o    foo merge
+  |\
+  | o  foo new head
+  | |
+  o |  foo new branch
+  |/
+  o  foo no user, no domain
+  |
+  o  foo no person
+  |
+  o  foo other 1
+  |  foo other 2
+  |  foo
+  |  foo other 3
+  o  foo line 1
+     foo line 2
+
+Test startswith
+  $ hg log -Gv -R a --template "{startswith(desc)}"
+  hg: parse error: startswith expects two arguments
+  [255]
+
+  $ hg log -Gv -R a --template "{startswith('line', desc)}"
+  @
+  |
+  o
+  |
+  o
+  
+  o
+  |\
+  | o
+  | |
+  o |
+  |/
+  o
+  |
+  o
+  |
+  o
+  |
+  o  line 1
+     line 2
+
+Test bad template with better error message
+
+  $ hg log -Gv -R a --template '{desc|user()}'
+  hg: parse error: expected a symbol, got 'func'
+  [255]
+
+Test word function (including index out of bounds graceful failure)
+
+  $ hg log -Gv -R a --template "{word('1', desc)}"
+  @
+  |
+  o
+  |
+  o
+  
+  o
+  |\
+  | o  head
+  | |
+  o |  branch
+  |/
+  o  user,
+  |
+  o  person
+  |
+  o  1
+  |
+  o  1
+  
+
+Test word third parameter used as splitter
+
+  $ hg log -Gv -R a --template "{word('0', desc, 'o')}"
+  @  future
+  |
+  o  third
+  |
+  o  sec
+  
+  o    merge
+  |\
+  | o  new head
+  | |
+  o |  new branch
+  |/
+  o  n
+  |
+  o  n
+  |
+  o
+  |
+  o  line 1
+     line 2
+
+Test word error messages for not enough and too many arguments
+
+  $ hg log -Gv -R a --template "{word('0')}"
+  hg: parse error: word expects two or three arguments, got 1
+  [255]
+
+  $ hg log -Gv -R a --template "{word('0', desc, 'o', 'h', 'b', 'o', 'y')}"
+  hg: parse error: word expects two or three arguments, got 7
+  [255]

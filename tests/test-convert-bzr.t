@@ -1,4 +1,3 @@
-
   $ . "$TESTDIR/bzr-definitions"
 
 create and rename on the same file in the same step
@@ -6,6 +5,17 @@ create and rename on the same file in the same step
   $ mkdir test-createandrename
   $ cd test-createandrename
   $ bzr init -q source
+
+test empty repo conversion (issue3233)
+
+  $ hg convert source source-hg
+  initializing destination source-hg repository
+  scanning source...
+  sorting...
+  converting...
+
+back to the rename stuff
+
   $ cd source
   $ echo a > a
   $ echo c > c
@@ -24,16 +34,15 @@ create and rename on the same file in the same step
   $ bzr commit -q -m 'rename a into b, create a, rename c into d'
   $ cd ..
   $ hg convert source source-hg
-  initializing destination source-hg repository
   scanning source...
   sorting...
   converting...
   1 Initial add: a, c, e
   0 rename a into b, create a, rename c into d
   $ glog -R source-hg
-  o  1 "rename a into b, create a, rename c into d" files: a b c d e f
+  o  1@source "rename a into b, create a, rename c into d" files: a b c d e f
   |
-  o  0 "Initial add: a, c, e" files: a c e
+  o  0@source "Initial add: a, c, e" files: a c e
   
 
 manifest
@@ -53,7 +62,7 @@ test --rev option
   converting...
   0 Initial add: a, c, e
   $ glog -R source-1-hg
-  o  0 "Initial add: a, c, e" files: a c e
+  o  0@source "Initial add: a, c, e" files: a c e
   
 
 test with filemap
@@ -76,22 +85,12 @@ test with filemap
 convert from lightweight checkout
 
   $ bzr checkout --lightweight source source-light
-  $ hg convert source-light source-light-hg
+  $ hg convert -s bzr source-light source-light-hg
   initializing destination source-light-hg repository
   warning: lightweight checkouts may cause conversion failures, try with a regular branch instead.
-  scanning source...
-  sorting...
-  converting...
-  1 Initial add: a, c, e
-  0 rename a into b, create a, rename c into d
-
-lightweight manifest
-
-  $ hg manifest -R source-light-hg -r tip
-  a
-  b
-  d
-  f
+  $TESTTMP/test-createandrename/source-light does not look like a Bazaar repository
+  abort: source-light: missing or unsupported repository
+  [255]
 
 extract timestamps that look just like hg's {date|isodate}:
 yyyy-mm-dd HH:MM zzzz (no seconds!)
@@ -103,7 +102,7 @@ compare timestamps
   >   > ../bzr-timestamps
   $ cd ..
   $ hg -R source-hg log --template "{date|isodate}\n" > hg-timestamps
-  $ diff -u bzr-timestamps hg-timestamps
+  $ cmp bzr-timestamps hg-timestamps || diff -u bzr-timestamps hg-timestamps
   $ cd ..
 
 merge
@@ -146,15 +145,17 @@ merge
   1 Editing b
   0 Merged improve branch
   $ glog -R source-hg
-  o    3 "Merged improve branch" files:
+  o    3@source "Merged improve branch" files:
   |\
-  | o  2 "Editing b" files: b
+  | o  2@source-improve "Editing b" files: b
   | |
-  o |  1 "Editing a" files: a
+  o |  1@source "Editing a" files: a
   |/
-  o  0 "Initial add" files: a b
+  o  0@source "Initial add" files: a b
   
   $ cd ..
+
+#if symlink execbit
 
 symlinks and executable files
 
@@ -198,12 +199,88 @@ symlinks and executable files
   755 * newprog
   644   program
   644 @ syma
-  $ cd source-hg
 
 test the symlinks can be recreated
 
+  $ cd source-hg
   $ hg up
   5 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ hg cat syma; echo
   a
+  $ cd ../..
 
+#endif
+
+Multiple branches
+
+  $ bzr init-repo -q --no-trees repo
+  $ bzr init -q repo/trunk
+  $ bzr co repo/trunk repo-trunk
+  $ cd repo-trunk
+  $ echo a > a
+  $ bzr add -q a
+  $ bzr ci -qm adda
+  $ bzr tag trunk-tag
+  Created tag trunk-tag.
+  $ bzr switch -b branch
+  Tree is up to date at revision 1.
+  Switched to branch: *repo/branch/ (glob)
+  $ sleep 1
+  $ echo b > b
+  $ bzr add -q b
+  $ bzr ci -qm addb
+  $ bzr tag branch-tag
+  Created tag branch-tag.
+  $ bzr switch --force ../repo/trunk
+  Updated to revision 1.
+  Switched to branch: */repo/trunk/ (glob)
+  $ sleep 1
+  $ echo a >> a
+  $ bzr ci -qm changea
+  $ cd ..
+  $ hg convert --datesort repo repo-bzr
+  initializing destination repo-bzr repository
+  scanning source...
+  sorting...
+  converting...
+  2 adda
+  1 addb
+  0 changea
+  updating tags
+  $ (cd repo-bzr; glog)
+  o  3@default "update tags" files: .hgtags
+  |
+  o  2@default "changea" files: a
+  |
+  | o  1@branch "addb" files: b
+  |/
+  o  0@default "adda" files: a
+  
+
+Test tags (converted identifiers are not stable because bzr ones are
+not and get incorporated in extra fields).
+
+  $ hg -R repo-bzr tags
+  tip                                3:* (glob)
+  branch-tag                         1:* (glob)
+  trunk-tag                          0:* (glob)
+
+Nested repositories (issue3254)
+
+  $ bzr init-repo -q --no-trees repo/inner
+  $ bzr init -q repo/inner/trunk
+  $ bzr co repo/inner/trunk inner-trunk
+  $ cd inner-trunk
+  $ echo b > b
+  $ bzr add -q b
+  $ bzr ci -qm addb
+  $ cd ..
+  $ hg convert --datesort repo noinner-bzr
+  initializing destination noinner-bzr repository
+  scanning source...
+  sorting...
+  converting...
+  2 adda
+  1 addb
+  0 changea
+  updating tags

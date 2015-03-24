@@ -10,7 +10,7 @@ Prepare repo a:
 
 Create a non-inlined filelog:
 
-  $ python -c 'for x in range(10000): print x' >> data1
+  $ $PYTHON -c 'file("data1", "wb").write("".join("%s\n" % x for x in range(10000)))'
   $ for j in 0 1 2 3 4 5 6 7 8 9; do
   >   cat data1 >> b
   >   hg commit -m test
@@ -25,12 +25,27 @@ List files in store/data (should show a 'b.d'):
   .hg/store/data/b.d
   .hg/store/data/b.i
 
+Trigger branchcache creation:
+
+  $ hg branches
+  default                       10:a7949464abda
+  $ ls .hg/cache
+  branch2-served
+  rbc-names-v1
+  rbc-revs-v1
+
 Default operation:
 
   $ hg clone . ../b
   updating to branch default
   2 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ cd ../b
+
+Ensure branchcache got copied over:
+
+  $ ls .hg/cache
+  branch2-served
+
   $ cat a
   a
   $ hg verify
@@ -43,14 +58,25 @@ Default operation:
 Invalid dest '' must abort:
 
   $ hg clone . ''
-  abort: No such file or directory
+  abort: empty destination path is not valid
   [255]
 
 No update, with debug option:
 
+#if hardlink
   $ hg --debug clone -U . ../c
   linked 8 files
+#else
+  $ hg --debug clone -U . ../c
+  copied 8 files
+#endif
   $ cd ../c
+
+Ensure branchcache got copied over:
+
+  $ ls .hg/cache
+  branch2-served
+
   $ cat a 2>/dev/null || echo "a not present"
   a not present
   $ hg verify
@@ -85,7 +111,7 @@ Check that path aliases are expanded:
 
   $ hg clone -q -U --config 'paths.foobar=a#0' foobar f
   $ hg -R f showconfig paths.default
-  $TESTTMP/a#0
+  $TESTTMP/a#0 (glob)
 
 Use --pull:
 
@@ -107,7 +133,7 @@ Use --pull:
 Invalid dest '' with --pull must abort (issue2528):
 
   $ hg clone --pull a ''
-  abort: No such file or directory
+  abort: empty destination path is not valid
   [255]
 
 Clone to '.':
@@ -132,6 +158,7 @@ Adding some more history to repo a:
   1 files updated, 0 files merged, 1 files removed, 0 files unresolved
   $ hg branch stable
   marked working directory as branch stable
+  (branches are permanent and global, did you want a bookmark?)
   $ echo some text >a
   $ hg ci -m "starting branch stable"
   $ hg tag ref2
@@ -310,8 +337,43 @@ Branch 'default' is checked out:
   date:        Thu Jan 01 00:00:00 1970 +0000
   summary:     hacked default
   
+Test clone with a branch named "@" (issue3677)
 
-  $ rm -r ua
+  $ hg -R ua branch @
+  marked working directory as branch @
+  (branches are permanent and global, did you want a bookmark?)
+  $ hg -R ua commit -m 'created branch @'
+  $ hg clone ua atbranch
+  updating to branch default
+  3 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg -R atbranch heads
+  changeset:   16:798b6d97153e
+  branch:      @
+  tag:         tip
+  parent:      12:f21241060d6a
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     created branch @
+  
+  changeset:   15:0aae7cf88f0d
+  branch:      stable
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     another change for branch stable
+  
+  changeset:   12:f21241060d6a
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     hacked default
+  
+  $ hg -R atbranch parents
+  changeset:   12:f21241060d6a
+  user:        test
+  date:        Thu Jan 01 00:00:00 1970 +0000
+  summary:     hacked default
+  
+
+  $ rm -r ua atbranch
 
 
 Testing #<branch>:
@@ -443,8 +505,9 @@ iterable in addbranchrevs()
   $ rm -r ua
 
   $ cat <<EOF > branchclone.py
-  > from mercurial import ui, hg
+  > from mercurial import ui, hg, extensions
   > myui = ui.ui()
+  > extensions.loadall(myui)
   > repo = hg.repository(myui, 'a')
   > hg.clone(myui, {}, repo, dest="ua", branch=["stable",])
   > EOF
@@ -457,3 +520,143 @@ iterable in addbranchrevs()
   updating to branch stable
   3 files updated, 0 files merged, 0 files removed, 0 files unresolved
   $ rm -r ua
+
+
+Test clone with special '@' bookmark:
+  $ cd a
+  $ hg bookmark -r a7949464abda @  # branch point of stable from default
+  $ hg clone . ../i
+  updating to bookmark @
+  2 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg id -i ../i
+  a7949464abda
+  $ rm -r ../i
+
+  $ hg bookmark -f -r stable @
+  $ hg bookmarks
+     @                         15:0aae7cf88f0d
+  $ hg clone . ../i
+  updating to bookmark @ on branch stable
+  3 files updated, 0 files merged, 0 files removed, 0 files unresolved
+  $ hg id -i ../i
+  0aae7cf88f0d
+  $ cd "$TESTTMP"
+
+
+Testing failures:
+
+  $ mkdir fail
+  $ cd fail
+
+No local source
+
+  $ hg clone a b
+  abort: repository a not found!
+  [255]
+
+No remote source
+
+#if windows
+  $ hg clone http://127.0.0.1:3121/a b
+  abort: error: * (glob)
+  [255]
+#else
+  $ hg clone http://127.0.0.1:3121/a b
+  abort: error: *refused* (glob)
+  [255]
+#endif
+  $ rm -rf b # work around bug with http clone
+
+
+#if unix-permissions no-root
+
+Inaccessible source
+
+  $ mkdir a
+  $ chmod 000 a
+  $ hg clone a b
+  abort: repository a not found!
+  [255]
+
+Inaccessible destination
+
+  $ hg init b
+  $ cd b
+  $ hg clone . ../a
+  abort: Permission denied: '../a'
+  [255]
+  $ cd ..
+  $ chmod 700 a
+  $ rm -r a b
+
+#endif
+
+
+#if fifo
+
+Source of wrong type
+
+  $ mkfifo a
+  $ hg clone a b
+  abort: repository a not found!
+  [255]
+  $ rm a
+
+#endif
+
+Default destination, same directory
+
+  $ hg init q
+  $ hg clone q
+  destination directory: q
+  abort: destination 'q' is not empty
+  [255]
+
+destination directory not empty
+
+  $ mkdir a
+  $ echo stuff > a/a
+  $ hg clone q a
+  abort: destination 'a' is not empty
+  [255]
+
+
+#if unix-permissions no-root
+
+leave existing directory in place after clone failure
+
+  $ hg init c
+  $ cd c
+  $ echo c > c
+  $ hg commit -A -m test
+  adding c
+  $ chmod -rx .hg/store/data
+  $ cd ..
+  $ mkdir d
+  $ hg clone c d 2> err
+  [255]
+  $ test -d d
+  $ test -d d/.hg
+  [1]
+
+re-enable perm to allow deletion
+
+  $ chmod +rx c/.hg/store/data
+
+#endif
+
+  $ cd ..
+
+Test clone from the repository in (emulated) revlog format 0 (issue4203):
+
+  $ mkdir issue4203
+  $ mkdir -p src/.hg
+  $ echo foo > src/foo
+  $ hg -R src add src/foo
+  $ hg -R src commit -m '#0'
+  $ hg -R src log -q
+  0:e1bab28bca43
+  $ hg clone -U -q src dst
+  $ hg -R dst log -q
+  0:e1bab28bca43
+  $ cd ..
